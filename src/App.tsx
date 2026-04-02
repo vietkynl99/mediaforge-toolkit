@@ -47,7 +47,7 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label:
 const StatusBadge = ({ status }: { status: JobStatus }) => {
   const configs = {
     queued: { icon: Clock, color: 'text-zinc-400 bg-zinc-400/10', label: 'Queued' },
-    processing: { icon: RefreshCw, color: 'text-blue-400 bg-blue-400/10 animate-spin-slow', label: 'Processing' },
+    processing: { icon: RefreshCw, color: 'text-blue-400 bg-blue-400/10', label: 'Processing' },
     awaiting_input: { icon: AlertCircle, color: 'text-amber-400 bg-amber-400/10', label: 'Awaiting Review' },
     completed: { icon: CheckCircle2, color: 'text-lime-400 bg-lime-400/10', label: 'Completed' },
     failed: { icon: AlertCircle, color: 'text-red-400 bg-red-400/10', label: 'Failed' },
@@ -57,7 +57,7 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
 
   return (
     <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
-      <Icon size={12} className={status === 'processing' ? 'animate-spin' : ''} />
+      <Icon size={12} className={status === 'processing' ? 'animate-spin-soft' : ''} />
       {config.label}
     </div>
   );

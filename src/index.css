@@ -5,6 +5,15 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+@keyframes spin-soft {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-soft {
+  animation: spin-soft 3s ease-in-out infinite;
+}
+
 @layer base {
   body {
     @apply bg-zinc-950 text-zinc-300 antialiased;
@@ -23,13 +32,4 @@
   ::-webkit-scrollbar-thumb {
     @apply bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors;
   }
-}
-
-@keyframes spin-slow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.animate-spin-slow {
-  animation: spin-slow 3s linear infinite;
 }
