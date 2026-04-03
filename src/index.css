@@ -19,6 +19,14 @@
     @apply bg-zinc-950 text-zinc-300 antialiased;
   }
 
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
   /* Custom Scrollbar */
   ::-webkit-scrollbar {
     width: 6px;
