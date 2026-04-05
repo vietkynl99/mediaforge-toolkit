@@ -23,6 +23,7 @@ import {
   FileAudio,
   Type,
   File,
+  Image,
   Folder,
   FolderOpen,
   Languages,
@@ -86,6 +87,16 @@ const coerceNumber = (value: string | number | null | undefined, fallback?: numb
   return fallback;
 };
 
+const parseResolution = (value: string | null | undefined, fallback = { w: 1920, h: 1080 }) => {
+  if (!value) return fallback;
+  const match = String(value).trim().match(/(\d+)\s*[x×]\s*(\d+)/i);
+  if (!match) return fallback;
+  const w = Number(match[1]);
+  const h = Number(match[2]);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return fallback;
+  return { w: Math.round(w), h: Math.round(h) };
+};
+
 /** Render Studio / pipeline: blur region as inset % from each edge (like CSS top/right/bottom/left). */
 type RenderBlurRegionEffect = {
   type: 'blur_region';
@@ -101,97 +112,55 @@ type RenderBlurRegionEffect = {
 const num = (v: unknown, fb: number) => coerceNumber(v as string | number | null | undefined, fb) ?? fb;
 
 type RenderSubtitleAssState = {
-  language: string;
-  timingShiftSeconds: string;
   fontName: string;
   fontSize: string;
   primaryColor: string;
-  secondaryColor: string;
   outlineColor: string;
-  backColor: string;
-  backOpacity: string;
   bold: string;
   italic: string;
-  underline: string;
-  strikeOut: string;
-  scaleX: string;
-  scaleY: string;
   spacing: string;
-  angle: string;
-  borderStyle: string;
   outline: string;
   shadow: string;
   alignment: string;
   marginL: string;
   marginR: string;
   marginV: string;
-  encoding: string;
   wrapStyle: string;
-  playResX: string;
-  playResY: string;
 };
 
 /** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
 const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
-  language: '',
-  timingShiftSeconds: '0',
   fontName: 'Arial',
   fontSize: '48',
   primaryColor: '#ffffff',
-  secondaryColor: '#ffffff',
   outlineColor: '#000000',
-  backColor: '#000000',
-  backOpacity: '0',
   bold: '0',
   italic: '0',
-  underline: '0',
-  strikeOut: '0',
-  scaleX: '100',
-  scaleY: '100',
   spacing: '0',
-  angle: '0',
-  borderStyle: '1',
   outline: '2',
   shadow: '2',
   alignment: '2',
   marginL: '30',
   marginR: '30',
   marginV: '36',
-  encoding: '-1',
-  wrapStyle: '0',
-  playResX: '1920',
-  playResY: '1080'
+  wrapStyle: '0'
 };
 
 const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
-  language: DEFAULT_RENDER_SUBTITLE_ASS.language,
-  timingShiftSeconds: DEFAULT_RENDER_SUBTITLE_ASS.timingShiftSeconds,
   fontName: DEFAULT_RENDER_SUBTITLE_ASS.fontName,
   fontSize: DEFAULT_RENDER_SUBTITLE_ASS.fontSize,
   primaryColor: DEFAULT_RENDER_SUBTITLE_ASS.primaryColor,
-  secondaryColor: DEFAULT_RENDER_SUBTITLE_ASS.secondaryColor,
   outlineColor: DEFAULT_RENDER_SUBTITLE_ASS.outlineColor,
-  backColor: DEFAULT_RENDER_SUBTITLE_ASS.backColor,
-  backOpacity: DEFAULT_RENDER_SUBTITLE_ASS.backOpacity,
   bold: DEFAULT_RENDER_SUBTITLE_ASS.bold,
   italic: DEFAULT_RENDER_SUBTITLE_ASS.italic,
-  underline: DEFAULT_RENDER_SUBTITLE_ASS.underline,
-  strikeOut: DEFAULT_RENDER_SUBTITLE_ASS.strikeOut,
-  scaleX: DEFAULT_RENDER_SUBTITLE_ASS.scaleX,
-  scaleY: DEFAULT_RENDER_SUBTITLE_ASS.scaleY,
   spacing: DEFAULT_RENDER_SUBTITLE_ASS.spacing,
-  angle: DEFAULT_RENDER_SUBTITLE_ASS.angle,
-  borderStyle: DEFAULT_RENDER_SUBTITLE_ASS.borderStyle,
   outline: DEFAULT_RENDER_SUBTITLE_ASS.outline,
   shadow: DEFAULT_RENDER_SUBTITLE_ASS.shadow,
   alignment: DEFAULT_RENDER_SUBTITLE_ASS.alignment,
   marginL: DEFAULT_RENDER_SUBTITLE_ASS.marginL,
   marginR: DEFAULT_RENDER_SUBTITLE_ASS.marginR,
   marginV: DEFAULT_RENDER_SUBTITLE_ASS.marginV,
-  encoding: DEFAULT_RENDER_SUBTITLE_ASS.encoding,
-  wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle,
-  playResX: DEFAULT_RENDER_SUBTITLE_ASS.playResX,
-  playResY: DEFAULT_RENDER_SUBTITLE_ASS.playResY
+  wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle
 };
 
 type SubtitleStylePreset = {
@@ -214,46 +183,43 @@ const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
   {
     id: 'yellow',
     label: 'Yellow',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ffd400', secondaryColor: '#ffd400' }
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ffd400' }
   },
   {
     id: 'cyan',
     label: 'Cyan',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#56d7ff', secondaryColor: '#56d7ff' }
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#56d7ff' }
   },
   {
     id: 'pink',
     label: 'Pink',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6ad5', secondaryColor: '#ff6ad5' }
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6ad5' }
   },
   {
     id: 'green',
     label: 'Green',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#9dff57', secondaryColor: '#9dff57' }
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#9dff57' }
   },
   {
     id: 'red',
     label: 'Red',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6b6b', secondaryColor: '#ff6b6b' }
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6b6b' }
   },
   {
     id: 'orange',
     label: 'Orange',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff9f1c', secondaryColor: '#ff9f1c' }
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff9f1c' }
   },
   {
     id: 'blue',
     label: 'Blue',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#4dabff', secondaryColor: '#4dabff' }
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#4dabff' }
   },
   {
     id: 'dark-box',
     label: 'Dark Box',
     style: {
       ...BASE_SUBTITLE_STYLE,
-      borderStyle: '3',
-      backColor: '#000000',
-      backOpacity: '75',
       outline: '0',
       shadow: '0'
     }
@@ -263,12 +229,8 @@ const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
     label: 'Light Box',
     style: {
       ...BASE_SUBTITLE_STYLE,
-      borderStyle: '3',
       primaryColor: '#111111',
-      secondaryColor: '#111111',
       outlineColor: '#ffffff',
-      backColor: '#ffffff',
-      backOpacity: '85',
       outline: '0',
       shadow: '0'
     }
@@ -278,7 +240,6 @@ const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
     label: 'Outline',
     style: {
       ...BASE_SUBTITLE_STYLE,
-      borderStyle: '4',
       outline: '4',
       shadow: '0'
     }
@@ -312,20 +273,10 @@ const isCleanFontName = (value: string) => {
   return true;
 };
 
-const hexToRgba = (hex: string, alpha: number) => {
-  const normalized = hex.replace('#', '').trim();
-  if (normalized.length !== 6) return `rgba(0,0,0,${alpha})`;
-  const r = Number.parseInt(normalized.slice(0, 2), 16);
-  const g = Number.parseInt(normalized.slice(2, 4), 16);
-  const b = Number.parseInt(normalized.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
 const buildSubtitlePreviewStyle = (preset: SubtitleStylePreset) => {
   const merged = { ...BASE_SUBTITLE_STYLE, ...preset.style };
   const outline = Math.max(0, Number(merged.outline ?? 0));
   const shadow = Math.max(0, Number(merged.shadow ?? 0));
-  const backOpacity = Math.min(100, Math.max(0, Number(merged.backOpacity ?? 0))) / 100;
   const shadows: string[] = [];
   if (outline > 0) {
     const o = Math.min(6, outline);
@@ -340,13 +291,9 @@ const buildSubtitlePreviewStyle = (preset: SubtitleStylePreset) => {
     const s = Math.min(6, shadow);
     shadows.push(`${s}px ${s}px 0 ${merged.outlineColor}`);
   }
-  const background =
-    String(merged.borderStyle) === '3' && backOpacity > 0
-      ? hexToRgba(merged.backColor ?? '#000000', backOpacity)
-      : 'transparent';
   return {
     color: merged.primaryColor,
-    background,
+    background: 'transparent',
     fontWeight: merged.bold === '1' ? 800 : 600,
     fontStyle: merged.italic === '1' ? 'italic' : 'normal',
     textShadow: shadows.length ? shadows.join(', ') : 'none'
@@ -359,10 +306,7 @@ const migrateLegacySubtitleFields = (r: Record<string, unknown>): Partial<Render
     out.fontName = String(r.fontFamily);
   }
   if (r.primaryColor === undefined && r.color != null) out.primaryColor = String(r.color);
-  if (r.timingShiftSeconds === undefined && r.offset != null) out.timingShiftSeconds = String(r.offset);
   if (r.outline === undefined && r.outlineWidth != null) out.outline = String(r.outlineWidth);
-  if (r.backOpacity === undefined && r.bgOpacity != null) out.backOpacity = String(r.bgOpacity);
-  if (r.backColor === undefined && r.bgColor != null) out.backColor = String(r.bgColor);
   if ((r.marginL === undefined || r.marginR === undefined) && r.maxWidth != null) {
     const mw = coerceNumber(r.maxWidth as string | number, 90) ?? 90;
     const side = Math.round(((100 - Math.min(100, Math.max(0, mw))) / 200) * 1920);
@@ -378,10 +322,6 @@ const migrateLegacySubtitleFields = (r: Record<string, unknown>): Partial<Render
     if (p === 'top') out.alignment = '8';
     else if (p === 'custom') out.alignment = '5';
     else out.alignment = '2';
-  }
-  if (r.borderStyle === undefined && r.bgOpacity != null) {
-    const bo = coerceNumber(r.bgOpacity as string | number, 0) ?? 0;
-    if (bo > 0) out.borderStyle = '3';
   }
   return out as Partial<RenderSubtitleAssState>;
 };
@@ -564,7 +504,7 @@ function JobRow({ job, index, onContextMenu }: JobRowProps) {
 
 // --- Media Vault Mock Data ---
 
-type VaultFileType = 'video' | 'audio' | 'subtitle' | 'output' | 'other';
+type VaultFileType = 'video' | 'audio' | 'subtitle' | 'image' | 'output' | 'other';
 type VaultStatus = 'raw' | 'partial' | 'complete' | 'error' | 'processing';
 
 interface VaultFile {
@@ -1005,6 +945,7 @@ export default function App() {
     video: false,
     audio: false,
     subtitle: false,
+    image: false,
     output: false,
     other: false
   });
@@ -1111,6 +1052,7 @@ export default function App() {
   const [renderVideoId, setRenderVideoId] = useState<string | null>(null);
   const [renderAudioId, setRenderAudioId] = useState<string | null>(null);
   const [renderSubtitleId, setRenderSubtitleId] = useState<string | null>(null);
+  const [renderInputFileIds, setRenderInputFileIds] = useState<string[]>([]);
   const [renderTimelineScale, setRenderTimelineScale] = useState(1);
   const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
   const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
@@ -1154,16 +1096,10 @@ export default function App() {
       fadeOut: '0'
     },
     audio: {
-      trimStart: '',
-      trimEnd: '',
       gainDb: '0',
-      normalize: false,
-      ducking: false,
-      duckAmountDb: '12',
+      mute: false,
       fadeIn: '0',
-      fadeOut: '0',
-      pan: '0',
-      channelMode: 'stereo'
+      fadeOut: '0'
     },
     subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
     effects: [] as RenderBlurRegionEffect[]
@@ -1247,6 +1183,9 @@ export default function App() {
     setRenderVideoId(firstVideo?.id ?? null);
     setRenderAudioId(firstAudio?.id ?? null);
     setRenderSubtitleId(firstSubtitle?.id ?? null);
+    setRenderInputFileIds(
+      [firstVideo?.id, firstAudio?.id, firstSubtitle?.id].filter(Boolean) as string[]
+    );
     setRenderStudioFocus('timeline');
     setRenderStudioItemType(null);
   };
@@ -1444,6 +1383,7 @@ export default function App() {
     video: FileVideo,
     audio: FileAudio,
     subtitle: Type,
+    image: Image,
     output: FileVideo,
     other: FileAudio
   };
@@ -1452,6 +1392,7 @@ export default function App() {
     video: 'Video',
     audio: 'Audio',
     subtitle: 'Subtitle',
+    image: 'Image',
     output: 'Output',
     other: 'Other'
   };
@@ -1470,7 +1411,7 @@ export default function App() {
       return b.createdAt.localeCompare(a.createdAt);
     });
 
-  const groupedFiles = ['video', 'audio', 'subtitle', 'output', 'other'].map(type => ({
+  const groupedFiles = ['video', 'audio', 'subtitle', 'image', 'output', 'other'].map(type => ({
     type: type as VaultFileType,
     items: filteredFiles.filter(file => file.type === type)
   }));
@@ -1489,6 +1430,7 @@ export default function App() {
     { type: 'video' as VaultFileType, label: 'Video' },
     { type: 'audio' as VaultFileType, label: 'Audio' },
     { type: 'subtitle' as VaultFileType, label: 'Subtitle' },
+    { type: 'image' as VaultFileType, label: 'Image' },
     { type: 'other' as VaultFileType, label: 'Other' }
   ]).map(group => ({
     ...group,
@@ -1647,10 +1589,12 @@ export default function App() {
         const [section, field] = key.split('.');
         if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle') return;
         if (value === undefined || value === null) return;
-        const normalized = field === 'normalize' || field === 'ducking'
-          ? Boolean(value)
-          : String(value);
-        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle', field, normalized);
+        if (section === 'audio' && (field === 'normalize' || field === 'pan' || field === 'channelMode')) return;
+        if (section === 'audio' && field === 'mute') {
+          updateRenderParam('audio', 'mute', Boolean(value));
+          return;
+        }
+        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle', field, String(value));
       });
     }
   };
@@ -1814,6 +1758,7 @@ export default function App() {
       try {
         setRenderPreviewLoading(true);
         setRenderPreviewError(null);
+        const previewRes = parseResolution(renderParams.timeline.resolution);
         const params = new URLSearchParams({
           videoPath: renderVideoFile.relativePath,
           at: String(
@@ -1827,7 +1772,14 @@ export default function App() {
         });
         if (renderSubtitleFile?.relativePath) {
           params.set('subtitlePath', renderSubtitleFile.relativePath);
-          params.set('subtitleStyle', JSON.stringify(renderParams.subtitle));
+          params.set(
+            'subtitleStyle',
+            JSON.stringify({
+              ...renderParams.subtitle,
+              playResX: previewRes.w,
+              playResY: previewRes.h
+            })
+          );
         }
         if (renderParams.effects.length > 0) {
           params.set('effects', JSON.stringify(renderParams.effects));
@@ -1997,7 +1949,7 @@ export default function App() {
       icon: FileVideo,
       label: 'Render',
       desc: 'Combine video, audio, and subtitle into final output.',
-      inputs: ['Project'],
+      inputs: ['Files'],
       outputs: ['Video'],
       params: [
         { name: 'timeline.framerate', desc: 'Frame rate', type: 'number', default: 30 },
@@ -2019,44 +1971,24 @@ export default function App() {
         { name: 'video.cropH', desc: 'Crop H (%)', type: 'number', default: 100 },
         { name: 'video.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
         { name: 'video.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
-        { name: 'audio.trimStart', desc: 'Trim start (s)', type: 'number', default: 0 },
-        { name: 'audio.trimEnd', desc: 'Trim end (s)', type: 'number', default: 0 },
         { name: 'audio.gainDb', desc: 'Gain (dB)', type: 'number', default: 0 },
-        { name: 'audio.normalize', desc: 'Normalize', type: 'boolean', default: false },
-        { name: 'audio.ducking', desc: 'Ducking', type: 'boolean', default: false },
-        { name: 'audio.duckAmountDb', desc: 'Duck amount (dB)', type: 'number', default: 12 },
+        { name: 'audio.mute', desc: 'Mute audio', type: 'boolean', default: false },
         { name: 'audio.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
         { name: 'audio.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
-        { name: 'audio.pan', desc: 'Pan (-100..100)', type: 'number', default: 0 },
-        { name: 'audio.channelMode', desc: 'stereo | mono | left | right', type: 'string', default: 'stereo' },
-        { name: 'subtitle.language', desc: 'Note / language tag (metadata only)', type: 'string', default: '' },
-        { name: 'subtitle.timingShiftSeconds', desc: 'Shift all cues by seconds (ASS timing)', type: 'number', default: 0 },
         { name: 'subtitle.fontName', desc: 'ASS Fontname (libass)', type: 'string', default: 'Arial' },
         { name: 'subtitle.fontSize', desc: 'Font size (px at PlayRes)', type: 'number', default: 72 },
         { name: 'subtitle.primaryColor', desc: 'Primary fill #RRGGBB', type: 'string', default: '#ffffff' },
-        { name: 'subtitle.secondaryColor', desc: 'Secondary (karaoke) #RRGGBB', type: 'string', default: '#ffffff' },
         { name: 'subtitle.outlineColor', desc: 'Outline #RRGGBB', type: 'string', default: '#000000' },
-        { name: 'subtitle.backColor', desc: 'Back / box #RRGGBB', type: 'string', default: '#000000' },
-        { name: 'subtitle.backOpacity', desc: 'Back opacity 0–100 (use with BorderStyle 3)', type: 'number', default: 0 },
         { name: 'subtitle.bold', desc: '1 = bold', type: 'string', default: '0' },
         { name: 'subtitle.italic', desc: '1 = italic', type: 'string', default: '0' },
-        { name: 'subtitle.underline', desc: '1 = underline', type: 'string', default: '0' },
-        { name: 'subtitle.strikeOut', desc: '1 = strikeout', type: 'string', default: '0' },
-        { name: 'subtitle.scaleX', desc: 'ScaleX %', type: 'number', default: 100 },
-        { name: 'subtitle.scaleY', desc: 'ScaleY %', type: 'number', default: 100 },
         { name: 'subtitle.spacing', desc: 'Character spacing', type: 'number', default: 0 },
-        { name: 'subtitle.angle', desc: 'Rotation deg', type: 'number', default: 0 },
-        { name: 'subtitle.borderStyle', desc: '1 outline+shadow, 3 opaque box, 4 outline only', type: 'number', default: 1 },
         { name: 'subtitle.outline', desc: 'Outline width', type: 'number', default: 2 },
         { name: 'subtitle.shadow', desc: 'Shadow depth', type: 'number', default: 2 },
         { name: 'subtitle.alignment', desc: 'ASS numpad 1–9', type: 'number', default: 2 },
         { name: 'subtitle.marginL', desc: 'MarginL px (PlayRes)', type: 'number', default: 30 },
         { name: 'subtitle.marginR', desc: 'MarginR px (PlayRes)', type: 'number', default: 30 },
         { name: 'subtitle.marginV', desc: 'MarginV px (PlayRes)', type: 'number', default: 36 },
-        { name: 'subtitle.encoding', desc: 'ASS style Encoding (-1 = default / UTF-8)', type: 'number', default: -1 },
         { name: 'subtitle.wrapStyle', desc: 'Script WrapStyle 0–3', type: 'number', default: 0 },
-        { name: 'subtitle.playResX', desc: 'PlayResX', type: 'number', default: 1920 },
-        { name: 'subtitle.playResY', desc: 'PlayResY', type: 'number', default: 1080 },
         { name: 'effects.list', desc: 'JSON array of effects (blur_region: left,right,top,bottom,sigma,feather 0–20)', type: 'string', default: '[]' }
       ]
     }
@@ -2508,10 +2440,12 @@ export default function App() {
       }
       if (data?.render && typeof data.render === 'object') {
         if (data.render.renderParams && typeof data.render.renderParams === 'object') {
+          const incomingAudio = (data.render.renderParams.audio ?? {}) as Record<string, unknown>;
+          const { normalize, pan, channelMode, ...audioRest } = incomingAudio;
           setRenderParams(prev => ({
             timeline: { ...prev.timeline, ...(data.render.renderParams.timeline ?? {}) },
             video: { ...prev.video, ...(data.render.renderParams.video ?? {}) },
-            audio: { ...prev.audio, ...(data.render.renderParams.audio ?? {}) },
+            audio: { ...prev.audio, ...audioRest },
             subtitle: normalizeLoadedSubtitleState({
               ...prev.subtitle,
               ...(data.render.renderParams.subtitle ?? {})
@@ -3114,7 +3048,21 @@ export default function App() {
     setRenderVideoId(firstVideo?.id ?? null);
     setRenderAudioId(firstAudio?.id ?? null);
     setRenderSubtitleId(firstSubtitle?.id ?? null);
+    setRenderInputFileIds(
+      [firstVideo?.id, firstAudio?.id, firstSubtitle?.id].filter(Boolean) as string[]
+    );
   }, [runPipelineProject?.id, runPipelineHasRender]);
+
+  useEffect(() => {
+    setRenderInputFileIds(prev => {
+      const validIds = new Set((runPipelineProject?.files ?? []).map(file => file.id));
+      const next = new Set(prev.filter(id => validIds.has(id)));
+      [renderVideoId, renderAudioId, renderSubtitleId]
+        .filter((id): id is string => Boolean(id))
+        .forEach(id => next.add(id));
+      return Array.from(next);
+    });
+  }, [renderVideoId, renderAudioId, renderSubtitleId, runPipelineProject?.id]);
 
   const savePipeline = async (nameOverride?: string) => {
     if (!graphNodes.length) {
@@ -3482,6 +3430,7 @@ export default function App() {
         const videoFile = runPipelineProject?.files.find(file => file.id === renderVideoId);
         const audioFile = runPipelineProject?.files.find(file => file.id === renderAudioId);
         const subtitleFile = runPipelineProject?.files.find(file => file.id === renderSubtitleId);
+        const { w: playResX, h: playResY } = parseResolution(renderParams.timeline.resolution);
         pipelinePayload.inputPath = videoFile?.relativePath ?? pipelinePayload.inputPath;
         pipelinePayload.videoPath = videoFile?.relativePath;
         pipelinePayload.audioPath = audioFile?.relativePath;
@@ -3517,46 +3466,28 @@ export default function App() {
             fadeOut: coerceNumber(renderParams.video.fadeOut, 0)
           },
           audio: {
-            trimStart: coerceNumber(renderParams.audio.trimStart, 0),
-            trimEnd: coerceNumber(renderParams.audio.trimEnd, 0),
             gainDb: coerceNumber(renderParams.audio.gainDb, 0),
-            normalize: renderParams.audio.normalize,
-            ducking: renderParams.audio.ducking,
-            duckAmountDb: coerceNumber(renderParams.audio.duckAmountDb, 12),
+            mute: Boolean(renderParams.audio.mute),
             fadeIn: coerceNumber(renderParams.audio.fadeIn, 0),
-            fadeOut: coerceNumber(renderParams.audio.fadeOut, 0),
-            pan: coerceNumber(renderParams.audio.pan, 0),
-            channelMode: renderParams.audio.channelMode
+            fadeOut: coerceNumber(renderParams.audio.fadeOut, 0)
           },
           subtitle: {
-            language: renderParams.subtitle.language || null,
-            timingShiftSeconds: coerceNumber(renderParams.subtitle.timingShiftSeconds, 0),
+            playResX,
+            playResY,
             fontName: renderParams.subtitle.fontName || null,
             fontSize: coerceNumber(renderParams.subtitle.fontSize, 48),
             primaryColor: renderParams.subtitle.primaryColor,
-            secondaryColor: renderParams.subtitle.secondaryColor,
             outlineColor: renderParams.subtitle.outlineColor,
-            backColor: renderParams.subtitle.backColor,
-            backOpacity: coerceNumber(renderParams.subtitle.backOpacity, 0),
             bold: renderParams.subtitle.bold === '1',
             italic: renderParams.subtitle.italic === '1',
-            underline: renderParams.subtitle.underline === '1',
-            strikeOut: renderParams.subtitle.strikeOut === '1',
-            scaleX: coerceNumber(renderParams.subtitle.scaleX, 100),
-            scaleY: coerceNumber(renderParams.subtitle.scaleY, 100),
             spacing: coerceNumber(renderParams.subtitle.spacing, 0),
-            angle: coerceNumber(renderParams.subtitle.angle, 0),
-            borderStyle: coerceNumber(renderParams.subtitle.borderStyle, 1),
             outline: coerceNumber(renderParams.subtitle.outline, 2),
             shadow: coerceNumber(renderParams.subtitle.shadow, 2),
             alignment: coerceNumber(renderParams.subtitle.alignment, 2),
             marginL: coerceNumber(renderParams.subtitle.marginL, 30),
             marginR: coerceNumber(renderParams.subtitle.marginR, 30),
             marginV: coerceNumber(renderParams.subtitle.marginV, 36),
-            encoding: coerceNumber(renderParams.subtitle.encoding, -1),
-            wrapStyle: coerceNumber(renderParams.subtitle.wrapStyle, 0),
-            playResX: coerceNumber(renderParams.subtitle.playResX, 1920),
-            playResY: coerceNumber(renderParams.subtitle.playResY, 1080)
+            wrapStyle: coerceNumber(renderParams.subtitle.wrapStyle, 0)
           },
           effects: renderParams.effects
             .map(effect => {
@@ -5065,8 +4996,8 @@ export default function App() {
                       </div>
                     )}
 
-                    <div className="grid grid-cols-4 gap-2">
-                      {(['video', 'audio', 'subtitle', 'output'] as VaultFileType[]).map(type => {
+                    <div className="grid grid-cols-5 gap-2">
+                      {(['video', 'audio', 'subtitle', 'image', 'output'] as VaultFileType[]).map(type => {
                         const count = selectedFolder.files.filter(file => file.type === type).length;
                         const Icon = fileTypeIcons[type];
                         return (
@@ -5105,6 +5036,7 @@ export default function App() {
                           <option value="video">Video</option>
                           <option value="audio">Audio</option>
                           <option value="subtitle">Subtitle</option>
+                          <option value="image">Image</option>
                           <option value="output">Output</option>
                           <option value="other">Other</option>
                         </select>
@@ -5565,7 +5497,7 @@ export default function App() {
                       {runPipelineHasDownload
                         ? 'Inputs (URL)'
                         : runPipelineHasRender
-                          ? 'Inputs (Video/Audio/Subtitle)'
+                          ? 'Inputs (Files)'
                           : runPipelineHasTts
                             ? 'Inputs (Subtitle)'
                             : 'Inputs (Video/Audio)'}
@@ -5640,61 +5572,38 @@ export default function App() {
                             )}
                           </div>
                         ) : runPipelineHasRender ? (
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-2">
                             <select
-                              value={renderVideoId ?? ''}
-                              onChange={e => setRenderVideoId(e.target.value || null)}
-                              className="col-span-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                              multiple
+                              value={renderInputFileIds}
+                              onChange={e => {
+                                const selected = Array.from(e.target.selectedOptions).map(option => option.value);
+                                setRenderInputFileIds(selected);
+                                const selectedFiles = runPipelineProject?.files.filter(file => selected.includes(file.id)) ?? [];
+                                const firstVideo = selectedFiles.find(file => file.type === 'video');
+                                const firstAudio = selectedFiles.find(file => file.type === 'audio');
+                                const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
+                                setRenderVideoId(firstVideo?.id ?? null);
+                                setRenderAudioId(firstAudio?.id ?? null);
+                                setRenderSubtitleId(firstSubtitle?.id ?? null);
+                              }}
+                              className="min-h-[140px] bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                             >
-                              <option value="" disabled>Select video (required)</option>
                               {runPipelineProject?.files
-                                .filter(file => file.type === 'video')
+                                .filter(file => file.type === 'video' || file.type === 'audio' || file.type === 'subtitle' || file.type === 'image')
                                 .map(file => (
                                   <option
                                     key={file.id}
                                     value={file.id}
                                     title={file.name}
                                   >
-                                    {truncateLabel(file.name, 52)}
+                                    [{file.type}] {truncateLabel(file.name, 52)}
                                   </option>
                                 ))}
                             </select>
-                            <select
-                              value={renderAudioId ?? ''}
-                              onChange={e => setRenderAudioId(e.target.value || null)}
-                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                            >
-                              <option value="">Audio (optional)</option>
-                              {runPipelineProject?.files
-                                .filter(file => file.type === 'audio')
-                                .map(file => (
-                                  <option
-                                    key={file.id}
-                                    value={file.id}
-                                    title={file.name}
-                                  >
-                                    {truncateLabel(file.name, 52)}
-                                  </option>
-                                ))}
-                            </select>
-                            <select
-                              value={renderSubtitleId ?? ''}
-                              onChange={e => setRenderSubtitleId(e.target.value || null)}
-                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                            >
-                              <option value="">Subtitle (optional)</option>
-                              {runPipelineProject?.files
-                                .filter(file => file.type === 'subtitle')
-                                .map(file => (
-                                  <option
-                                    key={file.id}
-                                    value={file.id}
-                                    title={file.name}
-                                  >
-                                    {truncateLabel(file.name, 52)}
-                                  </option>
-                                ))}
-                            </select>
+                            <div className="text-[10px] text-zinc-500">
+                              Select multiple files (Ctrl/Cmd + click).
+                            </div>
                           </div>
                         ) : (
                           <>

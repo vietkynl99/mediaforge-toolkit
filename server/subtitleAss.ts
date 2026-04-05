@@ -5,25 +5,13 @@ import { parseAssCues, parseSrtVttCues, stripUtf8Bom } from './subtitleCues.js';
 
 /** V4+ style fields we expose from Render Studio (ASS / libass). */
 export type AssRenderStyle = {
-  timingShiftSeconds: number;
   fontName: string;
   fontSize: number;
   primaryColor: string;
-  secondaryColor: string;
   outlineColor: string;
-  backColor: string;
-  /** 0–100, opacity of BackColour when BorderStyle uses box (3). */
-  backOpacity: number;
   bold: boolean;
   italic: boolean;
-  underline: boolean;
-  strikeOut: boolean;
-  scaleX: number;
-  scaleY: number;
   spacing: number;
-  angle: number;
-  /** 1 = outline+shadow, 3 = opaque box, 4 = outline only (ASS). */
-  borderStyle: number;
   outline: number;
   shadow: number;
   /** ASS numpad 1–9. */
@@ -31,7 +19,6 @@ export type AssRenderStyle = {
   marginL: number;
   marginR: number;
   marginV: number;
-  encoding: number;
   /** Script Info WrapStyle 0–3. */
   wrapStyle: number;
   playResX: number;
@@ -58,31 +45,19 @@ const str = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallb
 export const parseAssRenderStyle = (raw: unknown): AssRenderStyle => {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   return {
-    timingShiftSeconds: num(o.timingShiftSeconds, 0),
     fontName: str(o.fontName, 'Arial').replace(/,/g, ' ').trim() || 'Arial',
     fontSize: clamp(Math.round(num(o.fontSize, 48)), 6, 200),
     primaryColor: str(o.primaryColor, '#ffffff'),
-    secondaryColor: str(o.secondaryColor, '#ffffff'),
     outlineColor: str(o.outlineColor, '#000000'),
-    backColor: str(o.backColor, '#000000'),
-    backOpacity: clamp(num(o.backOpacity, 0), 0, 100),
     bold: boolish(o.bold, false),
     italic: boolish(o.italic, false),
-    underline: boolish(o.underline, false),
-    strikeOut: boolish(o.strikeOut, false),
-    scaleX: clamp(Math.round(num(o.scaleX, 100)), 1, 1000),
-    scaleY: clamp(Math.round(num(o.scaleY, 100)), 1, 1000),
     spacing: clamp(Math.round(num(o.spacing, 0)), -99, 99),
-    angle: clamp(num(o.angle, 0), -360, 360),
-    borderStyle: clamp(Math.round(num(o.borderStyle, 1)), 1, 4),
     outline: clamp(num(o.outline, 2), 0, 16),
     shadow: clamp(num(o.shadow, 2), 0, 16),
     alignment: clamp(Math.round(num(o.alignment, 2)), 1, 9),
     marginL: clamp(Math.round(num(o.marginL, 30)), 0, 9999),
     marginR: clamp(Math.round(num(o.marginR, 30)), 0, 9999),
     marginV: clamp(Math.round(num(o.marginV, 36)), 0, 9999),
-    /** -1 = default / UTF-8 autodetect for libass; positive values are legacy code pages. */
-    encoding: clamp(Math.round(num(o.encoding, -1)), -1, 255),
     wrapStyle: clamp(Math.round(num(o.wrapStyle, 0)), 0, 3),
     playResX: clamp(Math.round(num(o.playResX, 1920)), 320, 7680),
     playResY: clamp(Math.round(num(o.playResY, 1080)), 240, 4320)
@@ -150,21 +125,26 @@ export const escapeAssDialogueText = (text: string) => {
 
 export const buildAssDocument = (cues: SubtitleCue[], style: AssRenderStyle): string => {
   const primary = assColor(style.primaryColor, 100);
-  const secondary = assColor(style.secondaryColor, 100);
+  const secondary = assColor('#ffffff', 100);
   const outlineC = assColor(style.outlineColor, 100);
-  const backC = assColor(style.backColor, style.borderStyle === 3 ? style.backOpacity : 100);
+  const backC = assColor('#000000', 100);
 
   const bold = style.bold ? -1 : 0;
   const italic = style.italic ? -1 : 0;
-  const underline = style.underline ? -1 : 0;
-  const strike = style.strikeOut ? -1 : 0;
+  const underline = 0;
+  const strike = 0;
+  const scaleX = 100;
+  const scaleY = 100;
+  const angle = 0;
+  const encoding = -1;
+  const borderStyle = 1;
 
   const styleLine =
     `Style: Default,${style.fontName},${style.fontSize},${primary},${secondary},${outlineC},${backC},` +
-    `${bold},${italic},${underline},${strike},${style.scaleX},${style.scaleY},${style.spacing},${style.angle},` +
-    `${style.borderStyle},${style.outline},${style.shadow},${style.alignment},${style.marginL},${style.marginR},${style.marginV},${style.encoding}`;
+    `${bold},${italic},${underline},${strike},${scaleX},${scaleY},${style.spacing},${angle},` +
+    `${borderStyle},${style.outline},${style.shadow},${style.alignment},${style.marginL},${style.marginR},${style.marginV},${encoding}`;
 
-  const shift = style.timingShiftSeconds;
+  const shift = 0;
   const dialogue = cues
     .map(c => {
       const start = Math.max(0, c.start + shift);

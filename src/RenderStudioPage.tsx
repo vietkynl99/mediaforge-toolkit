@@ -1104,32 +1104,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     <span>Size</span>
                                     <span className="text-zinc-300">{renderAudioFile.size ?? renderAudioFile.sizeBytes ?? '--'}</span>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2 pt-1">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim Start (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.audio.trimStart}
-                                        onChange={e => updateRenderParamDraft('audio', 'trimStart', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('audio', 'trimStart')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'trimStart')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim End (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.audio.trimEnd}
-                                        onChange={e => updateRenderParamDraft('audio', 'trimEnd', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('audio', 'trimEnd')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'trimEnd')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
@@ -1143,79 +1117,21 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pan</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        min="-100"
-                                        max="100"
-                                        value={renderParamsDraft.audio.pan}
-                                        onChange={e => updateRenderParamDraft('audio', 'pan', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('audio', 'pan')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'pan')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <label className="flex items-center gap-2 text-[11px] text-zinc-300">
                                       <input
                                         type="checkbox"
-                                        checked={renderParamsDraft.audio.normalize}
+                                        checked={Boolean(renderParamsDraft.audio.mute)}
                                         onChange={e => {
                                           const v = e.target.checked;
-                                          updateRenderParamDraft('audio', 'normalize', v);
-                                          updateRenderParam('audio', 'normalize', v);
+                                          updateRenderParamDraft('audio', 'mute', v);
+                                          updateRenderParam('audio', 'mute', v);
                                         }}
                                         className="accent-lime-400"
                                       />
-                                      Normalize
+                                      Mute
                                     </label>
-                                    <label className="flex items-center gap-2 text-[11px] text-zinc-300">
-                                      <input
-                                        type="checkbox"
-                                        checked={renderParamsDraft.audio.ducking}
-                                        onChange={e => {
-                                          const v = e.target.checked;
-                                          updateRenderParamDraft('audio', 'ducking', v);
-                                          updateRenderParam('audio', 'ducking', v);
-                                        }}
-                                        className="accent-lime-400"
-                                      />
-                                      Ducking
-                                    </label>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Duck Amt (dB)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.audio.duckAmountDb}
-                                        onChange={e => updateRenderParamDraft('audio', 'duckAmountDb', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('audio', 'duckAmountDb')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'duckAmountDb')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Channel</label>
-                                      <select
-                                        value={renderParamsDraft.audio.channelMode}
-                                        onChange={e => {
-                                          const v = e.target.value;
-                                          updateRenderParamDraft('audio', 'channelMode', v);
-                                          updateRenderParam('audio', 'channelMode', v);
-                                        }}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      >
-                                        <option value="stereo">Stereo</option>
-                                        <option value="mono">Mono</option>
-                                        <option value="left">Left</option>
-                                        <option value="right">Right</option>
-                                      </select>
-                                    </div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
@@ -1331,31 +1247,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </div>
                                   <div className="grid grid-cols-2 gap-2 pt-1">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Note / language</label>
-                                      <input
-                                        value={renderParamsDraft.subtitle.language}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'language', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'language')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'language')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        placeholder="metadata only"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Timing shift (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.subtitle.timingShiftSeconds}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'timingShiftSeconds', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'timingShiftSeconds')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'timingShiftSeconds')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">FontName</label>
                                       <select
                                         value={renderParamsDraft.subtitle.fontName}
@@ -1389,7 +1280,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       />
                                     </div>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
+                                  <div className="grid grid-cols-1 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Primary</label>
                                       <input
@@ -1397,16 +1288,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         value={renderParamsDraft.subtitle.primaryColor}
                                         onChange={e => updateRenderParamDraft('subtitle', 'primaryColor', e.target.value)}
                                         onBlur={() => commitRenderParamDraftValue('subtitle', 'primaryColor')}
-                                        className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Secondary</label>
-                                      <input
-                                        type="color"
-                                        value={renderParamsDraft.subtitle.secondaryColor}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'secondaryColor', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'secondaryColor')}
                                         className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
                                       />
                                     </div>
@@ -1473,98 +1354,20 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       />
                                       Italic
                                     </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={renderParamsDraft.subtitle.underline === '1'}
-                                        onChange={e => {
-                                          const v = e.target.checked ? '1' : '0';
-                                          updateRenderParamDraft('subtitle', 'underline', v);
-                                          updateRenderParam('subtitle', 'underline', v);
-                                        }}
-                                        className="rounded border-zinc-600"
-                                      />
-                                      Underline
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={renderParamsDraft.subtitle.strikeOut === '1'}
-                                        onChange={e => {
-                                          const v = e.target.checked ? '1' : '0';
-                                          updateRenderParamDraft('subtitle', 'strikeOut', v);
-                                          updateRenderParam('subtitle', 'strikeOut', v);
-                                        }}
-                                        className="rounded border-zinc-600"
-                                      />
-                                      Strikeout
-                                    </label>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale X / Y %</label>
-                                      <div className="flex gap-2">
-                                        <input
-                                          type="number"
-                                          step="1"
-                                          value={renderParamsDraft.subtitle.scaleX}
-                                          onChange={e => updateRenderParamDraft('subtitle', 'scaleX', e.target.value)}
-                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'scaleX')}
-                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'scaleX')}
-                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        />
-                                        <input
-                                          type="number"
-                                          step="1"
-                                          value={renderParamsDraft.subtitle.scaleY}
-                                          onChange={e => updateRenderParamDraft('subtitle', 'scaleY', e.target.value)}
-                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'scaleY')}
-                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'scaleY')}
-                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        />
-                                      </div>
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Spacing / Angle</label>
-                                      <div className="flex gap-2">
-                                        <input
-                                          type="number"
-                                          step="1"
-                                          value={renderParamsDraft.subtitle.spacing}
-                                          onChange={e => updateRenderParamDraft('subtitle', 'spacing', e.target.value)}
-                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'spacing')}
-                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'spacing')}
-                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        />
-                                        <input
-                                          type="number"
-                                          step="1"
-                                          value={renderParamsDraft.subtitle.angle}
-                                          onChange={e => updateRenderParamDraft('subtitle', 'angle', e.target.value)}
-                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'angle')}
-                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'angle')}
-                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        />
-                                      </div>
-                                    </div>
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Spacing</label>
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      value={renderParamsDraft.subtitle.spacing}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'spacing', e.target.value)}
+                                      onBlur={() => commitRenderParamDraftValue('subtitle', 'spacing')}
+                                      onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'spacing')}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">BorderStyle</label>
-                                      <select
-                                        value={renderParamsDraft.subtitle.borderStyle}
-                                        onChange={e => {
-                                          const v = e.target.value;
-                                          updateRenderParamDraft('subtitle', 'borderStyle', v);
-                                          updateRenderParam('subtitle', 'borderStyle', v);
-                                        }}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      >
-                                        <option value="1">1 — outline + shadow</option>
-                                        <option value="3">3 — opaque box</option>
-                                        <option value="4">4 — outline only</option>
-                                      </select>
-                                    </div>
+                                  <div className="grid grid-cols-1 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Alignment (1–9)</label>
                                       <select
@@ -1626,33 +1429,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       />
                                     </div>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Back colour</label>
-                                      <input
-                                        type="color"
-                                        value={renderParamsDraft.subtitle.backColor}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'backColor', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'backColor')}
-                                        className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Back opacity %</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        min="0"
-                                        max="100"
-                                        value={renderParamsDraft.subtitle.backOpacity}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'backOpacity', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'backOpacity')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'backOpacity')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
+                                  <div className="grid grid-cols-1 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">WrapStyle</label>
                                       <select
@@ -1669,44 +1446,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         <option value="2">2 — no wrap</option>
                                         <option value="3">3 — smart (lower)</option>
                                       </select>
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Encoding</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.subtitle.encoding}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'encoding', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'encoding')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'encoding')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">PlayResX</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.subtitle.playResX}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'playResX', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'playResX')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'playResX')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">PlayResY</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.subtitle.playResY}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'playResY', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'playResY')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'playResY')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
                                     </div>
                                   </div>
                                 </>

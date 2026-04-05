@@ -16,7 +16,7 @@ type VaultFileDTO = {
   relativePath: string;
   sizeBytes: number;
   modifiedAt: string;
-  type: 'video' | 'audio' | 'subtitle' | 'output' | 'other';
+  type: 'video' | 'audio' | 'subtitle' | 'image' | 'output' | 'other';
   extension: string;
   durationSeconds?: number;
   linkedTo?: string;
@@ -53,6 +53,7 @@ type VaultFolderDTO = {
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
 const AUDIO_EXT = new Set(['.wav', '.mp3', '.aac', '.flac', '.ogg', '.m4a']);
 const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff']);
 const PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const PREVIEW_MAX_SECONDS = 60;
 const EDGE_TTS_CMD = process.env.EDGE_TTS_CMD?.trim() || 'edge-tts';
@@ -1082,6 +1083,7 @@ const detectType = (filePath: string, name: string) => {
   if (VIDEO_EXT.has(ext)) return 'video';
   if (AUDIO_EXT.has(ext)) return 'audio';
   if (SUB_EXT.has(ext)) return 'subtitle';
+  if (IMAGE_EXT.has(ext)) return 'image';
   if (isOutputFile(filePath, name)) return 'output';
   return 'other';
 };
@@ -2841,6 +2843,7 @@ app.get('/api/vault/text', async (req, res) => {
 const isVideoFile = (filePath: string) => VIDEO_EXT.has(path.extname(filePath).toLowerCase());
 const isAudioFile = (filePath: string) => AUDIO_EXT.has(path.extname(filePath).toLowerCase());
 const isSubtitleFile = (filePath: string) => SUB_EXT.has(path.extname(filePath).toLowerCase());
+const isImageFile = (filePath: string) => IMAGE_EXT.has(path.extname(filePath).toLowerCase());
 
 const getFfmpegPath = async () => {
   return await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
