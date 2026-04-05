@@ -100,8 +100,39 @@ type RenderBlurRegionEffect = {
 
 const num = (v: unknown, fb: number) => coerceNumber(v as string | number | null | undefined, fb) ?? fb;
 
+type RenderSubtitleAssState = {
+  language: string;
+  timingShiftSeconds: string;
+  fontName: string;
+  fontSize: string;
+  primaryColor: string;
+  secondaryColor: string;
+  outlineColor: string;
+  backColor: string;
+  backOpacity: string;
+  bold: string;
+  italic: string;
+  underline: string;
+  strikeOut: string;
+  scaleX: string;
+  scaleY: string;
+  spacing: string;
+  angle: string;
+  borderStyle: string;
+  outline: string;
+  shadow: string;
+  alignment: string;
+  marginL: string;
+  marginR: string;
+  marginV: string;
+  encoding: string;
+  wrapStyle: string;
+  playResX: string;
+  playResY: string;
+};
+
 /** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
-const DEFAULT_RENDER_SUBTITLE_ASS = {
+const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
   language: '',
   timingShiftSeconds: '0',
   fontName: 'Arial',
@@ -130,11 +161,11 @@ const DEFAULT_RENDER_SUBTITLE_ASS = {
   wrapStyle: '0',
   playResX: '1920',
   playResY: '1080'
-} as const;
+};
 
-type RenderSubtitleAssState = typeof DEFAULT_RENDER_SUBTITLE_ASS;
-
-const BASE_SUBTITLE_STYLE = {
+const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
+  language: DEFAULT_RENDER_SUBTITLE_ASS.language,
+  timingShiftSeconds: DEFAULT_RENDER_SUBTITLE_ASS.timingShiftSeconds,
   fontName: DEFAULT_RENDER_SUBTITLE_ASS.fontName,
   fontSize: DEFAULT_RENDER_SUBTITLE_ASS.fontSize,
   primaryColor: DEFAULT_RENDER_SUBTITLE_ASS.primaryColor,
@@ -161,7 +192,7 @@ const BASE_SUBTITLE_STYLE = {
   wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle,
   playResX: DEFAULT_RENDER_SUBTITLE_ASS.playResX,
   playResY: DEFAULT_RENDER_SUBTITLE_ASS.playResY
-} as const;
+};
 
 type SubtitleStylePreset = {
   id: string;
