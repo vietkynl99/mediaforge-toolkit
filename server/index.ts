@@ -9,6 +9,7 @@ import path from 'path';
 import initSqlJs from 'sql.js';
 import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR_CLI_PATH, UVR_OUTPUT_DIRNAME } from './constants.js';
 import { ttsRouter } from './tts.js';
+import { parseAssRenderStyle, writeStyledAssFile } from './subtitleAss.js';
 
 type VaultFileDTO = {
   name: string;
@@ -58,11 +59,45 @@ const EDGE_TTS_CMD = process.env.EDGE_TTS_CMD?.trim() || 'edge-tts';
 const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
 const TTS_PITCH_BASE_HZ = 200;
+const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 
 const app = express();
 const PORT = Number(process.env.VAULT_PORT ?? 3001);
 app.use(express.json({ limit: '2mb' }));
 app.use('/api/tts', ttsRouter);
+
+let cachedFonts: string[] | null = null;
+let cachedFontsAt = 0;
+
+const listSystemFonts = async (): Promise<string[]> =>
+  new Promise((resolve) => {
+    const proc = spawn('fc-list', ['-f', '%{family}\n'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: {
+        ...process.env,
+        LANG: process.env.LANG || 'C.UTF-8',
+        LC_ALL: process.env.LC_ALL || 'C.UTF-8'
+      }
+    });
+    let output = '';
+    proc.stdout.on('data', (chunk) => {
+      output += chunk.toString();
+    });
+    proc.on('error', () => resolve([]));
+    proc.on('close', (code) => {
+      if (code !== 0) return resolve([]);
+      const names = output
+        .split(/\r?\n/)
+        .flatMap(line => line.split(','))
+        .map(name => name.trim().normalize('NFC'))
+        .filter(Boolean)
+        // Drop obviously corrupted names (escaped sequences / replacement chars / controls)
+        .filter(name => !/\\u[0-9a-fA-F]{4}/.test(name))
+        .filter(name => !name.includes('�'))
+        .filter(name => !/[\p{C}]/u.test(name));
+      resolve(Array.from(new Set(names)));
+    });
+  });
 
 const dbPath = path.join(process.cwd(), 'server', 'data', 'pipelines.sqlite');
 const dbDir = path.dirname(dbPath);
@@ -326,6 +361,7 @@ const upsertTtsMetadata = (payload: {
   volume?: number;
   overlapSeconds?: number;
   overlapMode?: 'overlap' | 'truncate';
+  removeLineBreaks?: boolean;
   outputs?: string[];
 }) => {
   const relative = payload.relativePath.replace(/\\/g, '/');
@@ -357,6 +393,7 @@ const upsertTtsMetadata = (payload: {
         volume: payload.volume,
         overlapSeconds: payload.overlapSeconds,
         overlapMode: payload.overlapMode,
+        removeLineBreaks: payload.removeLineBreaks,
         outputs: payload.outputs,
         role: 'source'
       };
@@ -1288,6 +1325,17 @@ const runFfprobeWithBin = (bin: string, input: string) => new Promise<number>((r
   });
 });
 
+type TtsTaskResult = {
+  outputPath: string;
+  outputRelativePath: string;
+  voice: string;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  overlapSeconds: number;
+  overlapMode: 'overlap' | 'truncate';
+};
+
 const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   voice?: string;
   rate?: number;
@@ -1297,7 +1345,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   removeLineBreaks?: boolean;
   onProgress?: (completed: number, total: number) => void;
   onLog?: (chunk: string) => void;
-}) => {
+}): Promise<TtsTaskResult> => {
   const ext = path.extname(inputFullPath).toLowerCase();
   if (!SUB_EXT.has(ext)) {
     throw new Error('TTS input must be a subtitle file');
@@ -1664,6 +1712,22 @@ app.get('/api/tasks/vr/models', async (_req, res) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to list models';
     res.status(500).json({ error: message, models: [] });
+  }
+});
+
+app.get('/api/fonts', async (_req, res) => {
+  try {
+    const now = Date.now();
+    if (cachedFonts && now - cachedFontsAt < FONT_LIST_CACHE_MS) {
+      res.json({ fonts: cachedFonts });
+      return;
+    }
+    const fonts = await listSystemFonts();
+    cachedFonts = fonts;
+    cachedFontsAt = now;
+    res.json({ fonts });
+  } catch {
+    res.json({ fonts: [] });
   }
 });
 
@@ -2795,31 +2859,224 @@ const runFfmpeg = async (input: string, output: string) => new Promise<void>(asy
 
 const escapeFilterPath = (value: string) => value.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
 
-const runFfmpegFrameAt = async (input: string, output: string, seconds: number, subtitlePath?: string) => new Promise<void>(async (resolve, reject) => {
-  const ffmpegPath = await getFfmpegPath();
-  const safeSeconds = Math.max(0, seconds);
-  const filters: string[] = [];
-  if (subtitlePath) {
-    const escaped = escapeFilterPath(subtitlePath);
-    filters.push(`subtitles='${escaped}':charenc=UTF-8`);
+/** libass: avoid charenc on UTF-8 ASS; original_size should match PlayRes for correct placement when video is scaled. */
+const buildSubtitlesVideoFilter = (subtitlePath: string, assOriginalSize?: { w: number; h: number }) => {
+  const escaped = escapeFilterPath(subtitlePath);
+  const lower = subtitlePath.toLowerCase();
+  const isAss = lower.endsWith('.ass') || lower.endsWith('.ssa');
+  if (isAss) {
+    let f = `subtitles='${escaped}'`;
+    if (assOriginalSize && assOriginalSize.w > 0 && assOriginalSize.h > 0) {
+      f += `:original_size=${assOriginalSize.w}x${assOriginalSize.h}`;
+    }
+    return f;
   }
-  filters.push('scale=720:-1');
-  const args = [
-    '-y',
-    '-ss', safeSeconds.toFixed(3),
-    '-i', input,
-    '-frames:v', '1',
-    '-q:v', '3',
-    '-vf', filters.join(','),
-    output
-  ];
-  const proc = spawn(ffmpegPath, args, { stdio: 'ignore' });
-  proc.on('error', reject);
-  proc.on('close', code => {
-    if (code === 0) resolve();
-    else reject(new Error(`ffmpeg exited with code ${code}`));
+  return `subtitles='${escaped}':charenc=UTF-8`;
+};
+
+/** Solid black JPEG (320×240) when ffmpeg cannot produce a preview frame. */
+const RENDER_PREVIEW_BLACK_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzU4LjU0LjEwMAD/2wBDAAg+Pkk+SVVVVVVVVWRdZGhoaGRkZGRoaGhwcHCDg4NwcHBoaHBwfHyDg4+Tj4eHg4eTk5ubm7q6srLZ2eD/////xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAPABQAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//9k=',
+  'base64'
+);
+
+type BlurRegionEffect = {
+  type: 'blur_region';
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  sigma: number;
+  /** 0 = hard edge; 1–20 = feather width as % of half the shorter crop side. */
+  feather: number;
+};
+
+const clampRender = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+const BLUR_FEATHER_MAX = 10;
+
+const parseBlurRegionEffects = (raw: unknown): BlurRegionEffect[] => {
+  if (!Array.isArray(raw)) return [];
+  const out: BlurRegionEffect[] = [];
+  raw.forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const o = item as Record<string, unknown>;
+    if (o.type !== 'blur_region') return;
+    const sigma = o.sigma === undefined || o.sigma === null ? 15 : clampRender(Number(o.sigma), 0.5, 80);
+    if (!Number.isFinite(sigma)) return;
+    const feather = o.feather === undefined || o.feather === null ? 0 : clampRender(Number(o.feather), 0, BLUR_FEATHER_MAX);
+    if (!Number.isFinite(feather)) return;
+
+    let left: number;
+    let right: number;
+    let top: number;
+    let bottom: number;
+    if (
+      o.left !== undefined ||
+      o.right !== undefined ||
+      o.top !== undefined ||
+      o.bottom !== undefined
+    ) {
+      left = clampRender(Number(o.left), 0, 100);
+      right = clampRender(Number(o.right), 0, 100);
+      top = clampRender(Number(o.top), 0, 100);
+      bottom = clampRender(Number(o.bottom), 0, 100);
+    } else {
+      const x = clampRender(Number(o.x), 0, 100);
+      const y = clampRender(Number(o.y), 0, 100);
+      const w = clampRender(Number(o.w), 0, 100);
+      const h = clampRender(Number(o.h), 0, 100);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return;
+      if (w <= 0 || h <= 0) return;
+      left = x;
+      top = y;
+      right = clampRender(100 - x - w, 0, 100);
+      bottom = clampRender(100 - y - h, 0, 100);
+    }
+
+    if (!Number.isFinite(left) || !Number.isFinite(right) || !Number.isFinite(top) || !Number.isFinite(bottom)) return;
+    if (left + right >= 100 || top + bottom >= 100) return;
+    out.push({ type: 'blur_region', left, right, top, bottom, sigma, feather });
   });
-});
+  return out;
+};
+
+/** Distance-to-edge mask (0–255) for feathered blur; d = min dist to crop border in px. */
+const blurFeatherGeqLum = (featherPct: number) => {
+  const f = Math.max(0, Math.min(BLUR_FEATHER_MAX, Math.round(featherPct)));
+  if (f <= 0) return '';
+  /**
+   * ffmpeg 4.x geq splits `lum` on commas and treats `:` as filter opt separator — use only + - * / abs ().
+   * Use W/H (not w/h): lowercase w is not a valid width variable in this evaluator.
+   * min(a,b)=(a+b-abs(a-b))/2; ramp to 255 past edge via min(1,d/edge)=(1+t-abs(1-t))/2, t=d/(edge+eps).
+   */
+  const edge = `${f}*sqrt(W*W+H*H)/200`;
+  const dx = '(W-1-abs(2*X-(W-1)))/2';
+  const dy = '(H-1-abs(2*Y-(H-1)))/2';
+  const d = `((${dx})+(${dy})-abs((${dx})-(${dy})))/2`;
+  const t = `(${d})/((${edge})+0.001)`;
+  return `255*(1+(${t})-abs(1-(${t})))/2`;
+};
+
+/** Inset % from each edge → crop/overlay; order: effects then subtitles then scale. */
+const buildRenderPreviewFilterComplex = (
+  subtitlePath: string | undefined,
+  effects: BlurRegionEffect[],
+  assOriginalSize?: { w: number; h: number }
+) => {
+  const segments: string[] = [];
+  let current = '0:v';
+
+  effects.forEach((e, index) => {
+    const x = e.left;
+    const y = e.top;
+    const w = 100 - e.left - e.right;
+    const h = 100 - e.top - e.bottom;
+    const main = `mfx${index}`;
+    const tmp = `tfx${index}`;
+    const out = `vfx${index}`;
+    const sigma = e.sigma;
+    const feather = e.feather > 0 ? e.feather : 0;
+    const lumExpr = blurFeatherGeqLum(feather);
+
+    let chain: string;
+    if (!lumExpr) {
+      const bl = `bfx${index}`;
+      chain =
+        `[${current}]split=2[${main}][${tmp}];` +
+        `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,gblur=sigma=${sigma}[${bl}];` +
+        `[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`;
+    } else {
+      const co = `corig${index}`;
+      const cb = `cblur${index}`;
+      const gb = `gbfx${index}`;
+      const mk = `msk${index}`;
+      const pa = `pafx${index}`;
+      const prgb = `prgb${index}`;
+      const mr = `mrgb${index}`;
+      const vor = `vovl${index}`;
+      /**
+       * Blur must stay RGB before alphamerge: yuv420p + alphamerge loses chroma (B&W preview).
+       * bgra → alphamerge → rgba keeps patch color; main must be rgb24 before overlay with rgba,
+       * then yuv420p — overlaying RGBA onto YUV main still drops chroma in some ffmpeg paths.
+       */
+      chain =
+        `[${current}]split=2[${main}][${tmp}];` +
+        `[${main}]format=rgb24[${mr}];` +
+        `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,split=2[${co}][${cb}];` +
+        `[${cb}]gblur=sigma=${sigma},format=bgra[${gb}];` +
+        `[${co}]format=gray,geq=lum='${lumExpr}'[${mk}];` +
+        `[${gb}][${mk}]alphamerge[${pa}];` +
+        `[${pa}]format=rgba[${prgb}];` +
+        `[${mr}][${prgb}]overlay=W*${x}/100:H*${y}/100:format=auto[${vor}];` +
+        `[${vor}]format=yuv420p[${out}]`;
+    }
+    segments.push(chain);
+    current = out;
+  });
+
+  if (subtitlePath) {
+    segments.push(`[${current}]${buildSubtitlesVideoFilter(subtitlePath, assOriginalSize)}[subout]`);
+    current = 'subout';
+  }
+
+  segments.push(`[${current}]scale=720:-1[out]`);
+
+  return segments.join(';');
+};
+
+const runFfmpegFrameAt = async (
+  input: string,
+  output: string,
+  seconds: number,
+  subtitlePath?: string,
+  effects?: BlurRegionEffect[],
+  assOriginalSize?: { w: number; h: number }
+) =>
+  new Promise<void>(async (resolve, reject) => {
+    const ffmpegPath = await getFfmpegPath();
+    const safeSeconds = Math.max(0, seconds);
+    const blurEffects = effects ?? [];
+    const useComplex = blurEffects.length > 0;
+
+    /**
+     * -ss before -i is fast (seek) but breaks subtitles= / libass: frame PTS no longer matches SRT/ASS times.
+     * With any subtitle burn, seek after -i so decoded timestamps align with cue times (slower on long files).
+     */
+    const burnSubs = Boolean(subtitlePath);
+    const args: string[] = ['-y'];
+    if (!burnSubs) {
+      args.push('-ss', safeSeconds.toFixed(3));
+    }
+    args.push('-i', input);
+    if (burnSubs) {
+      args.push('-ss', safeSeconds.toFixed(3));
+    }
+    args.push('-frames:v', '1', '-q:v', '3');
+
+    if (useComplex) {
+      args.push(
+        '-filter_complex',
+        buildRenderPreviewFilterComplex(subtitlePath, blurEffects, assOriginalSize),
+        '-map',
+        '[out]'
+      );
+    } else {
+      const filters: string[] = [];
+      if (subtitlePath) {
+        filters.push(buildSubtitlesVideoFilter(subtitlePath, assOriginalSize));
+      }
+      filters.push('scale=720:-1');
+      args.push('-vf', filters.join(','));
+    }
+    args.push(output);
+
+    const proc = spawn(ffmpegPath, args, { stdio: 'ignore' });
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited with code ${code}`));
+    });
+  });
 
 app.get('/api/vault/thumb', async (req, res) => {
   const relPath = typeof req.query.path === 'string' ? req.query.path : '';
@@ -2857,6 +3114,7 @@ app.get('/api/vault/thumb', async (req, res) => {
 app.get('/api/render-preview', async (req, res) => {
   const videoRel = typeof req.query.videoPath === 'string' ? req.query.videoPath : '';
   const subtitleRel = typeof req.query.subtitlePath === 'string' ? req.query.subtitlePath : '';
+  const effectsJson = typeof req.query.effects === 'string' ? req.query.effects : '';
   const at = typeof req.query.at === 'string' ? Number(req.query.at) : 0;
   if (!videoRel) {
     res.status(400).json({ error: 'Missing videoPath' });
@@ -2879,19 +3137,73 @@ app.get('/api/render-preview', async (req, res) => {
     subtitlePath = resolved;
   }
 
+  let parsedEffects: BlurRegionEffect[] = [];
+  if (effectsJson) {
+    try {
+      const raw = JSON.parse(effectsJson) as unknown;
+      parsedEffects = parseBlurRegionEffects(raw);
+    } catch {
+      res.status(400).json({ error: 'Invalid effects JSON' });
+      return;
+    }
+  }
+
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-preview-'));
   const outputPath = path.join(tmpDir, 'frame.jpg');
+  const subtitleStyleJson = typeof req.query.subtitleStyle === 'string' ? req.query.subtitleStyle : '';
+  let previewBuf: Buffer = RENDER_PREVIEW_BLACK_JPEG;
   try {
-    await runFfmpegFrameAt(videoPath, outputPath, Number.isFinite(at) ? at : 0, subtitlePath);
-    res.setHeader('Content-Type', 'image/jpeg');
-    res.setHeader('Cache-Control', 'no-store');
-    createReadStream(outputPath).pipe(res);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to render preview';
-    res.status(500).json({ error: message });
+    let atSeconds = Number.isFinite(at) ? Math.max(0, at) : 0;
+    /** Timeline có thể dài hơn video (audio/sub dài hơn); seek quá cuối file → ffmpeg không tạo frame. */
+    try {
+      const stats = await fs.stat(videoPath);
+      let videoDur = (await getDurationSeconds(videoPath, 'video', stats)) ?? 0;
+      if (videoDur <= 0) {
+        videoDur = await runFfprobe(videoPath).catch(() => 0);
+      }
+      if (videoDur > 0) {
+        const end = Math.max(0, videoDur - 0.05);
+        atSeconds = Math.min(atSeconds, end);
+      }
+    } catch {
+      /* giữ atSeconds */
+    }
+
+    let effectiveSubtitlePath = subtitlePath;
+    let assOriginalSize: { w: number; h: number } | undefined;
+    if (subtitlePath) {
+      let stylePayload: unknown = {};
+      if (subtitleStyleJson.trim()) {
+        try {
+          stylePayload = JSON.parse(subtitleStyleJson) as unknown;
+        } catch {
+          res.status(400).json({ error: 'Invalid subtitleStyle JSON' });
+          return;
+        }
+      }
+      const style = parseAssRenderStyle(stylePayload);
+      const assOut = path.join(tmpDir, 'render-burn.ass');
+      try {
+        await writeStyledAssFile(subtitlePath, style, assOut);
+        effectiveSubtitlePath = assOut;
+        assOriginalSize = { w: style.playResX, h: style.playResY };
+      } catch {
+        /** Không parse được cue (vd. .sub) → dùng file gốc. */
+        effectiveSubtitlePath = subtitlePath;
+      }
+    }
+
+    await runFfmpegFrameAt(videoPath, outputPath, atSeconds, effectiveSubtitlePath, parsedEffects, assOriginalSize);
+    previewBuf = await fs.readFile(outputPath);
+  } catch {
+    previewBuf = RENDER_PREVIEW_BLACK_JPEG;
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
   }
+
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(previewBuf);
 });
 
 app.listen(PORT, () => {

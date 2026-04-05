@@ -31,7 +31,8 @@ import {
   Filter,
   Upload,
   MousePointer2,
-  Menu
+  Menu,
+  Save
 } from 'lucide-react';
 import { TASK_ICONS, MediaJob, JobStatus } from './types';
 
@@ -85,6 +86,331 @@ const coerceNumber = (value: string | number | null | undefined, fallback?: numb
   return fallback;
 };
 
+/** Render Studio / pipeline: blur region as inset % from each edge (like CSS top/right/bottom/left). */
+type RenderBlurRegionEffect = {
+  type: 'blur_region';
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  sigma: number;
+  /** 0 = hard edge; 1–20 softer transition toward full blur at center. */
+  feather: number;
+};
+
+const num = (v: unknown, fb: number) => coerceNumber(v as string | number | null | undefined, fb) ?? fb;
+
+/** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
+const DEFAULT_RENDER_SUBTITLE_ASS = {
+  language: '',
+  timingShiftSeconds: '0',
+  fontName: 'Arial',
+  fontSize: '48',
+  primaryColor: '#ffffff',
+  secondaryColor: '#ffffff',
+  outlineColor: '#000000',
+  backColor: '#000000',
+  backOpacity: '0',
+  bold: '0',
+  italic: '0',
+  underline: '0',
+  strikeOut: '0',
+  scaleX: '100',
+  scaleY: '100',
+  spacing: '0',
+  angle: '0',
+  borderStyle: '1',
+  outline: '2',
+  shadow: '2',
+  alignment: '2',
+  marginL: '30',
+  marginR: '30',
+  marginV: '36',
+  encoding: '-1',
+  wrapStyle: '0',
+  playResX: '1920',
+  playResY: '1080'
+} as const;
+
+type RenderSubtitleAssState = typeof DEFAULT_RENDER_SUBTITLE_ASS;
+
+const BASE_SUBTITLE_STYLE = {
+  fontName: DEFAULT_RENDER_SUBTITLE_ASS.fontName,
+  fontSize: DEFAULT_RENDER_SUBTITLE_ASS.fontSize,
+  primaryColor: DEFAULT_RENDER_SUBTITLE_ASS.primaryColor,
+  secondaryColor: DEFAULT_RENDER_SUBTITLE_ASS.secondaryColor,
+  outlineColor: DEFAULT_RENDER_SUBTITLE_ASS.outlineColor,
+  backColor: DEFAULT_RENDER_SUBTITLE_ASS.backColor,
+  backOpacity: DEFAULT_RENDER_SUBTITLE_ASS.backOpacity,
+  bold: DEFAULT_RENDER_SUBTITLE_ASS.bold,
+  italic: DEFAULT_RENDER_SUBTITLE_ASS.italic,
+  underline: DEFAULT_RENDER_SUBTITLE_ASS.underline,
+  strikeOut: DEFAULT_RENDER_SUBTITLE_ASS.strikeOut,
+  scaleX: DEFAULT_RENDER_SUBTITLE_ASS.scaleX,
+  scaleY: DEFAULT_RENDER_SUBTITLE_ASS.scaleY,
+  spacing: DEFAULT_RENDER_SUBTITLE_ASS.spacing,
+  angle: DEFAULT_RENDER_SUBTITLE_ASS.angle,
+  borderStyle: DEFAULT_RENDER_SUBTITLE_ASS.borderStyle,
+  outline: DEFAULT_RENDER_SUBTITLE_ASS.outline,
+  shadow: DEFAULT_RENDER_SUBTITLE_ASS.shadow,
+  alignment: DEFAULT_RENDER_SUBTITLE_ASS.alignment,
+  marginL: DEFAULT_RENDER_SUBTITLE_ASS.marginL,
+  marginR: DEFAULT_RENDER_SUBTITLE_ASS.marginR,
+  marginV: DEFAULT_RENDER_SUBTITLE_ASS.marginV,
+  encoding: DEFAULT_RENDER_SUBTITLE_ASS.encoding,
+  wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle,
+  playResX: DEFAULT_RENDER_SUBTITLE_ASS.playResX,
+  playResY: DEFAULT_RENDER_SUBTITLE_ASS.playResY
+} as const;
+
+type SubtitleStylePreset = {
+  id: string;
+  label: string;
+  style: Partial<RenderSubtitleAssState>;
+};
+
+const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
+  {
+    id: 'default',
+    label: 'Default',
+    style: { ...BASE_SUBTITLE_STYLE }
+  },
+  {
+    id: 'bold-white',
+    label: 'Bold',
+    style: { ...BASE_SUBTITLE_STYLE, bold: '1', outline: '3', shadow: '3' }
+  },
+  {
+    id: 'yellow',
+    label: 'Yellow',
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ffd400', secondaryColor: '#ffd400' }
+  },
+  {
+    id: 'cyan',
+    label: 'Cyan',
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#56d7ff', secondaryColor: '#56d7ff' }
+  },
+  {
+    id: 'pink',
+    label: 'Pink',
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6ad5', secondaryColor: '#ff6ad5' }
+  },
+  {
+    id: 'green',
+    label: 'Green',
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#9dff57', secondaryColor: '#9dff57' }
+  },
+  {
+    id: 'red',
+    label: 'Red',
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6b6b', secondaryColor: '#ff6b6b' }
+  },
+  {
+    id: 'orange',
+    label: 'Orange',
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff9f1c', secondaryColor: '#ff9f1c' }
+  },
+  {
+    id: 'blue',
+    label: 'Blue',
+    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#4dabff', secondaryColor: '#4dabff' }
+  },
+  {
+    id: 'dark-box',
+    label: 'Dark Box',
+    style: {
+      ...BASE_SUBTITLE_STYLE,
+      borderStyle: '3',
+      backColor: '#000000',
+      backOpacity: '75',
+      outline: '0',
+      shadow: '0'
+    }
+  },
+  {
+    id: 'light-box',
+    label: 'Light Box',
+    style: {
+      ...BASE_SUBTITLE_STYLE,
+      borderStyle: '3',
+      primaryColor: '#111111',
+      secondaryColor: '#111111',
+      outlineColor: '#ffffff',
+      backColor: '#ffffff',
+      backOpacity: '85',
+      outline: '0',
+      shadow: '0'
+    }
+  },
+  {
+    id: 'outline-only',
+    label: 'Outline',
+    style: {
+      ...BASE_SUBTITLE_STYLE,
+      borderStyle: '4',
+      outline: '4',
+      shadow: '0'
+    }
+  }
+];
+
+const VIET_SUBTITLE_FONTS = [
+  'Be Vietnam Pro',
+  'Noto Sans',
+  'Noto Sans Display',
+  'Roboto',
+  'Inter',
+  'Montserrat',
+  'Lato',
+  'Open Sans',
+  'Source Sans 3',
+  'Poppins',
+  'Merriweather',
+  'Playfair Display',
+  'Times New Roman',
+  'Arial',
+  'Tahoma',
+  'Verdana'
+];
+
+const isCleanFontName = (value: string) => {
+  if (!value) return false;
+  if (/\\u[0-9a-fA-F]{4}/.test(value)) return false;
+  if (value.includes('�')) return false;
+  if (/[\p{C}]/u.test(value)) return false;
+  return true;
+};
+
+const hexToRgba = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '').trim();
+  if (normalized.length !== 6) return `rgba(0,0,0,${alpha})`;
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const buildSubtitlePreviewStyle = (preset: SubtitleStylePreset) => {
+  const merged = { ...BASE_SUBTITLE_STYLE, ...preset.style };
+  const outline = Math.max(0, Number(merged.outline ?? 0));
+  const shadow = Math.max(0, Number(merged.shadow ?? 0));
+  const backOpacity = Math.min(100, Math.max(0, Number(merged.backOpacity ?? 0))) / 100;
+  const shadows: string[] = [];
+  if (outline > 0) {
+    const o = Math.min(6, outline);
+    shadows.push(
+      `${-o}px 0 0 ${merged.outlineColor}`,
+      `${o}px 0 0 ${merged.outlineColor}`,
+      `0 ${-o}px 0 ${merged.outlineColor}`,
+      `0 ${o}px 0 ${merged.outlineColor}`
+    );
+  }
+  if (shadow > 0) {
+    const s = Math.min(6, shadow);
+    shadows.push(`${s}px ${s}px 0 ${merged.outlineColor}`);
+  }
+  const background =
+    String(merged.borderStyle) === '3' && backOpacity > 0
+      ? hexToRgba(merged.backColor ?? '#000000', backOpacity)
+      : 'transparent';
+  return {
+    color: merged.primaryColor,
+    background,
+    fontWeight: merged.bold === '1' ? 800 : 600,
+    fontStyle: merged.italic === '1' ? 'italic' : 'normal',
+    textShadow: shadows.length ? shadows.join(', ') : 'none'
+  } as React.CSSProperties;
+};
+
+const migrateLegacySubtitleFields = (r: Record<string, unknown>): Partial<RenderSubtitleAssState> => {
+  const out: Partial<Record<string, string>> = {};
+  if (r.fontName === undefined && r.fontFamily != null && String(r.fontFamily).trim() !== '') {
+    out.fontName = String(r.fontFamily);
+  }
+  if (r.primaryColor === undefined && r.color != null) out.primaryColor = String(r.color);
+  if (r.timingShiftSeconds === undefined && r.offset != null) out.timingShiftSeconds = String(r.offset);
+  if (r.outline === undefined && r.outlineWidth != null) out.outline = String(r.outlineWidth);
+  if (r.backOpacity === undefined && r.bgOpacity != null) out.backOpacity = String(r.bgOpacity);
+  if (r.backColor === undefined && r.bgColor != null) out.backColor = String(r.bgColor);
+  if ((r.marginL === undefined || r.marginR === undefined) && r.maxWidth != null) {
+    const mw = coerceNumber(r.maxWidth as string | number, 90) ?? 90;
+    const side = Math.round(((100 - Math.min(100, Math.max(0, mw))) / 200) * 1920);
+    if (r.marginL === undefined) out.marginL = String(Math.max(0, side));
+    if (r.marginR === undefined) out.marginR = String(Math.max(0, side));
+  }
+  if (r.marginV === undefined && r.safeArea != null) {
+    const sa = coerceNumber(r.safeArea as string | number, 5) ?? 5;
+    out.marginV = String(Math.max(0, Math.round((Math.min(100, Math.max(0, sa)) / 100) * 1080)));
+  }
+  if (r.alignment === undefined && r.position != null) {
+    const p = String(r.position);
+    if (p === 'top') out.alignment = '8';
+    else if (p === 'custom') out.alignment = '5';
+    else out.alignment = '2';
+  }
+  if (r.borderStyle === undefined && r.bgOpacity != null) {
+    const bo = coerceNumber(r.bgOpacity as string | number, 0) ?? 0;
+    if (bo > 0) out.borderStyle = '3';
+  }
+  return out as Partial<RenderSubtitleAssState>;
+};
+
+const normalizeLoadedSubtitleState = (raw: unknown): RenderSubtitleAssState => {
+  const base: RenderSubtitleAssState = { ...DEFAULT_RENDER_SUBTITLE_ASS };
+  if (!raw || typeof raw !== 'object') return base;
+  const r = raw as Record<string, unknown>;
+  const leg = migrateLegacySubtitleFields(r);
+  const next = { ...base, ...leg };
+  (Object.keys(base) as (keyof RenderSubtitleAssState)[]).forEach(k => {
+    if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== '') {
+      (next as Record<string, string>)[k] = String(r[k]);
+    }
+  });
+  return next;
+};
+
+const normalizeLoadedRenderEffects = (raw: unknown): RenderBlurRegionEffect[] | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  const out: RenderBlurRegionEffect[] = [];
+  raw.forEach(item => {
+    if (!item || typeof item !== 'object') return;
+    const o = item as Record<string, unknown>;
+    if (o.type !== 'blur_region') return;
+    const sigma = Math.min(80, Math.max(0.5, num(o.sigma, 15)));
+    const feather = Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, num(o.feather, 0)));
+
+    let left: number;
+    let right: number;
+    let top: number;
+    let bottom: number;
+    if (
+      o.left !== undefined ||
+      o.right !== undefined ||
+      o.top !== undefined ||
+      o.bottom !== undefined
+    ) {
+      left = Math.min(100, Math.max(0, num(o.left, 0)));
+      right = Math.min(100, Math.max(0, num(o.right, 0)));
+      top = Math.min(100, Math.max(0, num(o.top, 0)));
+      bottom = Math.min(100, Math.max(0, num(o.bottom, 0)));
+    } else {
+      const x = Math.min(100, Math.max(0, num(o.x, 0)));
+      const y = Math.min(100, Math.max(0, num(o.y, 0)));
+      const w = Math.min(100, Math.max(0, num(o.w, 0)));
+      const h = Math.min(100, Math.max(0, num(o.h, 0)));
+      if (w <= 0 || h <= 0) return;
+      left = x;
+      top = y;
+      right = Math.min(100, Math.max(0, 100 - x - w));
+      bottom = Math.min(100, Math.max(0, 100 - y - h));
+    }
+
+    if (left + right >= 100 || top + bottom >= 100) return;
+    out.push({ type: 'blur_region', left, right, top, bottom, sigma, feather });
+  });
+  return out;
+};
+
 const StatusBadge = ({ status }: { status: JobStatus }) => {
   const configs = {
     queued: { icon: Clock, color: 'text-zinc-400 bg-zinc-400/10', label: 'Queued' },
@@ -105,15 +431,14 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
   );
 };
 
-const JobRow = ({
-  job,
-  index,
-  onContextMenu
-}: {
+type JobRowProps = {
   job: MediaJob;
   index: number;
   onContextMenu: (event: React.MouseEvent<HTMLDivElement>, job: MediaJob) => void;
-}) => (
+};
+
+function JobRow({ job, index, onContextMenu }: JobRowProps) {
+  return (
   <motion.div 
     initial={{ opacity: 0, y: 10 }}
     animate={{ opacity: 1, y: 0 }}
@@ -203,7 +528,8 @@ const JobRow = ({
       {job.durationMs !== undefined ? formatDurationMs(job.durationMs) : '--'}
     </div>
   </motion.div>
-);
+  );
+}
 
 // --- Media Vault Mock Data ---
 
@@ -574,6 +900,15 @@ const computeFolderStatus = (files: VaultFile[]) => {
 
 // --- Main App ---
 
+/** Render Studio: extra strip after content end (pixels only); logical duration = longest track. */
+const RENDER_TIMELINE_VIEW_PAD = 0.12;
+
+const RENDER_BLUR_FEATHER_MAX = 20;
+
+/** Solid black JPEG when preview cannot be loaded (matches server fallback). */
+const RENDER_PREVIEW_BLACK_DATA_URL =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzU4LjU0LjEwMAD/2wBDAAg+Pkk+SVVVVVVVVWRdZGhoaGRkZGRoaGhwcHCDg4NwcHBoaHBwfHyDg4+Tj4eHg4eTk5ubm7q6srLZ2eD/////xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAPABQAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//9k=';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
@@ -701,16 +1036,22 @@ export default function App() {
   const [pipelineSaving, setPipelineSaving] = useState(false);
   const [showRunPipeline, setShowRunPipeline] = useState(false);
   const [showRenderStudio, setShowRenderStudio] = useState(false);
-  const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(true);
-  const [renderStudioProjectOpen, setRenderStudioProjectOpen] = useState(true);
-  const [renderStudioInspectorOpen, setRenderStudioInspectorOpen] = useState<Record<'timeline' | 'video' | 'audio' | 'subtitle', boolean>>({
-    timeline: true,
+  const [renderPresetSaveMenuOpen, setRenderPresetSaveMenuOpen] = useState(false);
+  const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
+  const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(false);
+  const [renderStudioProjectOpen, setRenderStudioProjectOpen] = useState(false);
+  const [renderStudioInspectorOpen, setRenderStudioInspectorOpen] = useState<
+    Record<'timeline' | 'video' | 'audio' | 'subtitle' | 'effects', boolean>
+  >({
+    timeline: false,
     video: false,
     audio: false,
-    subtitle: false
+    subtitle: false,
+    effects: false
   });
   const [showPipelinePreview, setShowPipelinePreview] = useState(false);
   const [isEditingPipelineName, setIsEditingPipelineName] = useState(false);
+  const renderPresetMenuCloseRef = React.useRef<number | null>(null);
   const [pipelinePreviewTask, setPipelinePreviewTask] = useState<{
     type: string;
     label: string;
@@ -742,11 +1083,13 @@ export default function App() {
   const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
   const [renderPreviewLoading, setRenderPreviewLoading] = useState(false);
   const [renderPreviewError, setRenderPreviewError] = useState<string | null>(null);
+  const [saveRenderPresetLoading, setSaveRenderPresetLoading] = useState(false);
   const [renderSubtitleCues, setRenderSubtitleCues] = useState<Array<{ start: number; end: number; text: string }>>([]);
   const [renderStudioFocus, setRenderStudioFocus] = useState<'timeline' | 'item'>('timeline');
   const [renderStudioItemType, setRenderStudioItemType] = useState<'video' | 'audio' | 'subtitle' | null>(null);
   const [renderTimelineViewportWidth, setRenderTimelineViewportWidth] = useState(0);
   const renderTimelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const prevShowRenderStudioForZoomRef = useRef(false);
   const renderTimelineDragRef = useRef<{ active: boolean; startX: number; scrollLeft: number; moved: boolean }>({
     active: false,
     startX: 0,
@@ -789,25 +1132,8 @@ export default function App() {
       pan: '0',
       channelMode: 'stereo'
     },
-    subtitle: {
-      language: '',
-      stylePreset: 'default',
-      fontFamily: '',
-      fontSize: '32',
-      color: '#ffffff',
-      outlineColor: '#000000',
-      outlineWidth: '2',
-      shadow: '2',
-      position: 'bottom',
-      positionX: '50',
-      positionY: '90',
-      maxWidth: '90',
-      lineHeight: '1.2',
-      bgColor: '#000000',
-      bgOpacity: '0',
-      safeArea: '5',
-      offset: '0'
-    }
+    subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
+    effects: [] as RenderBlurRegionEffect[]
   });
   const runAgainPrefillRef = useRef(false);
   const [paramPresets, setParamPresets] = useState<Array<{
@@ -828,6 +1154,8 @@ export default function App() {
     Gender?: string;
   }>>([]);
   const [previewTtsVoicesLoading, setPreviewTtsVoicesLoading] = useState(false);
+  const [subtitleFontOptions, setSubtitleFontOptions] = useState<string[]>(VIET_SUBTITLE_FONTS);
+  const [subtitleFontLoading, setSubtitleFontLoading] = useState(false);
   const [previewCustomParams, setPreviewCustomParams] = useState<Record<string, string | number>>({});
   const [runPipelineId, setRunPipelineId] = useState<string | null>(null);
   const [runPipelineGraph, setRunPipelineGraph] = useState<any>(null);
@@ -848,7 +1176,7 @@ export default function App() {
   const [downloadAnalyzeLoading, setDownloadAnalyzeLoading] = useState(false);
   const [downloadAnalyzeError, setDownloadAnalyzeError] = useState<string | null>(null);
   const [downloadAnalyzeResult, setDownloadAnalyzeResult] = useState<any>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [runPipelinePrefsReady, setRunPipelinePrefsReady] = useState(false);
   const runPipelinePrefsReadyRef = useRef(false);
   const runPipelinePrefsSourceRef = useRef<Record<string, string> | null>(null);
@@ -892,7 +1220,7 @@ export default function App() {
   const renderVideoDuration = renderVideoFile?.durationSeconds ?? parseDurationToSeconds(renderVideoFile?.duration);
   const renderAudioDuration = renderAudioFile?.durationSeconds ?? parseDurationToSeconds(renderAudioFile?.duration);
   const renderSubtitleDuration = renderSubtitleFile?.durationSeconds ?? parseDurationToSeconds(renderSubtitleFile?.duration);
-  const updateRenderParam = (section: keyof typeof renderParams, key: string, value: any) => {
+  const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string, value: any) => {
     setRenderParams(prev => ({
       ...prev,
       [section]: {
@@ -901,14 +1229,81 @@ export default function App() {
       }
     }));
   };
+
+  const [renderParamsDraft, setRenderParamsDraft] = useState(renderParams);
+
+  useEffect(() => {
+    setRenderParamsDraft(renderParams);
+  }, [renderParams]);
+
+  const updateRenderParamDraft = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string, value: any) => {
+    setRenderParamsDraft(prev => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        [key]: value
+      }
+    }));
+  };
+
+  const commitRenderParamDraftValue = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string) => {
+    const value = (renderParamsDraft as any)?.[section]?.[key];
+    updateRenderParam(section, key, value);
+  };
+
+  const commitRenderParamDraftOnEnter = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string) =>
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        commitRenderParamDraftValue(section, key);
+      }
+    };
+
+  const updateRenderEffectDraft = (index: number, patch: Partial<RenderBlurRegionEffect>) => {
+    setRenderParamsDraft(prev => ({
+      ...prev,
+      effects: prev.effects.map((e, i) => (i === index ? { ...e, ...patch } : e))
+    }));
+  };
+
+  const commitRenderEffectDraftValue = (index: number, key: keyof RenderBlurRegionEffect) => {
+    const value = renderParamsDraft.effects[index]?.[key];
+    if (value === undefined) return;
+    patchRenderEffect(index, { [key]: value } as Partial<RenderBlurRegionEffect>);
+  };
+
+  const patchRenderEffect = (index: number, patch: Partial<RenderBlurRegionEffect>) => {
+    setRenderParams(prev => ({
+      ...prev,
+      effects: prev.effects.map((e, i) => (i === index ? { ...e, ...patch } : e))
+    }));
+  };
+
+  const removeRenderEffect = (index: number) => {
+    setRenderParams(prev => ({
+      ...prev,
+      effects: prev.effects.filter((_, i) => i !== index)
+    }));
+  };
+
+  const addBlurRegionEffect = () => {
+    setRenderParams(prev => ({
+      ...prev,
+      effects: [
+        ...prev.effects,
+        { type: 'blur_region' as const, left: 10, right: 10, top: 40, bottom: 40, sigma: 20, feather: 0 }
+      ]
+    }));
+  };
   const renderTimelineMax = Math.max(
     renderVideoDuration ?? 0,
     renderAudioDuration ?? 0,
     renderSubtitleDuration ?? 0
   );
-  const renderTimelineDuration = renderTimelineMax > 0
-    ? renderTimelineMax * 1.2
-    : 0;
+  /** Thời lượng thật = track dài nhất (hiển thị, preview, export). */
+  const renderTimelineDuration = renderTimelineMax > 0 ? renderTimelineMax : 0;
+  /** Chỉ UI: strip timeline rộng thêm một phần sau điểm cuối nội dung (scroll / click map theo giá trị này, thời gian clamp về duration thật). */
+  const renderTimelineViewDuration =
+    renderTimelineDuration > 0 ? renderTimelineDuration * (1 + RENDER_TIMELINE_VIEW_PAD) : 0;
   const renderSubtitleLanes = useMemo(() => {
     if (renderSubtitleCues.length === 0) return [];
     const sorted = [...renderSubtitleCues].sort((a, b) => {
@@ -933,12 +1328,10 @@ export default function App() {
   }, [renderSubtitleCues]);
   const renderSubtitleLaneHeight = 24;
   const renderSubtitleTrackHeight = Math.max(1, renderSubtitleLanes.length) * renderSubtitleLaneHeight;
-  const renderSubtitleActiveText = useMemo(() => {
-    if (renderSubtitleCues.length === 0) return '';
-    const active = renderSubtitleCues.filter(cue => renderPlayheadSeconds >= cue.start && renderPlayheadSeconds <= cue.end);
-    if (active.length === 0) return '';
-    return active.map(cue => cue.text).join(' ');
-  }, [renderSubtitleCues, renderPlayheadSeconds]);
+  const showRenderTimelineSubtitleTrack = Boolean(renderSubtitleFile);
+  const showRenderTimelineVideoTrack = Boolean(renderVideoFile);
+  const showRenderTimelineAudioTrack = Boolean(renderAudioFile);
+  const showRenderTimelineEffectTracks = renderParams.effects.length > 0;
   const renderSelectedItem = useMemo(() => {
     if (renderStudioFocus !== 'item') return null;
     const files = runPipelineProject?.files ?? [];
@@ -947,10 +1340,10 @@ export default function App() {
     if (renderStudioItemType === 'subtitle') return files.find(file => file.id === renderSubtitleId) ?? null;
     return null;
   }, [renderStudioFocus, renderStudioItemType, runPipelineProject?.files, renderVideoId, renderAudioId, renderSubtitleId]);
-  const renderTimelineMinScale = renderTimelineDuration > 0 && renderTimelineViewportWidth > 0
-    ? Math.min(1, Math.max(0.1, renderTimelineViewportWidth / (renderTimelineDuration * 24)))
+  const renderTimelineMinScale = renderTimelineViewDuration > 0 && renderTimelineViewportWidth > 0
+    ? Math.min(1, Math.max(0.1, renderTimelineViewportWidth / (renderTimelineViewDuration * 24)))
     : 0.1;
-  const renderTimelineWidth = Math.max(320, renderTimelineDuration * 24 * renderTimelineScale);
+  const renderTimelineWidth = Math.max(320, renderTimelineViewDuration * 24 * renderTimelineScale);
   const renderTimelineTickCount = Math.max(4, Math.round(renderTimelineWidth / 160));
   const downloadAnalyzeData = downloadAnalyzeResult?.data ?? null;
   const downloadAnalyzeWarnings: string[] = Array.isArray(downloadAnalyzeResult?.warnings) ? downloadAnalyzeResult.warnings : [];
@@ -1136,6 +1529,35 @@ export default function App() {
     return normalize(currentValue) !== normalize(presetParams[key]);
   };
 
+  const normalizePresetValue = (value: any) => (value === null || value === undefined ? '' : String(value));
+
+  const isRenderPresetDirty = React.useMemo(() => {
+    const selectedId = getSelectedParamPresetId('render');
+    if (!selectedId) return false;
+    const presetParams = getSelectedParamPresetParams('render');
+    if (!presetParams || typeof presetParams !== 'object') return false;
+    for (const [key, value] of Object.entries(presetParams)) {
+      if (key === 'effects.list') {
+        try {
+          const parsed = JSON.parse(String(value));
+          const normalized = normalizeLoadedRenderEffects(parsed);
+          if (normalized === undefined) continue;
+          if (JSON.stringify(normalized) !== JSON.stringify(renderParams.effects)) return true;
+        } catch {
+          continue;
+        }
+        continue;
+      }
+      if (!key.includes('.')) continue;
+      const [section, field] = key.split('.');
+      if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle') continue;
+      const sectionObj = (renderParams as any)[section];
+      if (!sectionObj || !(field in sectionObj)) continue;
+      if (normalizePresetValue(sectionObj[field]) !== normalizePresetValue(value)) return true;
+    }
+    return false;
+  }, [renderParams, runPipelineParamPreset.render, paramPresets]);
+
   const applyParamPresetParams = (taskType: string) => {
     const params = getSelectedParamPresetParams(taskType);
     if (!params || typeof params !== 'object') return;
@@ -1175,13 +1597,23 @@ export default function App() {
     }
     if (taskType === 'render') {
       Object.entries(params).forEach(([key, value]) => {
+        if (key === 'effects.list') {
+          if (value === undefined || value === null) return;
+          try {
+            const parsed = JSON.parse(String(value));
+            const normalized = normalizeLoadedRenderEffects(parsed);
+            if (normalized !== undefined) {
+              setRenderParams(prev => ({ ...prev, effects: normalized }));
+            }
+          } catch {
+            /* ignore invalid preset JSON */
+          }
+          return;
+        }
         if (!key.includes('.')) return;
         const [section, field] = key.split('.');
         if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle') return;
         if (value === undefined || value === null) return;
-        if (section === 'subtitle' && field === 'stylePreset') {
-          setRenderSubStyle(String(value));
-        }
         const normalized = field === 'normalize' || field === 'ducking'
           ? Boolean(value)
           : String(value);
@@ -1195,6 +1627,30 @@ export default function App() {
     if (value !== 'custom') {
       applyParamPresetParams(taskType);
     }
+  };
+
+  const applySubtitleStylePreset = (preset: SubtitleStylePreset) => {
+    setRenderParams(prev => ({
+      ...prev,
+      subtitle: {
+        ...prev.subtitle,
+        ...BASE_SUBTITLE_STYLE,
+        ...preset.style,
+        fontName: prev.subtitle.fontName,
+        fontSize: prev.subtitle.fontSize
+      }
+    }));
+  };
+
+  const isSubtitlePresetActive = (preset: SubtitleStylePreset) => {
+    const merged = { ...BASE_SUBTITLE_STYLE, ...preset.style };
+    return (Object.keys(merged) as Array<keyof RenderSubtitleAssState>).every(key => {
+      if (key === 'fontName' || key === 'fontSize') return true;
+      const current = renderParams.subtitle[key];
+      const next = merged[key];
+      if (next === undefined) return true;
+      return String(current) === String(next);
+    });
   };
 
   const onRenderTimelineMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1236,11 +1692,12 @@ export default function App() {
     }
     setRenderStudioFocus('timeline');
     setRenderStudioItemType(null);
-    if (renderTimelineDuration <= 0) return;
+    if (renderTimelineDuration <= 0 || renderTimelineViewDuration <= 0) return;
     const rect = target.getBoundingClientRect();
     const x = event.clientX - rect.left + target.scrollLeft;
     const clamped = Math.max(0, Math.min(renderTimelineWidth, x));
-    const seconds = (clamped / renderTimelineWidth) * renderTimelineDuration;
+    const secondsRaw = (clamped / renderTimelineWidth) * renderTimelineViewDuration;
+    const seconds = Math.max(0, Math.min(renderTimelineDuration, secondsRaw));
     setRenderPlayheadSeconds(seconds);
   };
 
@@ -1280,13 +1737,31 @@ export default function App() {
       cancelAnimationFrame(raf);
       observer.disconnect();
     };
-  }, [showRenderStudio, renderTimelineDuration]);
+  }, [showRenderStudio, renderTimelineViewDuration]);
 
   useEffect(() => {
     if (renderTimelineScale < renderTimelineMinScale) {
       setRenderTimelineScale(renderTimelineMinScale);
     }
   }, [renderTimelineMinScale, renderTimelineScale]);
+
+  useEffect(() => {
+    if (showRenderStudio) {
+      if (!prevShowRenderStudioForZoomRef.current) {
+        setRenderTimelineScale(renderTimelineMinScale);
+      }
+      prevShowRenderStudioForZoomRef.current = true;
+    } else {
+      prevShowRenderStudioForZoomRef.current = false;
+    }
+  }, [showRenderStudio, renderTimelineMinScale]);
+
+  useEffect(() => {
+    if (renderTimelineDuration <= 0) return;
+    setRenderPlayheadSeconds(prev => Math.min(prev, renderTimelineDuration));
+  }, [renderTimelineDuration]);
+
+  const renderPreviewParamsKey = JSON.stringify(renderParams);
 
   useEffect(() => {
     if (!showRenderStudio) return;
@@ -1301,41 +1776,77 @@ export default function App() {
       return;
     }
     const controller = new AbortController();
+    const RENDER_PREVIEW_DEBOUNCE_MS = 380;
     const timeout = window.setTimeout(async () => {
       try {
         setRenderPreviewLoading(true);
         setRenderPreviewError(null);
         const params = new URLSearchParams({
           videoPath: renderVideoFile.relativePath,
-          at: String(Math.max(0, renderPlayheadSeconds))
+          at: String(
+            Math.max(
+              0,
+              renderTimelineDuration > 0
+                ? Math.min(renderPlayheadSeconds, renderTimelineDuration)
+                : renderPlayheadSeconds
+            )
+          )
         });
         if (renderSubtitleFile?.relativePath) {
           params.set('subtitlePath', renderSubtitleFile.relativePath);
+          params.set('subtitleStyle', JSON.stringify(renderParams.subtitle));
+        }
+        if (renderParams.effects.length > 0) {
+          params.set('effects', JSON.stringify(renderParams.effects));
         }
         const response = await fetch(`/api/render-preview?${params.toString()}`, { signal: controller.signal });
+        const useBlackPreview = () => {
+          setRenderPreviewUrl(prev => {
+            if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+            return RENDER_PREVIEW_BLACK_DATA_URL;
+          });
+          setRenderPreviewError(null);
+        };
+
         if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || 'Unable to render preview');
+          useBlackPreview();
+          return;
         }
         const blob = await response.blob();
+        if (!blob.type.startsWith('image/')) {
+          useBlackPreview();
+          return;
+        }
         const url = URL.createObjectURL(blob);
         setRenderPreviewUrl(prev => {
-          if (prev) URL.revokeObjectURL(prev);
+          if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
           return url;
         });
+        setRenderPreviewError(null);
       } catch (error) {
         if (controller.signal.aborted) return;
-        const message = error instanceof Error ? error.message : 'Unable to render preview';
-        setRenderPreviewError(message);
+        setRenderPreviewUrl(prev => {
+          if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+          return RENDER_PREVIEW_BLACK_DATA_URL;
+        });
+        setRenderPreviewError(null);
       } finally {
         if (!controller.signal.aborted) setRenderPreviewLoading(false);
       }
-    }, 150);
+    }, RENDER_PREVIEW_DEBOUNCE_MS);
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [showRenderStudio, renderStudioFocus, renderVideoFile?.relativePath, renderSubtitleFile?.relativePath, renderPlayheadSeconds]);
+  }, [
+    showRenderStudio,
+    renderStudioFocus,
+    renderVideoFile?.relativePath,
+    renderSubtitleFile?.relativePath,
+    renderPlayheadSeconds,
+    renderTimelineDuration,
+    renderPreviewParamsKey
+  ]);
 
   useEffect(() => {
     if (!showRenderStudio) return;
@@ -1485,23 +1996,35 @@ export default function App() {
         { name: 'audio.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
         { name: 'audio.pan', desc: 'Pan (-100..100)', type: 'number', default: 0 },
         { name: 'audio.channelMode', desc: 'stereo | mono | left | right', type: 'string', default: 'stereo' },
-        { name: 'subtitle.language', desc: 'Subtitle language code', type: 'string', default: '' },
-        { name: 'subtitle.stylePreset', desc: 'Subtitle style preset', type: 'string', default: 'default' },
-        { name: 'subtitle.fontFamily', desc: 'Font family', type: 'string', default: '' },
-        { name: 'subtitle.fontSize', desc: 'Font size', type: 'number', default: 32 },
-        { name: 'subtitle.color', desc: 'Font color', type: 'string', default: '#ffffff' },
-        { name: 'subtitle.outlineColor', desc: 'Outline color', type: 'string', default: '#000000' },
-        { name: 'subtitle.outlineWidth', desc: 'Outline width', type: 'number', default: 2 },
-        { name: 'subtitle.shadow', desc: 'Shadow', type: 'number', default: 2 },
-        { name: 'subtitle.position', desc: 'bottom | top | custom', type: 'string', default: 'bottom' },
-        { name: 'subtitle.positionX', desc: 'Position X (%)', type: 'number', default: 50 },
-        { name: 'subtitle.positionY', desc: 'Position Y (%)', type: 'number', default: 90 },
-        { name: 'subtitle.maxWidth', desc: 'Max width (%)', type: 'number', default: 90 },
-        { name: 'subtitle.lineHeight', desc: 'Line height', type: 'number', default: 1.2 },
-        { name: 'subtitle.bgColor', desc: 'Background color', type: 'string', default: '#000000' },
-        { name: 'subtitle.bgOpacity', desc: 'Background opacity (%)', type: 'number', default: 0 },
-        { name: 'subtitle.safeArea', desc: 'Safe area (%)', type: 'number', default: 5 },
-        { name: 'subtitle.offset', desc: 'Time offset (s)', type: 'number', default: 0 }
+        { name: 'subtitle.language', desc: 'Note / language tag (metadata only)', type: 'string', default: '' },
+        { name: 'subtitle.timingShiftSeconds', desc: 'Shift all cues by seconds (ASS timing)', type: 'number', default: 0 },
+        { name: 'subtitle.fontName', desc: 'ASS Fontname (libass)', type: 'string', default: 'Arial' },
+        { name: 'subtitle.fontSize', desc: 'Font size (px at PlayRes)', type: 'number', default: 72 },
+        { name: 'subtitle.primaryColor', desc: 'Primary fill #RRGGBB', type: 'string', default: '#ffffff' },
+        { name: 'subtitle.secondaryColor', desc: 'Secondary (karaoke) #RRGGBB', type: 'string', default: '#ffffff' },
+        { name: 'subtitle.outlineColor', desc: 'Outline #RRGGBB', type: 'string', default: '#000000' },
+        { name: 'subtitle.backColor', desc: 'Back / box #RRGGBB', type: 'string', default: '#000000' },
+        { name: 'subtitle.backOpacity', desc: 'Back opacity 0–100 (use with BorderStyle 3)', type: 'number', default: 0 },
+        { name: 'subtitle.bold', desc: '1 = bold', type: 'string', default: '0' },
+        { name: 'subtitle.italic', desc: '1 = italic', type: 'string', default: '0' },
+        { name: 'subtitle.underline', desc: '1 = underline', type: 'string', default: '0' },
+        { name: 'subtitle.strikeOut', desc: '1 = strikeout', type: 'string', default: '0' },
+        { name: 'subtitle.scaleX', desc: 'ScaleX %', type: 'number', default: 100 },
+        { name: 'subtitle.scaleY', desc: 'ScaleY %', type: 'number', default: 100 },
+        { name: 'subtitle.spacing', desc: 'Character spacing', type: 'number', default: 0 },
+        { name: 'subtitle.angle', desc: 'Rotation deg', type: 'number', default: 0 },
+        { name: 'subtitle.borderStyle', desc: '1 outline+shadow, 3 opaque box, 4 outline only', type: 'number', default: 1 },
+        { name: 'subtitle.outline', desc: 'Outline width', type: 'number', default: 2 },
+        { name: 'subtitle.shadow', desc: 'Shadow depth', type: 'number', default: 2 },
+        { name: 'subtitle.alignment', desc: 'ASS numpad 1–9', type: 'number', default: 2 },
+        { name: 'subtitle.marginL', desc: 'MarginL px (PlayRes)', type: 'number', default: 30 },
+        { name: 'subtitle.marginR', desc: 'MarginR px (PlayRes)', type: 'number', default: 30 },
+        { name: 'subtitle.marginV', desc: 'MarginV px (PlayRes)', type: 'number', default: 36 },
+        { name: 'subtitle.encoding', desc: 'ASS style Encoding (-1 = default / UTF-8)', type: 'number', default: -1 },
+        { name: 'subtitle.wrapStyle', desc: 'Script WrapStyle 0–3', type: 'number', default: 0 },
+        { name: 'subtitle.playResX', desc: 'PlayResX', type: 'number', default: 1920 },
+        { name: 'subtitle.playResY', desc: 'PlayResY', type: 'number', default: 1080 },
+        { name: 'effects.list', desc: 'JSON array of effects (blur_region: left,right,top,bottom,sigma,feather 0–20)', type: 'string', default: '[]' }
       ]
     }
   ]), []);
@@ -1543,6 +2066,71 @@ export default function App() {
       }
     });
     return `${taskLabel} preset ${maxIndex + 1}`;
+  };
+
+  const buildRenderParamPresetPayload = (): Record<string, string | boolean> => {
+    const out: Record<string, string | boolean> = {};
+    out['timeline.framerate'] = String(renderParams.timeline.framerate);
+    out['timeline.resolution'] = String(renderParams.timeline.resolution);
+    Object.entries(renderParams.video).forEach(([k, v]) => {
+      out[`video.${k}`] = typeof v === 'boolean' ? v : String(v);
+    });
+    Object.entries(renderParams.audio).forEach(([k, v]) => {
+      out[`audio.${k}`] = typeof v === 'boolean' ? v : String(v);
+    });
+    Object.entries(renderParams.subtitle).forEach(([k, v]) => {
+      out[`subtitle.${k}`] = typeof v === 'boolean' ? v : String(v);
+    });
+    out['effects.list'] = JSON.stringify(renderParams.effects);
+    return out;
+  };
+
+  const saveRenderStudioParamPreset = async (mode: 'save' | 'saveAs') => {
+    const defaultName = getDefaultParamPresetName('Render', 'render');
+    const selectedId = getSelectedParamPresetId('render');
+    const selectedPreset = getSelectedParamPreset('render');
+    let label = (selectedPreset?.label ?? '').trim();
+    let targetId: number | null = null;
+
+    if (mode === 'save' && selectedId) {
+      targetId = selectedId;
+      if (!label) label = defaultName;
+    } else {
+      const labelInput = window.prompt('Tên preset:', label || defaultName);
+      if (labelInput === null) return;
+      label = labelInput.trim();
+      if (!label) {
+        showToast('Nhập tên preset.', 'warning');
+        return;
+      }
+    }
+
+    const params = buildRenderParamPresetPayload();
+    setSaveRenderPresetLoading(true);
+    try {
+      const response = await fetch('/api/param-presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskType: 'render', params, label, ...(targetId ? { id: targetId } : {}) })
+      });
+      if (!response.ok) throw new Error('save failed');
+      const data = await response.json().catch(() => ({}));
+      const savedId = Number(data?.id);
+      await loadParamPresets();
+      if (Number.isFinite(savedId)) {
+        setRunPipelineParamPreset(prev => ({ ...prev, render: `preset:${savedId}` }));
+      }
+      showToast(
+        mode === 'save' && targetId
+          ? 'Đã lưu preset Render.'
+          : 'Đã lưu preset Render mới.',
+        'success'
+      );
+    } catch {
+      showToast('Không lưu được preset.', 'error');
+    } finally {
+      setSaveRenderPresetLoading(false);
+    }
   };
 
   const openParamPresetEditor = (taskType?: string, mode: 'create' | 'edit' = 'create') => {
@@ -1628,11 +2216,10 @@ export default function App() {
       await fetch(`/api/param-presets/${presetId}`, {
         method: 'DELETE'
       });
-      setParamPresetSelection(prev => {
-        if (prev[taskType] !== presetId) return prev;
-        const next = { ...prev };
-        next[taskType] = null;
-        return next;
+      setRunPipelineParamPreset(prev => {
+        const selected = prev[taskType];
+        if (selected !== `preset:${presetId}`) return prev;
+        return { ...prev, [taskType]: 'custom' };
       });
       showToast('Param preset deleted.', 'success');
       await loadParamPresets();
@@ -1892,7 +2479,11 @@ export default function App() {
             timeline: { ...prev.timeline, ...(data.render.renderParams.timeline ?? {}) },
             video: { ...prev.video, ...(data.render.renderParams.video ?? {}) },
             audio: { ...prev.audio, ...(data.render.renderParams.audio ?? {}) },
-            subtitle: { ...prev.subtitle, ...(data.render.renderParams.subtitle ?? {}) }
+            subtitle: normalizeLoadedSubtitleState({
+              ...prev.subtitle,
+              ...(data.render.renderParams.subtitle ?? {})
+            }),
+            effects: normalizeLoadedRenderEffects(data.render.renderParams.effects) ?? prev.effects
           }));
         }
       }
@@ -2024,6 +2615,32 @@ export default function App() {
     previewTtsAudioRef.current.load();
     previewTtsAudioRef.current.currentTime = 0;
   }, [previewTtsUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFonts = async () => {
+      setSubtitleFontLoading(true);
+      try {
+        const response = await fetch('/api/fonts');
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        const fonts = Array.isArray(data?.fonts)
+          ? data.fonts.map((font: any) => String(font)).filter(isCleanFontName)
+          : [];
+        const merged = Array.from(new Set([...fonts, ...VIET_SUBTITLE_FONTS]));
+        merged.sort((a, b) => a.localeCompare(b));
+        if (!cancelled) setSubtitleFontOptions(merged);
+      } catch {
+        // ignore font load errors
+      } finally {
+        if (!cancelled) setSubtitleFontLoading(false);
+      }
+    };
+    loadFonts();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openPipelineEditor = async (pipeline: PipelineSummary) => {
     if (pipeline.kind !== 'saved') return;
@@ -2880,25 +3497,46 @@ export default function App() {
           },
           subtitle: {
             language: renderParams.subtitle.language || null,
-            stylePreset: renderParams.subtitle.stylePreset,
-            fontFamily: renderParams.subtitle.fontFamily || null,
-            fontSize: coerceNumber(renderParams.subtitle.fontSize, 32),
-            color: renderParams.subtitle.color,
+            timingShiftSeconds: coerceNumber(renderParams.subtitle.timingShiftSeconds, 0),
+            fontName: renderParams.subtitle.fontName || null,
+            fontSize: coerceNumber(renderParams.subtitle.fontSize, 48),
+            primaryColor: renderParams.subtitle.primaryColor,
+            secondaryColor: renderParams.subtitle.secondaryColor,
             outlineColor: renderParams.subtitle.outlineColor,
-            outlineWidth: coerceNumber(renderParams.subtitle.outlineWidth, 2),
+            backColor: renderParams.subtitle.backColor,
+            backOpacity: coerceNumber(renderParams.subtitle.backOpacity, 0),
+            bold: renderParams.subtitle.bold === '1',
+            italic: renderParams.subtitle.italic === '1',
+            underline: renderParams.subtitle.underline === '1',
+            strikeOut: renderParams.subtitle.strikeOut === '1',
+            scaleX: coerceNumber(renderParams.subtitle.scaleX, 100),
+            scaleY: coerceNumber(renderParams.subtitle.scaleY, 100),
+            spacing: coerceNumber(renderParams.subtitle.spacing, 0),
+            angle: coerceNumber(renderParams.subtitle.angle, 0),
+            borderStyle: coerceNumber(renderParams.subtitle.borderStyle, 1),
+            outline: coerceNumber(renderParams.subtitle.outline, 2),
             shadow: coerceNumber(renderParams.subtitle.shadow, 2),
-            position: {
-              mode: renderParams.subtitle.position,
-              x: coerceNumber(renderParams.subtitle.positionX, 50),
-              y: coerceNumber(renderParams.subtitle.positionY, 90)
-            },
-            maxWidth: coerceNumber(renderParams.subtitle.maxWidth, 90),
-            lineHeight: coerceNumber(renderParams.subtitle.lineHeight, 1.2),
-            bgColor: renderParams.subtitle.bgColor,
-            bgOpacity: coerceNumber(renderParams.subtitle.bgOpacity, 0),
-            safeArea: coerceNumber(renderParams.subtitle.safeArea, 5),
-            offset: coerceNumber(renderParams.subtitle.offset, 0)
-          }
+            alignment: coerceNumber(renderParams.subtitle.alignment, 2),
+            marginL: coerceNumber(renderParams.subtitle.marginL, 30),
+            marginR: coerceNumber(renderParams.subtitle.marginR, 30),
+            marginV: coerceNumber(renderParams.subtitle.marginV, 36),
+            encoding: coerceNumber(renderParams.subtitle.encoding, -1),
+            wrapStyle: coerceNumber(renderParams.subtitle.wrapStyle, 0),
+            playResX: coerceNumber(renderParams.subtitle.playResX, 1920),
+            playResY: coerceNumber(renderParams.subtitle.playResY, 1080)
+          },
+          effects: renderParams.effects
+            .map(effect => {
+              const left = Math.min(100, Math.max(0, coerceNumber(effect.left, 0) ?? 0));
+              const right = Math.min(100, Math.max(0, coerceNumber(effect.right, 0) ?? 0));
+              const top = Math.min(100, Math.max(0, coerceNumber(effect.top, 0) ?? 0));
+              const bottom = Math.min(100, Math.max(0, coerceNumber(effect.bottom, 0) ?? 0));
+              const sigma = Math.min(80, Math.max(0.5, coerceNumber(effect.sigma, 15) ?? 15));
+              const feather = Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, coerceNumber(effect.feather, 0) ?? 0));
+              if (left + right >= 100 || top + bottom >= 100) return null;
+              return { type: 'blur_region' as const, left, right, top, bottom, sigma, feather };
+            })
+            .filter((e): e is NonNullable<typeof e> => e !== null)
         };
       }
       if (overwrite) {
@@ -3062,14 +3700,16 @@ export default function App() {
     setVaultFileId(selectedFolder.files[0]?.id ?? null);
   }, [selectedFolder, vaultFileId]);
 
-
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-300 font-sans selection:bg-lime-500/30 selection:text-lime-200">
       {/* Sidebar Navigation Rail */}
       <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} border-r border-zinc-800 flex flex-col p-4 gap-6 transition-all duration-300`}>
         <button
+          type="button"
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3 px-2'} mb-2 w-full text-left`}
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3 px-2'} mb-2 w-full text-left rounded-lg py-2 hover:bg-zinc-900/60 transition-colors`}
         >
           <div className="w-8 h-8 bg-lime-500 rounded-lg flex items-center justify-center text-zinc-950 font-black italic">MF</div>
           {!sidebarCollapsed && <h1 className="text-lg font-bold text-zinc-100 tracking-tight">MediaForge</h1>}
@@ -3255,21 +3895,22 @@ export default function App() {
                       jobs
                         .slice((jobPage - 1) * 10, jobPage * 10)
                         .map((job, index) => (
-                        <JobRow
-                          key={job.id}
-                          job={job}
-                          index={(jobPage - 1) * 10 + index + 1}
-                          onContextMenu={(event, targetJob) => {
-                            event.preventDefault();
-                            setJobContextMenu({
-                              open: true,
-                              x: event.clientX,
-                              y: event.clientY,
-                              jobId: targetJob.id
-                            });
-                          }}
-                        />
-                      ))
+                          <React.Fragment key={job.id}>
+                            <JobRow
+                              job={job}
+                              index={(jobPage - 1) * 10 + index + 1}
+                              onContextMenu={(event, targetJob) => {
+                                event.preventDefault();
+                                setJobContextMenu({
+                                  open: true,
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                  jobId: targetJob.id
+                                });
+                              }}
+                            />
+                          </React.Fragment>
+                        ))
                     )}
                   </div>
                 </div>
@@ -5393,9 +6034,8 @@ export default function App() {
           )}
 
           {showRenderStudio && runPipelineHasRender && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-              <div className="absolute inset-0" onClick={() => setShowRenderStudio(false)} />
-              <div className="relative w-[min(1480px,98vw)] h-[min(920px,94vh)] bg-zinc-950/95 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="fixed inset-0 z-[60] bg-zinc-950">
+              <div className="relative w-full h-full bg-zinc-950/95 border border-zinc-800 rounded-none shadow-none overflow-hidden flex flex-col">
                 <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800 bg-gradient-to-r from-zinc-900/80 via-zinc-900/40 to-zinc-950/90">
                   <div className="flex items-center gap-3">
                     <div className="h-9 w-9 rounded-xl bg-lime-500/15 text-lime-400 flex items-center justify-center">
@@ -5416,7 +6056,7 @@ export default function App() {
                       onClick={() => setShowRenderStudio(false)}
                       className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
                     >
-                      Close
+                      Back
                     </button>
                     <button
                       onClick={runPipelineJob}
@@ -5428,14 +6068,57 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-[260px_minmax(0,1fr)_300px] flex-1 min-h-0">
+                <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_300px]">
                   <div className="border-r border-zinc-800 bg-zinc-900/60 p-4 flex flex-col gap-4 min-h-0">
-                    <div className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={renderStudioLeftMenuOpen}
+                      onClick={() => setRenderStudioLeftMenuOpen(prev => !prev)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setRenderStudioLeftMenuOpen(prev => !prev);
+                        }
+                      }}
+                      className="flex items-center justify-between text-[11px] text-zinc-400 uppercase tracking-widest cursor-pointer hover:text-zinc-200 transition-colors"
+                    >
+                      <span>Menu</span>
+                      <button
+                        type="button"
+                        onClick={event => {
+                          event.stopPropagation();
+                          setRenderStudioLeftMenuOpen(prev => !prev);
+                        }}
+                        className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                      >
+                        <Menu size={12} />
+                      </button>
+                    </div>
+                    {renderStudioLeftMenuOpen && (
+                      <>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={renderStudioMediaBinOpen}
+                      onClick={() => setRenderStudioMediaBinOpen(prev => !prev)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setRenderStudioMediaBinOpen(prev => !prev);
+                        }
+                      }}
+                      className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest cursor-pointer hover:text-zinc-300 transition-colors"
+                    >
                       <span>Media Bin</span>
                       <div className="flex items-center gap-2">
                         <span>{runPipelineProject?.files.length ?? 0} items</span>
                         <button
-                          onClick={() => setRenderStudioMediaBinOpen(prev => !prev)}
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            setRenderStudioMediaBinOpen(prev => !prev);
+                          }}
                           className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                         >
                           <Menu size={12} />
@@ -5508,10 +6191,26 @@ export default function App() {
                       </div>
                     )}
 
-                    <div className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest pt-2 border-t border-zinc-800/60">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={renderStudioProjectOpen}
+                      onClick={() => setRenderStudioProjectOpen(prev => !prev)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setRenderStudioProjectOpen(prev => !prev);
+                        }
+                      }}
+                      className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest pt-2 border-t border-zinc-800/60 cursor-pointer hover:text-zinc-300 transition-colors"
+                    >
                       <span>Timeline</span>
                       <button
-                        onClick={() => setRenderStudioProjectOpen(prev => !prev)}
+                        type="button"
+                        onClick={event => {
+                          event.stopPropagation();
+                          setRenderStudioProjectOpen(prev => !prev);
+                        }}
                         className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                       >
                         <Menu size={12} />
@@ -5546,17 +6245,19 @@ export default function App() {
                         </div>
                       </button>
                     )}
+                      </>
+                    )}
                   </div>
 
-                  <div className="flex flex-col min-h-0 bg-zinc-950/40">
+                  <div className="flex min-h-0 flex-col bg-zinc-950/40">
                     <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
                       <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Preview</div>
                       <div className="text-[11px] text-zinc-500">
                         {renderVideoFile?.name ?? 'No video selected'}
                       </div>
                     </div>
-                      <div className="flex-1 p-4 flex flex-col gap-4 min-h-0">
-                        <div className="flex-1 rounded-2xl border border-zinc-800 bg-[radial-gradient(circle_at_top,#1f2937_0%,#0b0f12_55%,#050607_100%)] flex items-center justify-center text-zinc-400 text-sm overflow-hidden relative">
+                      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+                        <div className="min-h-[180px] flex-1 rounded-2xl border border-zinc-800 bg-[radial-gradient(circle_at_top,#1f2937_0%,#0b0f12_55%,#050607_100%)] flex items-center justify-center text-zinc-400 text-sm overflow-hidden relative">
                           {renderStudioFocus === 'item' && renderStudioItemType === 'video' && renderVideoFile?.relativePath ? (
                             canBrowserPlayVideo(getVideoMimeType(renderVideoFile.name)) ? (
                               <video
@@ -5592,7 +6293,12 @@ export default function App() {
                               </audio>
                             </div>
                           ) : renderPreviewUrl ? (
-                            <img src={renderPreviewUrl} alt="Render preview" className="w-full h-full object-contain" />
+                            <img
+                              src={renderPreviewUrl}
+                              alt="Render preview"
+                              className="w-full h-full object-contain select-none"
+                              draggable={false}
+                            />
                           ) : renderVideoFile ? (
                             'Preview ready'
                           ) : (
@@ -5608,23 +6314,24 @@ export default function App() {
                               {renderPreviewError}
                             </div>
                           )}
-                          {renderStudioFocus === 'timeline' && renderSubtitleActiveText && (
-                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 max-w-[85%] text-center text-sm text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] bg-zinc-900/60 px-3 py-1.5 rounded">
-                              {renderSubtitleActiveText}
-                            </div>
-                          )}
-                          {renderStudioFocus === 'timeline' && renderTimelineDuration > 0 && (
-                            <div className="absolute top-3 right-3 text-[10px] text-zinc-200 bg-zinc-950/70 px-2 py-1 rounded">
-                              {formatDurationFine(renderPlayheadSeconds)}
-                            </div>
-                          )}
                         </div>
                       {renderStudioFocus === 'timeline' && (
-                        <div className="border border-zinc-800 rounded-2xl bg-zinc-900/60 p-3 flex flex-col gap-3">
-                        <div className="flex items-center justify-between">
+                        <div className="w-full shrink-0 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3 flex flex-col gap-3">
+                        <div className="flex-shrink-0 flex items-center justify-between gap-3 flex-wrap">
                           <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Timeline</div>
-                          <div className="flex items-center gap-3 text-[11px] text-zinc-500">
-                            <span>{formatDuration(renderTimelineDuration) ?? '00:00'}</span>
+                          <div className="flex items-center gap-3 text-[11px] text-zinc-500 flex-wrap justify-end min-w-0">
+                            <div
+                              className="flex items-baseline gap-1.5 tabular-nums shrink-0"
+                              title="Playhead / timeline duration"
+                            >
+                              <span className="text-xs font-medium text-lime-300">
+                                {renderTimelineDuration > 0
+                                  ? formatDurationFine(renderPlayheadSeconds)
+                                  : '—'}
+                              </span>
+                              <span className="text-zinc-600">/</span>
+                              <span>{formatDuration(renderTimelineDuration) ?? '00:00'}</span>
+                            </div>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px]">Zoom</span>
                               <input
@@ -5644,12 +6351,40 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                        <div className="flex gap-2 text-[11px] text-zinc-400">
+                        <div className="max-h-[min(45vh,28rem)] overflow-y-auto pr-1">
+                        <div className="flex gap-2 text-[11px] text-zinc-400 min-w-0">
                           <div className="w-16 flex flex-col gap-2">
                             <span className="h-5" />
-                            <span className="text-zinc-500 h-2 flex items-center">Video</span>
-                            <span className="text-zinc-500 h-2 flex items-center">Audio</span>
-                            <span className="text-zinc-500 flex items-center" style={{ height: renderSubtitleTrackHeight }}>Subtitle</span>
+                            {showRenderTimelineSubtitleTrack ? (
+                              <span
+                                className="text-zinc-500 flex items-center text-[10px] leading-tight"
+                                style={{ height: renderSubtitleTrackHeight }}
+                                title="Layer trên cùng (phủ lên các track bên dưới)"
+                              >
+                                Subtitle
+                              </span>
+                            ) : null}
+                            {showRenderTimelineEffectTracks
+                              ? renderParams.effects.map((effect, idx) => (
+                                  <span
+                                    key={`fx-label-${idx}`}
+                                    className="text-zinc-500 h-2 flex items-center text-[10px] leading-none truncate"
+                                    title={`Blur ${idx + 1} · σ${effect.sigma.toFixed(1)} · áp lên video bên dưới`}
+                                  >
+                                    Blur {idx + 1}
+                                  </span>
+                                ))
+                              : null}
+                            {showRenderTimelineVideoTrack ? (
+                              <span className="text-zinc-500 h-2 flex items-center" title="Nguồn hình">
+                                Video
+                              </span>
+                            ) : null}
+                            {showRenderTimelineAudioTrack ? (
+                              <span className="text-zinc-500 h-2 flex items-center" title="Layer dưới cùng (chỉ âm thanh)">
+                                Audio
+                              </span>
+                            ) : null}
                           </div>
                           <div
                             ref={renderTimelineScrollRef}
@@ -5660,22 +6395,32 @@ export default function App() {
                             onClick={onRenderTimelineClick}
                             className="flex-1 overflow-x-auto render-timeline-scroll cursor-grab active:cursor-grabbing"
                           >
-                            <div className="relative flex flex-col gap-2" style={{ width: renderTimelineWidth }}>
-                              {renderTimelineDuration > 0 && (
+                            <div
+                              className="relative flex flex-col gap-2 pb-3"
+                              style={{ width: renderTimelineWidth }}
+                            >
+                              {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && (
                                 <div
                                   className="absolute top-0 bottom-0 z-10 pointer-events-none"
-                                  style={{ left: `${(renderPlayheadSeconds / renderTimelineDuration) * 100}%` }}
+                                  style={{
+                                    left: `${(renderPlayheadSeconds / renderTimelineViewDuration) * 100}%`
+                                  }}
                                 >
                                   <div className="w-0.5 bg-lime-400/80 h-full" />
                                   <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-lime-400/90 rounded-sm rotate-45" />
                                 </div>
                               )}
                               <div className="relative h-5">
-                                {renderTimelineDuration > 0 && (
+                                {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && (
                                   <div className="absolute inset-0">
                                     {Array.from({ length: renderTimelineTickCount + 1 }).map((_, idx) => {
-                                      const left = (idx / renderTimelineTickCount) * 100;
-                                      const time = formatDuration((renderTimelineDuration * idx) / renderTimelineTickCount) ?? '00:00';
+                                      const span =
+                                        renderTimelineDuration / renderTimelineViewDuration;
+                                      const left = (idx / renderTimelineTickCount) * span * 100;
+                                      const time =
+                                        formatDuration(
+                                          (renderTimelineDuration * idx) / renderTimelineTickCount
+                                        ) ?? '00:00';
                                       return (
                                         <div
                                           key={idx}
@@ -5691,60 +6436,121 @@ export default function App() {
                                   </div>
                                 )}
                               </div>
-                              {[
-                                { label: 'Video', color: 'bg-lime-500/50', duration: renderVideoDuration },
-                                { label: 'Audio', color: 'bg-amber-500/50', duration: renderAudioDuration }
-                              ].map(track => (
-                                <div key={track.label} className="h-2 rounded-full bg-zinc-800 relative">
-                                  {track.duration && renderTimelineDuration > 0 ? (
+                              {showRenderTimelineSubtitleTrack ? (
+                                <div
+                                  className="rounded-md bg-zinc-800/60 relative overflow-hidden"
+                                  style={{ height: renderSubtitleTrackHeight }}
+                                  title="Layer trên cùng (phủ lên preview)"
+                                >
+                                  {renderTimelineDuration > 0 && renderSubtitleCues.length > 0 ? (
+                                    renderSubtitleLanes.map((lane, laneIndex) => (
+                                      lane.map((cue, idx) => {
+                                        const startPct = Math.max(
+                                          0,
+                                          Math.min(
+                                            100,
+                                            (cue.start / renderTimelineViewDuration) * 100
+                                          )
+                                        );
+                                        const endPct = Math.max(
+                                          0,
+                                          Math.min(100, (cue.end / renderTimelineViewDuration) * 100)
+                                        );
+                                        const widthPct = Math.max(1.5, endPct - startPct);
+                                        const top = (renderSubtitleLanes.length - 1 - laneIndex) * renderSubtitleLaneHeight + 2;
+                                        const height = Math.max(16, renderSubtitleLaneHeight - 4);
+                                        return (
+                                          <div
+                                            key={`${cue.start}-${cue.end}-${laneIndex}-${idx}`}
+                                            className="absolute bg-zinc-200 text-zinc-800 text-[10px] px-1 rounded-sm flex items-center truncate shadow-sm"
+                                            style={{ left: `${startPct}%`, width: `${widthPct}%`, top, height }}
+                                            title={cue.text}
+                                          >
+                                            <span className="truncate">{cue.text || '...'}</span>
+                                          </div>
+                                        );
+                                      })
+                                    ))
+                                  ) : renderSubtitleDuration ? (
                                     <div
-                                      className={`h-full rounded-full ${track.color}`}
-                                      style={{ width: `${Math.min(100, (track.duration / renderTimelineDuration) * 100)}%` }}
+                                      className="h-full rounded-sm bg-zinc-200/70"
+                                      style={{
+                                        width: `${Math.min(100, (renderSubtitleDuration / renderTimelineViewDuration) * 100)}%`
+                                      }}
                                     />
                                   ) : null}
                                 </div>
-                              ))}
-                              <div
-                                className="rounded-md bg-zinc-800/60 relative overflow-hidden"
-                                style={{ height: renderSubtitleTrackHeight }}
-                              >
-                                {renderTimelineDuration > 0 && renderSubtitleCues.length > 0 ? (
-                                  renderSubtitleLanes.map((lane, laneIndex) => (
-                                    lane.map((cue, idx) => {
-                                      const startPct = Math.max(0, Math.min(100, (cue.start / renderTimelineDuration) * 100));
-                                      const endPct = Math.max(0, Math.min(100, (cue.end / renderTimelineDuration) * 100));
-                                      const widthPct = Math.max(1.5, endPct - startPct);
-                                      const top = (renderSubtitleLanes.length - 1 - laneIndex) * renderSubtitleLaneHeight + 2;
-                                      const height = Math.max(16, renderSubtitleLaneHeight - 4);
-                                      return (
+                              ) : null}
+                              {showRenderTimelineEffectTracks
+                                ? renderParams.effects.map((effect, idx) => (
+                                    <div
+                                      key={`fx-track-${idx}`}
+                                      className="h-2 rounded-full bg-zinc-800 relative shrink-0"
+                                      title={`Blur ${idx + 1} · σ${effect.sigma.toFixed(1)} · full timeline · áp lên video bên dưới`}
+                                    >
+                                      {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 ? (
                                         <div
-                                          key={`${cue.start}-${cue.end}-${laneIndex}-${idx}`}
-                                          className="absolute bg-zinc-200 text-zinc-800 text-[10px] px-1 rounded-sm flex items-center truncate shadow-sm"
-                                          style={{ left: `${startPct}%`, width: `${widthPct}%`, top, height }}
-                                          title={cue.text}
-                                        >
-                                          <span className="truncate">{cue.text || '...'}</span>
-                                        </div>
-                                      );
-                                    })
+                                          className={`h-full rounded-full ${idx % 2 === 0 ? 'bg-violet-500/55' : 'bg-fuchsia-500/45'}`}
+                                          style={{
+                                            width: `${Math.min(100, (renderTimelineDuration / renderTimelineViewDuration) * 100)}%`
+                                          }}
+                                        />
+                                      ) : null}
+                                    </div>
                                   ))
-                                ) : renderSubtitleDuration ? (
-                                  <div
-                                    className="h-full rounded-sm bg-zinc-200/70"
-                                    style={{ width: `${Math.min(100, (renderSubtitleDuration / renderTimelineDuration) * 100)}%` }}
-                                  />
-                                ) : null}
-                              </div>
+                                : null}
+                              {showRenderTimelineVideoTrack ? (
+                                <div className="h-2 rounded-full bg-zinc-800 relative">
+                                  {renderVideoDuration && renderTimelineDuration > 0 ? (
+                                    <div
+                                      className="h-full rounded-full bg-lime-500/50"
+                                      style={{
+                                        width: `${Math.min(100, (renderVideoDuration / renderTimelineViewDuration) * 100)}%`
+                                      }}
+                                    />
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              {showRenderTimelineAudioTrack ? (
+                                <div className="h-2 rounded-full bg-zinc-800 relative">
+                                  {renderAudioDuration && renderTimelineDuration > 0 ? (
+                                    <div
+                                      className="h-full rounded-full bg-amber-500/50"
+                                      style={{
+                                        width: `${Math.min(100, (renderAudioDuration / renderTimelineViewDuration) * 100)}%`
+                                      }}
+                                    />
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                           <div className="w-[52px] flex flex-col gap-2 items-end text-zinc-500 text-[10px]">
                             <span className="h-5" />
-                            <span className="h-2 flex items-center">{formatDuration(renderVideoDuration) ?? '--'}</span>
-                            <span className="h-2 flex items-center">{formatDuration(renderAudioDuration) ?? '--'}</span>
-                            <span className="flex items-center" style={{ height: renderSubtitleTrackHeight }}>
-                              {formatDuration(renderSubtitleDuration) ?? '--'}
-                            </span>
+                            {showRenderTimelineSubtitleTrack ? (
+                              <span className="flex items-center" style={{ height: renderSubtitleTrackHeight }}>
+                                {formatDuration(renderSubtitleDuration) ?? '--'}
+                              </span>
+                            ) : null}
+                            {showRenderTimelineEffectTracks
+                              ? renderParams.effects.map((effect, idx) => (
+                                  <span
+                                    key={`fx-dur-${idx}`}
+                                    className="h-2 flex items-center tabular-nums"
+                                    title={`σ${effect.sigma < 10 ? effect.sigma.toFixed(1) : Math.round(effect.sigma)} · same as timeline`}
+                                  >
+                                    {formatDuration(renderTimelineDuration) ?? '--'}
+                                  </span>
+                                ))
+                              : null}
+                            {showRenderTimelineVideoTrack ? (
+                              <span className="h-2 flex items-center">{formatDuration(renderVideoDuration) ?? '--'}</span>
+                            ) : null}
+                            {showRenderTimelineAudioTrack ? (
+                              <span className="h-2 flex items-center">{formatDuration(renderAudioDuration) ?? '--'}</span>
+                            ) : null}
                           </div>
+                        </div>
                         </div>
                       </div>
                       )}
@@ -5753,13 +6559,108 @@ export default function App() {
 
                   <div className="border-l border-zinc-800 bg-zinc-900/70 p-4 flex flex-col gap-4 min-h-0">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Inspector</div>
+                    <div className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 shrink-0">
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Preset Params</div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+                        <select
+                          value={
+                            typeof runPipelineParamPreset.render === 'string' &&
+                            runPipelineParamPreset.render.startsWith('preset:')
+                              ? runPipelineParamPreset.render
+                              : 'custom'
+                          }
+                          onChange={e => handleParamPresetChange('render', e.target.value)}
+                          className="min-h-[36px] flex-1 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                        >
+                          <option value="custom">Custom</option>
+                          {getParamPresetsForType('render').map(preset => {
+                            const rawLabel = preset.label?.trim() ? preset.label : `Preset #${preset.id}`;
+                            const selected = runPipelineParamPreset.render === `preset:${preset.id}`;
+                            const label = selected && isRenderPresetDirty ? `*${rawLabel}` : rawLabel;
+                            return (
+                              <option key={preset.id} value={`preset:${preset.id}`}>
+                                {label}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <div
+                          className="relative shrink-0 pb-2 -mb-2"
+                          onMouseEnter={() => {
+                            if (renderPresetMenuCloseRef.current) {
+                              window.clearTimeout(renderPresetMenuCloseRef.current);
+                              renderPresetMenuCloseRef.current = null;
+                            }
+                            setRenderPresetSaveMenuOpen(true);
+                          }}
+                          onMouseLeave={() => {
+                            if (renderPresetMenuCloseRef.current) {
+                              window.clearTimeout(renderPresetMenuCloseRef.current);
+                            }
+                            renderPresetMenuCloseRef.current = window.setTimeout(() => {
+                              setRenderPresetSaveMenuOpen(false);
+                              renderPresetMenuCloseRef.current = null;
+                            }, 120);
+                          }}
+                          onFocusCapture={() => setRenderPresetSaveMenuOpen(true)}
+                          onBlurCapture={event => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setRenderPresetSaveMenuOpen(false);
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            disabled={saveRenderPresetLoading}
+                            aria-label="Save preset options"
+                            title="Save preset options"
+                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 p-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 disabled:opacity-50 shrink-0"
+                          >
+                            <Save size={14} className="shrink-0" />
+                          </button>
+                          {renderPresetSaveMenuOpen && !saveRenderPresetLoading && (
+                            <div className="absolute right-0 top-full mt-1 w-24 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                              <button
+                                type="button"
+                                onClick={() => saveRenderStudioParamPreset('save')}
+                                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-t-lg transition-colors"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => saveRenderStudioParamPreset('saveAs')}
+                                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-b-lg transition-colors"
+                              >
+                                Save As
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                     {renderStudioFocus === 'timeline' ? (
                       <div className="flex flex-col gap-3 text-xs text-zinc-300 min-h-0 overflow-y-auto pr-1">
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
-                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={renderStudioInspectorOpen.timeline}
+                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }))}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }));
+                              }
+                            }}
+                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
+                          >
                             <span className="text-[11px] uppercase tracking-widest text-zinc-500">Timeline</span>
                             <button
-                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }))}
+                              onClick={event => {
+                                event.stopPropagation();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }));
+                              }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
@@ -5781,16 +6682,22 @@ export default function App() {
                                   <input
                                     type="text"
                                     placeholder="1920x1080"
-                                    value={renderParams.timeline.resolution}
-                                    onChange={e => updateRenderParam('timeline', 'resolution', e.target.value)}
+                                    value={renderParamsDraft.timeline.resolution}
+                                    onChange={e => updateRenderParamDraft('timeline', 'resolution', e.target.value)}
+                                    onBlur={() => commitRenderParamDraftValue('timeline', 'resolution')}
+                                    onKeyDown={commitRenderParamDraftOnEnter('timeline', 'resolution')}
                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   />
                                 </div>
                                 <div className="flex flex-col gap-1">
                                   <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Framerate</label>
                                   <select
-                                    value={renderParams.timeline.framerate}
-                                    onChange={e => updateRenderParam('timeline', 'framerate', e.target.value)}
+                                    value={renderParamsDraft.timeline.framerate}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('timeline', 'framerate', v);
+                                      updateRenderParam('timeline', 'framerate', v);
+                                    }}
                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   >
                                     <option value="24">24 fps</option>
@@ -5809,10 +6716,25 @@ export default function App() {
                         </div>
 
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
-                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={renderStudioInspectorOpen.video}
+                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }))}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }));
+                              }
+                            }}
+                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
+                          >
                             <span className="text-[11px] uppercase tracking-widest text-zinc-500">Video</span>
                             <button
-                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }))}
+                              onClick={event => {
+                                event.stopPropagation();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }));
+                              }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
@@ -5840,8 +6762,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.video.trimStart}
-                                        onChange={e => updateRenderParam('video', 'trimStart', e.target.value)}
+                                        value={renderParamsDraft.video.trimStart}
+                                        onChange={e => updateRenderParamDraft('video', 'trimStart', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'trimStart')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'trimStart')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5850,8 +6774,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.video.trimEnd}
-                                        onChange={e => updateRenderParam('video', 'trimEnd', e.target.value)}
+                                        value={renderParamsDraft.video.trimEnd}
+                                        onChange={e => updateRenderParamDraft('video', 'trimEnd', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'trimEnd')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'trimEnd')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5863,8 +6789,10 @@ export default function App() {
                                         type="number"
                                         step="0.1"
                                         min="0.25"
-                                        value={renderParams.video.speed}
-                                        onChange={e => updateRenderParam('video', 'speed', e.target.value)}
+                                        value={renderParamsDraft.video.speed}
+                                        onChange={e => updateRenderParamDraft('video', 'speed', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'speed')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'speed')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5874,8 +6802,10 @@ export default function App() {
                                         type="number"
                                         step="1"
                                         min="0"
-                                        value={renderParams.video.volume}
-                                        onChange={e => updateRenderParam('video', 'volume', e.target.value)}
+                                        value={renderParamsDraft.video.volume}
+                                        onChange={e => updateRenderParamDraft('video', 'volume', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'volume')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'volume')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5884,8 +6814,12 @@ export default function App() {
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fit</label>
                                       <select
-                                        value={renderParams.video.fit}
-                                        onChange={e => updateRenderParam('video', 'fit', e.target.value)}
+                                        value={renderParamsDraft.video.fit}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('video', 'fit', v);
+                                          updateRenderParam('video', 'fit', v);
+                                        }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       >
                                         <option value="contain">Contain</option>
@@ -5899,8 +6833,10 @@ export default function App() {
                                         type="number"
                                         step="0.05"
                                         min="0.1"
-                                        value={renderParams.video.scale}
-                                        onChange={e => updateRenderParam('video', 'scale', e.target.value)}
+                                        value={renderParamsDraft.video.scale}
+                                        onChange={e => updateRenderParamDraft('video', 'scale', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'scale')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'scale')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5911,8 +6847,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.video.positionX}
-                                        onChange={e => updateRenderParam('video', 'positionX', e.target.value)}
+                                        value={renderParamsDraft.video.positionX}
+                                        onChange={e => updateRenderParamDraft('video', 'positionX', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'positionX')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'positionX')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5921,8 +6859,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.video.positionY}
-                                        onChange={e => updateRenderParam('video', 'positionY', e.target.value)}
+                                        value={renderParamsDraft.video.positionY}
+                                        onChange={e => updateRenderParamDraft('video', 'positionY', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'positionY')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'positionY')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5933,8 +6873,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.video.rotation}
-                                        onChange={e => updateRenderParam('video', 'rotation', e.target.value)}
+                                        value={renderParamsDraft.video.rotation}
+                                        onChange={e => updateRenderParamDraft('video', 'rotation', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'rotation')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'rotation')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5945,8 +6887,10 @@ export default function App() {
                                         step="1"
                                         min="0"
                                         max="100"
-                                        value={renderParams.video.opacity}
-                                        onChange={e => updateRenderParam('video', 'opacity', e.target.value)}
+                                        value={renderParamsDraft.video.opacity}
+                                        onChange={e => updateRenderParamDraft('video', 'opacity', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'opacity')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'opacity')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5957,8 +6901,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.video.cropX}
-                                        onChange={e => updateRenderParam('video', 'cropX', e.target.value)}
+                                        value={renderParamsDraft.video.cropX}
+                                        onChange={e => updateRenderParamDraft('video', 'cropX', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'cropX')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropX')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5967,8 +6913,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.video.cropY}
-                                        onChange={e => updateRenderParam('video', 'cropY', e.target.value)}
+                                        value={renderParamsDraft.video.cropY}
+                                        onChange={e => updateRenderParamDraft('video', 'cropY', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'cropY')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropY')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5979,8 +6927,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.video.cropW}
-                                        onChange={e => updateRenderParam('video', 'cropW', e.target.value)}
+                                        value={renderParamsDraft.video.cropW}
+                                        onChange={e => updateRenderParamDraft('video', 'cropW', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'cropW')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropW')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -5989,8 +6939,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.video.cropH}
-                                        onChange={e => updateRenderParam('video', 'cropH', e.target.value)}
+                                        value={renderParamsDraft.video.cropH}
+                                        onChange={e => updateRenderParamDraft('video', 'cropH', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'cropH')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropH')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6001,8 +6953,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.video.fadeIn}
-                                        onChange={e => updateRenderParam('video', 'fadeIn', e.target.value)}
+                                        value={renderParamsDraft.video.fadeIn}
+                                        onChange={e => updateRenderParamDraft('video', 'fadeIn', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'fadeIn')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'fadeIn')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6011,8 +6965,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.video.fadeOut}
-                                        onChange={e => updateRenderParam('video', 'fadeOut', e.target.value)}
+                                        value={renderParamsDraft.video.fadeOut}
+                                        onChange={e => updateRenderParamDraft('video', 'fadeOut', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('video', 'fadeOut')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'fadeOut')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6020,8 +6976,10 @@ export default function App() {
                                   <div className="flex flex-col gap-1">
                                     <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Color LUT</label>
                                     <input
-                                      value={renderParams.video.colorLut}
-                                      onChange={e => updateRenderParam('video', 'colorLut', e.target.value)}
+                                      value={renderParamsDraft.video.colorLut}
+                                      onChange={e => updateRenderParamDraft('video', 'colorLut', e.target.value)}
+                                      onBlur={() => commitRenderParamDraftValue('video', 'colorLut')}
+                                      onKeyDown={commitRenderParamDraftOnEnter('video', 'colorLut')}
                                       className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       placeholder="e.g. cinematic-01"
                                     />
@@ -6035,10 +6993,25 @@ export default function App() {
                         </div>
 
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
-                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={renderStudioInspectorOpen.audio}
+                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }))}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }));
+                              }
+                            }}
+                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
+                          >
                             <span className="text-[11px] uppercase tracking-widest text-zinc-500">Audio</span>
                             <button
-                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }))}
+                              onClick={event => {
+                                event.stopPropagation();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }));
+                              }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
@@ -6066,8 +7039,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.audio.trimStart}
-                                        onChange={e => updateRenderParam('audio', 'trimStart', e.target.value)}
+                                        value={renderParamsDraft.audio.trimStart}
+                                        onChange={e => updateRenderParamDraft('audio', 'trimStart', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('audio', 'trimStart')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'trimStart')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6076,8 +7051,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.audio.trimEnd}
-                                        onChange={e => updateRenderParam('audio', 'trimEnd', e.target.value)}
+                                        value={renderParamsDraft.audio.trimEnd}
+                                        onChange={e => updateRenderParamDraft('audio', 'trimEnd', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('audio', 'trimEnd')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'trimEnd')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6088,8 +7065,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.5"
-                                        value={renderParams.audio.gainDb}
-                                        onChange={e => updateRenderParam('audio', 'gainDb', e.target.value)}
+                                        value={renderParamsDraft.audio.gainDb}
+                                        onChange={e => updateRenderParamDraft('audio', 'gainDb', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('audio', 'gainDb')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'gainDb')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6100,8 +7079,10 @@ export default function App() {
                                         step="1"
                                         min="-100"
                                         max="100"
-                                        value={renderParams.audio.pan}
-                                        onChange={e => updateRenderParam('audio', 'pan', e.target.value)}
+                                        value={renderParamsDraft.audio.pan}
+                                        onChange={e => updateRenderParamDraft('audio', 'pan', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('audio', 'pan')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'pan')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6110,8 +7091,12 @@ export default function App() {
                                     <label className="flex items-center gap-2 text-[11px] text-zinc-300">
                                       <input
                                         type="checkbox"
-                                        checked={renderParams.audio.normalize}
-                                        onChange={e => updateRenderParam('audio', 'normalize', e.target.checked)}
+                                        checked={renderParamsDraft.audio.normalize}
+                                        onChange={e => {
+                                          const v = e.target.checked;
+                                          updateRenderParamDraft('audio', 'normalize', v);
+                                          updateRenderParam('audio', 'normalize', v);
+                                        }}
                                         className="accent-lime-400"
                                       />
                                       Normalize
@@ -6119,8 +7104,12 @@ export default function App() {
                                     <label className="flex items-center gap-2 text-[11px] text-zinc-300">
                                       <input
                                         type="checkbox"
-                                        checked={renderParams.audio.ducking}
-                                        onChange={e => updateRenderParam('audio', 'ducking', e.target.checked)}
+                                        checked={renderParamsDraft.audio.ducking}
+                                        onChange={e => {
+                                          const v = e.target.checked;
+                                          updateRenderParamDraft('audio', 'ducking', v);
+                                          updateRenderParam('audio', 'ducking', v);
+                                        }}
                                         className="accent-lime-400"
                                       />
                                       Ducking
@@ -6132,16 +7121,22 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.audio.duckAmountDb}
-                                        onChange={e => updateRenderParam('audio', 'duckAmountDb', e.target.value)}
+                                        value={renderParamsDraft.audio.duckAmountDb}
+                                        onChange={e => updateRenderParamDraft('audio', 'duckAmountDb', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('audio', 'duckAmountDb')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'duckAmountDb')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Channel</label>
                                       <select
-                                        value={renderParams.audio.channelMode}
-                                        onChange={e => updateRenderParam('audio', 'channelMode', e.target.value)}
+                                        value={renderParamsDraft.audio.channelMode}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('audio', 'channelMode', v);
+                                          updateRenderParam('audio', 'channelMode', v);
+                                        }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       >
                                         <option value="stereo">Stereo</option>
@@ -6157,8 +7152,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.audio.fadeIn}
-                                        onChange={e => updateRenderParam('audio', 'fadeIn', e.target.value)}
+                                        value={renderParamsDraft.audio.fadeIn}
+                                        onChange={e => updateRenderParamDraft('audio', 'fadeIn', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('audio', 'fadeIn')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'fadeIn')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6167,8 +7164,10 @@ export default function App() {
                                       <input
                                         type="number"
                                         step="0.1"
-                                        value={renderParams.audio.fadeOut}
-                                        onChange={e => updateRenderParam('audio', 'fadeOut', e.target.value)}
+                                        value={renderParamsDraft.audio.fadeOut}
+                                        onChange={e => updateRenderParamDraft('audio', 'fadeOut', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('audio', 'fadeOut')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'fadeOut')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6182,10 +7181,25 @@ export default function App() {
                         </div>
 
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
-                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={renderStudioInspectorOpen.subtitle}
+                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }))}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }));
+                              }
+                            }}
+                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
+                          >
                             <span className="text-[11px] uppercase tracking-widest text-zinc-500">Subtitle</span>
                             <button
-                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }))}
+                              onClick={event => {
+                                event.stopPropagation();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }));
+                              }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
@@ -6207,74 +7221,257 @@ export default function App() {
                                     <span>Cues</span>
                                     <span className="text-zinc-300">{renderSubtitleCues.length}</span>
                                   </div>
+                                  <div className="pt-1">
+                                    <div className="flex items-center justify-between">
+                                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Preset style</div>
+                                      <button
+                                        type="button"
+                                        onClick={() => applySubtitleStylePreset(SUBTITLE_STYLE_PRESETS[0])}
+                                        className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 hover:text-zinc-100"
+                                      >
+                                        Reset
+                                      </button>
+                                    </div>
+                                    <div className="mt-2 grid grid-cols-6 gap-2">
+                                      {SUBTITLE_STYLE_PRESETS.map(preset => {
+                                        const active = isSubtitlePresetActive(preset);
+                                        return (
+                                          <button
+                                            key={preset.id}
+                                            type="button"
+                                            title={preset.label}
+                                            onClick={() => applySubtitleStylePreset(preset)}
+                                            className={`h-10 w-10 rounded-lg border flex items-center justify-center transition-colors ${
+                                              active
+                                                ? 'border-lime-400 ring-1 ring-lime-400/50'
+                                                : 'border-zinc-800 hover:border-zinc-700'
+                                            }`}
+                                          >
+                                            <span
+                                              className="h-8 w-8 rounded-md flex items-center justify-center text-sm font-black"
+                                              style={buildSubtitlePreviewStyle(preset)}
+                                            >
+                                              T
+                                            </span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
                                   <div className="grid grid-cols-2 gap-2 pt-1">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Language</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Note / language</label>
                                       <input
-                                        value={renderParams.subtitle.language}
-                                        onChange={e => updateRenderParam('subtitle', 'language', e.target.value)}
+                                        value={renderParamsDraft.subtitle.language}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'language', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'language')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'language')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        placeholder="vi, en, ja..."
+                                        placeholder="metadata only"
                                       />
                                     </div>
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Style</label>
-                                      <select
-                                        value={renderParams.subtitle.stylePreset}
-                                        onChange={e => updateRenderParam('subtitle', 'stylePreset', e.target.value)}
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Timing shift (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParamsDraft.subtitle.timingShiftSeconds}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'timingShiftSeconds', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'timingShiftSeconds')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'timingShiftSeconds')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      >
-                                        <option value="default">Default</option>
-                                        <option value="bold">Bold</option>
-                                        <option value="minimal">Minimal</option>
-                                      </select>
+                                      />
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font</label>
-                                      <input
-                                        value={renderParams.subtitle.fontFamily}
-                                        onChange={e => updateRenderParam('subtitle', 'fontFamily', e.target.value)}
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">FontName</label>
+                                      <select
+                                        value={renderParamsDraft.subtitle.fontName}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('subtitle', 'fontName', v);
+                                          updateRenderParam('subtitle', 'fontName', v);
+                                        }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        placeholder="Inter, Roboto..."
-                                      />
+                                      >
+                                        {subtitleFontOptions.map(font => (
+                                          <option key={font} value={font}>
+                                            {font}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {subtitleFontLoading && (
+                                        <span className="text-[10px] text-zinc-600">Loading server fonts...</span>
+                                      )}
                                     </div>
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font Size</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font size</label>
                                       <input
                                         type="number"
                                         step="1"
-                                        value={renderParams.subtitle.fontSize}
-                                        onChange={e => updateRenderParam('subtitle', 'fontSize', e.target.value)}
+                                        value={renderParamsDraft.subtitle.fontSize}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'fontSize', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'fontSize')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'fontSize')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Color</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Primary</label>
                                       <input
                                         type="color"
-                                        value={renderParams.subtitle.color}
-                                        onChange={e => updateRenderParam('subtitle', 'color', e.target.value)}
+                                        value={renderParamsDraft.subtitle.primaryColor}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'primaryColor', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'primaryColor')}
                                         className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
                                       />
                                     </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Secondary</label>
+                                      <input
+                                        type="color"
+                                        value={renderParamsDraft.subtitle.secondaryColor}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'secondaryColor', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'secondaryColor')}
+                                        className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Outline</label>
                                       <div className="flex gap-2">
                                         <input
                                           type="color"
-                                          value={renderParams.subtitle.outlineColor}
-                                          onChange={e => updateRenderParam('subtitle', 'outlineColor', e.target.value)}
+                                          value={renderParamsDraft.subtitle.outlineColor}
+                                          onChange={e => updateRenderParamDraft('subtitle', 'outlineColor', e.target.value)}
+                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'outlineColor')}
                                           className="h-9 w-10 bg-zinc-900 border border-zinc-800 rounded-lg p-1"
                                         />
                                         <input
                                           type="number"
                                           step="1"
-                                          value={renderParams.subtitle.outlineWidth}
-                                          onChange={e => updateRenderParam('subtitle', 'outlineWidth', e.target.value)}
+                                          value={renderParamsDraft.subtitle.outline}
+                                          onChange={e => updateRenderParamDraft('subtitle', 'outline', e.target.value)}
+                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'outline')}
+                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'outline')}
+                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.shadow}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'shadow', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'shadow')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'shadow')}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap gap-3 text-xs text-zinc-300">
+                                    <label className="flex items-center gap-1.5 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={renderParamsDraft.subtitle.bold === '1'}
+                                        onChange={e => {
+                                          const v = e.target.checked ? '1' : '0';
+                                          updateRenderParamDraft('subtitle', 'bold', v);
+                                          updateRenderParam('subtitle', 'bold', v);
+                                        }}
+                                        className="rounded border-zinc-600"
+                                      />
+                                      Bold
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={renderParamsDraft.subtitle.italic === '1'}
+                                        onChange={e => {
+                                          const v = e.target.checked ? '1' : '0';
+                                          updateRenderParamDraft('subtitle', 'italic', v);
+                                          updateRenderParam('subtitle', 'italic', v);
+                                        }}
+                                        className="rounded border-zinc-600"
+                                      />
+                                      Italic
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={renderParamsDraft.subtitle.underline === '1'}
+                                        onChange={e => {
+                                          const v = e.target.checked ? '1' : '0';
+                                          updateRenderParamDraft('subtitle', 'underline', v);
+                                          updateRenderParam('subtitle', 'underline', v);
+                                        }}
+                                        className="rounded border-zinc-600"
+                                      />
+                                      Underline
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={renderParamsDraft.subtitle.strikeOut === '1'}
+                                        onChange={e => {
+                                          const v = e.target.checked ? '1' : '0';
+                                          updateRenderParamDraft('subtitle', 'strikeOut', v);
+                                          updateRenderParam('subtitle', 'strikeOut', v);
+                                        }}
+                                        className="rounded border-zinc-600"
+                                      />
+                                      Strikeout
+                                    </label>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale X / Y %</label>
+                                      <div className="flex gap-2">
+                                        <input
+                                          type="number"
+                                          step="1"
+                                          value={renderParamsDraft.subtitle.scaleX}
+                                          onChange={e => updateRenderParamDraft('subtitle', 'scaleX', e.target.value)}
+                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'scaleX')}
+                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'scaleX')}
+                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        />
+                                        <input
+                                          type="number"
+                                          step="1"
+                                          value={renderParamsDraft.subtitle.scaleY}
+                                          onChange={e => updateRenderParamDraft('subtitle', 'scaleY', e.target.value)}
+                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'scaleY')}
+                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'scaleY')}
+                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Spacing / Angle</label>
+                                      <div className="flex gap-2">
+                                        <input
+                                          type="number"
+                                          step="1"
+                                          value={renderParamsDraft.subtitle.spacing}
+                                          onChange={e => updateRenderParamDraft('subtitle', 'spacing', e.target.value)}
+                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'spacing')}
+                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'spacing')}
+                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        />
+                                        <input
+                                          type="number"
+                                          step="1"
+                                          value={renderParamsDraft.subtitle.angle}
+                                          onChange={e => updateRenderParamDraft('subtitle', 'angle', e.target.value)}
+                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'angle')}
+                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'angle')}
                                           className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                         />
                                       </div>
@@ -6282,115 +7479,161 @@ export default function App() {
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow (px)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParams.subtitle.shadow}
-                                        onChange={e => updateRenderParam('subtitle', 'shadow', e.target.value)}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Line Height</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParams.subtitle.lineHeight}
-                                        onChange={e => updateRenderParam('subtitle', 'lineHeight', e.target.value)}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">BorderStyle</label>
                                       <select
-                                        value={renderParams.subtitle.position}
-                                        onChange={e => updateRenderParam('subtitle', 'position', e.target.value)}
+                                        value={renderParamsDraft.subtitle.borderStyle}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('subtitle', 'borderStyle', v);
+                                          updateRenderParam('subtitle', 'borderStyle', v);
+                                        }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       >
-                                        <option value="bottom">Bottom</option>
-                                        <option value="top">Top</option>
-                                        <option value="custom">Custom</option>
+                                        <option value="1">1 — outline + shadow</option>
+                                        <option value="3">3 — opaque box</option>
+                                        <option value="4">4 — outline only</option>
                                       </select>
                                     </div>
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Offset (s)</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Alignment (1–9)</label>
+                                      <select
+                                        value={renderParamsDraft.subtitle.alignment}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('subtitle', 'alignment', v);
+                                          updateRenderParam('subtitle', 'alignment', v);
+                                        }}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="1">1 bottom-left</option>
+                                        <option value="2">2 bottom-center</option>
+                                        <option value="3">3 bottom-right</option>
+                                        <option value="4">4 mid-left</option>
+                                        <option value="5">5 mid-center</option>
+                                        <option value="6">6 mid-right</option>
+                                        <option value="7">7 top-left</option>
+                                        <option value="8">8 top-center</option>
+                                        <option value="9">9 top-right</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MarginL</label>
                                       <input
                                         type="number"
-                                        step="0.1"
-                                        value={renderParams.subtitle.offset}
-                                        onChange={e => updateRenderParam('subtitle', 'offset', e.target.value)}
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.marginL}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'marginL', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'marginL')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'marginL')}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MarginR</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.marginR}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'marginR', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'marginR')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'marginR')}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MarginV</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.marginV}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'marginV', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'marginV')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'marginV')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos X (%)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParams.subtitle.positionX}
-                                        onChange={e => updateRenderParam('subtitle', 'positionX', e.target.value)}
-                                        disabled={renderParams.subtitle.position !== 'custom'}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none disabled:opacity-60"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos Y (%)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParams.subtitle.positionY}
-                                        onChange={e => updateRenderParam('subtitle', 'positionY', e.target.value)}
-                                        disabled={renderParams.subtitle.position !== 'custom'}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none disabled:opacity-60"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Max Width (%)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParams.subtitle.maxWidth}
-                                        onChange={e => updateRenderParam('subtitle', 'maxWidth', e.target.value)}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Safe Area (%)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParams.subtitle.safeArea}
-                                        onChange={e => updateRenderParam('subtitle', 'safeArea', e.target.value)}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">BG Color</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Back colour</label>
                                       <input
                                         type="color"
-                                        value={renderParams.subtitle.bgColor}
-                                        onChange={e => updateRenderParam('subtitle', 'bgColor', e.target.value)}
+                                        value={renderParamsDraft.subtitle.backColor}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'backColor', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'backColor')}
                                         className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
                                       />
                                     </div>
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">BG Opacity</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Back opacity %</label>
                                       <input
                                         type="number"
                                         step="1"
                                         min="0"
                                         max="100"
-                                        value={renderParams.subtitle.bgOpacity}
-                                        onChange={e => updateRenderParam('subtitle', 'bgOpacity', e.target.value)}
+                                        value={renderParamsDraft.subtitle.backOpacity}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'backOpacity', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'backOpacity')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'backOpacity')}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">WrapStyle</label>
+                                      <select
+                                        value={renderParamsDraft.subtitle.wrapStyle}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('subtitle', 'wrapStyle', v);
+                                          updateRenderParam('subtitle', 'wrapStyle', v);
+                                        }}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="0">0 — smart wrap</option>
+                                        <option value="1">1 — end of line</option>
+                                        <option value="2">2 — no wrap</option>
+                                        <option value="3">3 — smart (lower)</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Encoding</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.encoding}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'encoding', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'encoding')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'encoding')}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">PlayResX</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.playResX}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'playResX', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'playResX')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'playResX')}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">PlayResY</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.playResY}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'playResY', e.target.value)}
+                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'playResY')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'playResY')}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -6398,6 +7641,204 @@ export default function App() {
                                 </>
                               ) : (
                                 <div className="text-[11px] text-zinc-500">No subtitle selected.</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={renderStudioInspectorOpen.effects}
+                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, effects: !prev.effects }))}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, effects: !prev.effects }));
+                              }
+                            }}
+                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
+                          >
+                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Effects</span>
+                            <button
+                              type="button"
+                              onClick={event => {
+                                event.stopPropagation();
+                                setRenderStudioInspectorOpen(prev => ({ ...prev, effects: !prev.effects }));
+                              }}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                          {renderStudioInspectorOpen.effects && (
+                            <div className="p-3 flex flex-col gap-3">
+                              <button
+                                type="button"
+                                onClick={addBlurRegionEffect}
+                                disabled={!renderVideoFile}
+                                className="text-xs rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-200 hover:border-zinc-600 disabled:opacity-40"
+                              >
+                                + Blur region
+                              </button>
+                              {renderParamsDraft.effects.length === 0 ? (
+                                <div className="text-[11px] text-zinc-500">No effects. Add a blur region to obscure part of the picture.</div>
+                              ) : (
+                                <div className="flex flex-col gap-3">
+                                  {renderParamsDraft.effects.map((effect, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-2 flex flex-col gap-2"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[10px] uppercase tracking-widest text-zinc-500">
+                                          Blur #{idx + 1}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => removeRenderEffect(idx)}
+                                          className="text-[10px] text-red-400 hover:text-red-300"
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            min="0"
+                                            max="100"
+                                            value={effect.left}
+                                            onChange={e => {
+                                              const v = coerceNumber(e.target.value, effect.left) ?? effect.left;
+                                              updateRenderEffectDraft(idx, { left: v });
+                                            }}
+                                            onBlur={() => commitRenderEffectDraftValue(idx, 'left')}
+                                            onKeyDown={event => {
+                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'left');
+                                            }}
+                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            min="0"
+                                            max="100"
+                                            value={effect.right}
+                                            onChange={e => {
+                                              const v = coerceNumber(e.target.value, effect.right) ?? effect.right;
+                                              updateRenderEffectDraft(idx, { right: v });
+                                            }}
+                                            onBlur={() => commitRenderEffectDraftValue(idx, 'right')}
+                                            onKeyDown={event => {
+                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'right');
+                                            }}
+                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            min="0"
+                                            max="100"
+                                            value={effect.top}
+                                            onChange={e => {
+                                              const v = coerceNumber(e.target.value, effect.top) ?? effect.top;
+                                              updateRenderEffectDraft(idx, { top: v });
+                                            }}
+                                            onBlur={() => commitRenderEffectDraftValue(idx, 'top')}
+                                            onKeyDown={event => {
+                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'top');
+                                            }}
+                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            min="0"
+                                            max="100"
+                                            value={effect.bottom}
+                                            onChange={e => {
+                                              const v = coerceNumber(e.target.value, effect.bottom) ?? effect.bottom;
+                                              updateRenderEffectDraft(idx, { bottom: v });
+                                            }}
+                                            onBlur={() => commitRenderEffectDraftValue(idx, 'bottom')}
+                                            onKeyDown={event => {
+                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'bottom');
+                                            }}
+                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-col gap-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">
+                                            Blur strength
+                                          </label>
+                                          <span className="text-xs tabular-nums text-zinc-300">{effect.sigma.toFixed(1)}</span>
+                                        </div>
+                                        <input
+                                          type="range"
+                                          min={0.5}
+                                          max={80}
+                                          step={0.5}
+                                          value={effect.sigma}
+                                          onChange={e => {
+                                            const v = Number(e.target.value);
+                                            if (!Number.isFinite(v)) return;
+                                            updateRenderEffectDraft(idx, {
+                                              sigma: Math.min(80, Math.max(0.5, v))
+                                            });
+                                          }}
+                                          onMouseUp={() => commitRenderEffectDraftValue(idx, 'sigma')}
+                                          onTouchEnd={() => commitRenderEffectDraftValue(idx, 'sigma')}
+                                          className="w-full accent-lime-400 cursor-pointer"
+                                        />
+                                      </div>
+                                      <div className="flex flex-col gap-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">
+                                            Feather
+                                          </label>
+                                          <span className="text-xs tabular-nums text-zinc-300">{effect.feather}</span>
+                                        </div>
+                                        <input
+                                          type="range"
+                                          min={0}
+                                          max={RENDER_BLUR_FEATHER_MAX}
+                                          step={1}
+                                          value={effect.feather}
+                                          onChange={e => {
+                                            const v = Number(e.target.value);
+                                            if (!Number.isFinite(v)) return;
+                                            updateRenderEffectDraft(idx, {
+                                              feather: Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, Math.round(v)))
+                                            });
+                                          }}
+                                          onMouseUp={() => commitRenderEffectDraftValue(idx, 'feather')}
+                                          onTouchEnd={() => commitRenderEffectDraftValue(idx, 'feather')}
+                                          className="w-full accent-lime-400 cursor-pointer"
+                                        />
+                                        <div className="text-[10px] text-zinc-600 leading-snug">
+                                          Softer edge: blur ramps from the crop border inward; 0 = hard rectangle.
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
                               )}
                             </div>
                           )}
