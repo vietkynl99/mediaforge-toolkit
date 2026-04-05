@@ -41,3 +41,27 @@
     @apply bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors;
   }
 }
+
+/* Render timeline scrollbar */
+.render-timeline-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(82 82 91) transparent;
+}
+
+.render-timeline-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+
+.render-timeline-scroll::-webkit-scrollbar-track {
+  background: rgba(24, 24, 27, 0.8);
+  border-radius: 9999px;
+}
+
+.render-timeline-scroll::-webkit-scrollbar-thumb {
+  background: rgb(82 82 91);
+  border-radius: 9999px;
+}
+
+.render-timeline-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(113 113 122);
+}

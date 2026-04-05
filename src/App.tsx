@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   LayoutDashboard, 
@@ -12,7 +12,6 @@ import {
   Clock, 
   AlertCircle,
   ChevronRight,
-  MoreVertical,
   Download,
   Trash2,
   RefreshCw,
@@ -29,7 +28,10 @@ import {
   Languages,
   Scissors,
   Search,
-  Filter
+  Filter,
+  Upload,
+  MousePointer2,
+  Menu
 } from 'lucide-react';
 import { TASK_ICONS, MediaJob, JobStatus } from './types';
 
@@ -59,10 +61,10 @@ const formatDurationMs = (ms: number) => {
   return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
 };
 
-const formatLocalDateTime = (value?: string) => {
-  if (!value) return '--';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '--';
+  const formatLocalDateTime = (value?: string) => {
+    if (!value) return '--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '--';
   return new Intl.DateTimeFormat('vi-VN', {
     year: 'numeric',
     month: '2-digit',
@@ -72,6 +74,15 @@ const formatLocalDateTime = (value?: string) => {
     second: '2-digit',
     hour12: false
   }).format(date);
+};
+
+const coerceNumber = (value: string | number | null | undefined, fallback?: number) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
 };
 
 const StatusBadge = ({ status }: { status: JobStatus }) => {
@@ -94,12 +105,25 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
   );
 };
 
-const JobRow = ({ job, onLog, onCancel, onDelete }: { job: MediaJob; onLog: (jobId: string) => void; onCancel: (jobId: string) => void; onDelete: (jobId: string) => void }) => (
+const JobRow = ({
+  job,
+  index,
+  onContextMenu
+}: {
+  job: MediaJob;
+  index: number;
+  onContextMenu: (event: React.MouseEvent<HTMLDivElement>, job: MediaJob) => void;
+}) => (
   <motion.div 
     initial={{ opacity: 0, y: 10 }}
     animate={{ opacity: 1, y: 0 }}
-    className="grid grid-cols-[130px_minmax(0,1fr)_130px_120px_110px_100px_72px] items-center gap-4 p-4 border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors group"
+    className="grid grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] items-center gap-4 p-4 border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors group"
+    onContextMenu={(event) => onContextMenu(event, job)}
   >
+    <div className="text-xs text-zinc-600 font-mono text-right pr-0.5">
+      {index}
+    </div>
+
     <div className="text-xs text-zinc-500">
       {formatLocalDateTime(job.createdAt)}
     </div>
@@ -139,6 +163,11 @@ const JobRow = ({ job, onLog, onCancel, onDelete }: { job: MediaJob; onLog: (job
                 }`}
               >
                 <Icon size={14} />
+                {task.status === 'active' && typeof task.progress === 'number' && task.progress > 0 && (
+                  <span className="absolute -bottom-1 -right-1 text-[8px] font-bold text-blue-200">
+                    {Math.round(task.progress)}%
+                  </span>
+                )}
                 {task.status === 'error' && (
                   <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-500 text-[9px] leading-3 text-white flex items-center justify-center">✕</span>
                 )}
@@ -166,40 +195,12 @@ const JobRow = ({ job, onLog, onCancel, onDelete }: { job: MediaJob; onLog: (job
       </div>
     </div>
 
-    <div className="text-xs text-zinc-500">
-      {job.durationMs !== undefined ? formatDurationMs(job.durationMs) : '--'}
-    </div>
-
     <div className="flex w-[100px] justify-start shrink-0">
       <StatusBadge status={job.status} />
     </div>
 
-    <div className="flex w-[72px] items-center justify-start gap-1 shrink-0">
-      <button
-        onClick={() => onLog(job.id)}
-        className="p-2 text-zinc-400 hover:text-lime-300 hover:bg-lime-500/10 rounded-md"
-        title="System log"
-      >
-        <Terminal size={16} />
-      </button>
-      {(job.status === 'queued' || job.status === 'processing') && (
-        <button
-          onClick={() => onCancel(job.id)}
-          className="p-2 text-zinc-400 hover:text-amber-300 hover:bg-amber-500/10 rounded-md"
-          title="Cancel job"
-        >
-          <Pause size={16} />
-        </button>
-      )}
-      {!(job.status === 'queued' || job.status === 'processing') && (
-        <button
-          title="Delete"
-          onClick={() => onDelete(job.id)}
-          className="p-2 text-zinc-400 hover:text-red-400 hover:bg-red-400/10 rounded-md"
-        >
-          <Trash2 size={16} />
-        </button>
-      )}
+    <div className="text-xs text-zinc-500 text-right -ml-2">
+      {job.durationMs !== undefined ? formatDurationMs(job.durationMs) : '--'}
     </div>
   </motion.div>
 );
@@ -216,9 +217,12 @@ interface VaultFile {
   size: string;
   relativePath?: string;
   duration?: string;
+  durationSeconds?: number;
   language?: string;
   linkedTo?: string;
+  linkedToPath?: string;
   status?: VaultStatus;
+  origin?: 'source' | 'vr' | 'tts';
   progress?: number;
   version?: string;
   uvr?: {
@@ -227,6 +231,8 @@ interface VaultFile {
     model?: string;
     outputFormat?: string;
     outputs?: string[];
+    role?: 'source' | 'output';
+    sourceRelativePath?: string;
   };
   createdAt: string;
 }
@@ -262,12 +268,25 @@ type VaultFileDTO = {
   type: VaultFileType;
   extension: string;
   durationSeconds?: number;
+  linkedTo?: string;
   uvr?: {
     processedAt: string;
     backend?: string;
     model?: string;
     outputFormat?: string;
     outputs?: string[];
+    role?: 'source' | 'output';
+    sourceRelativePath?: string;
+  };
+  tts?: {
+    processedAt: string;
+    voice?: string;
+    rate?: number;
+    pitch?: number;
+    volume?: number;
+    outputs?: string[];
+    role?: 'source' | 'output';
+    sourceRelativePath?: string;
   };
 };
 
@@ -283,6 +302,11 @@ const formatBytes = (bytes: number) => {
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / Math.pow(1024, index);
   return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+};
+
+const truncateLabel = (value: string, max = 48) => {
+  if (value.length <= max) return value;
+  return `${value.slice(0, Math.max(0, max - 3))}...`;
 };
 
 const formatRelativeTime = (iso: string) => {
@@ -307,6 +331,148 @@ const formatDuration = (seconds?: number) => {
   const secs = total % 60;
   if (hrs > 0) return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   return `${mins}:${String(secs).padStart(2, '0')}`;
+};
+
+const formatDurationFine = (seconds?: number) => {
+  if (seconds === undefined || seconds === null || seconds < 0) return '00:00.00';
+  const total = Math.floor(seconds);
+  const hrs = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const hundredths = Math.floor(((seconds - Math.floor(seconds)) + 1e-6) * 100);
+  const base = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}`;
+  if (hrs > 0) return `${hrs}:${base}`;
+  return base;
+};
+
+const sanitizeCueText = (value: string, removeLineBreaks: boolean) => {
+  let cleaned = value
+    .replace(/\{[^}]*\}/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\\[Nn]/g, removeLineBreaks ? ' ' : '\n');
+  if (removeLineBreaks) {
+    cleaned = cleaned.replace(/\s+/g, ' ');
+  } else {
+    cleaned = cleaned
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{2,}/g, '\n');
+  }
+  return cleaned.trim();
+};
+
+const parseSrtTimestamp = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(':');
+  if (parts.length < 2 || parts.length > 3) return null;
+  const secondsPart = parts[parts.length - 1];
+  const minutePart = parts[parts.length - 2];
+  const hourPart = parts.length === 3 ? parts[0] : '0';
+  const secMatch = secondsPart.match(/^(\d{1,2})(?:[.,](\d{1,3}))?$/);
+  if (!secMatch) return null;
+  const hours = Number(hourPart);
+  const minutes = Number(minutePart);
+  const seconds = Number(secMatch[1]);
+  const millis = secMatch[2] ? Number(secMatch[2].padEnd(3, '0')) : 0;
+  if ([hours, minutes, seconds, millis].some(part => Number.isNaN(part))) return null;
+  return hours * 3600 + minutes * 60 + seconds + millis / 1000;
+};
+
+const parseSrtVttCues = (content: string, removeLineBreaks: boolean) => {
+  const lines = content.split(/\r?\n/);
+  const cues: Array<{ start: number; end: number; text: string }> = [];
+  let currentStart: number | null = null;
+  let currentEnd: number | null = null;
+  let textLines: string[] = [];
+
+  const flush = () => {
+    if (currentStart === null || currentEnd === null) return;
+    const text = sanitizeCueText(textLines.join(removeLineBreaks ? ' ' : '\n'), removeLineBreaks);
+    if (text) {
+      cues.push({ start: currentStart, end: currentEnd, text });
+    }
+    currentStart = null;
+    currentEnd = null;
+    textLines = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    if (line.startsWith('WEBVTT')) continue;
+    if (line.startsWith('NOTE')) continue;
+    if (/^\d+$/.test(line)) {
+      continue;
+    }
+    if (line.includes('-->')) {
+      flush();
+      const [rawStart, rawEnd] = line.split('-->').map(part => part.trim().split(/\s+/)[0]);
+      const start = parseSrtTimestamp(rawStart);
+      const end = parseSrtTimestamp(rawEnd);
+      if (start === null || end === null) {
+        currentStart = null;
+        currentEnd = null;
+        textLines = [];
+        continue;
+      }
+      if (end <= start) {
+        currentStart = end;
+        currentEnd = start;
+      } else {
+        currentStart = start;
+        currentEnd = end;
+      }
+      continue;
+    }
+    if (currentStart !== null && currentEnd !== null) {
+      textLines.push(line);
+    }
+  }
+
+  flush();
+  return cues;
+};
+
+const parseSubtitleCues = (content: string) => parseSrtVttCues(content, true);
+
+const formatDurationVerbose = (seconds?: number) => {
+  if (seconds === undefined || seconds === null || seconds <= 0) return '0s';
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  const parts: string[] = [];
+  if (hrs > 0) parts.push(`${hrs}h`);
+  if (mins > 0 || hrs > 0) parts.push(`${mins}m`);
+  parts.push(`${secs.toFixed(1)}s`);
+  return parts.join('');
+};
+
+const formatOverlapDisplay = (overlapSeconds?: number, totalSeconds?: number) => {
+  if (overlapSeconds === undefined || overlapSeconds === null) return undefined;
+  const timeText = formatDurationVerbose(overlapSeconds);
+  if (!totalSeconds || totalSeconds <= 0) return timeText;
+  const percent = Math.min(100, Math.max(0, (overlapSeconds / totalSeconds) * 100));
+  return `${timeText} (${percent.toFixed(1)}%)`;
+};
+
+const getVideoMimeType = (name?: string) => {
+  if (!name) return 'video/mp4';
+  const ext = name.toLowerCase().slice(name.lastIndexOf('.'));
+  const map: Record<string, string> = {
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.webm': 'video/webm',
+    '.mkv': 'video/x-matroska'
+  };
+  return map[ext] ?? 'video/mp4';
+};
+
+const canBrowserPlayVideo = (mimeType: string) => {
+  if (typeof document === 'undefined') return true;
+  const video = document.createElement('video');
+  return video.canPlayType(mimeType) !== '';
 };
 
 const toEdgeTtsRate = (value: string) => {
@@ -415,6 +581,47 @@ export default function App() {
   const [jobPage, setJobPage] = useState(1);
   const [jobLogOpen, setJobLogOpen] = useState(false);
   const [jobLogJobId, setJobLogJobId] = useState<string | null>(null);
+  const previousJobsRef = useRef<MediaJob[]>([]);
+  const [jobContextMenu, setJobContextMenu] = useState<{ open: boolean; x: number; y: number; jobId: string | null }>({
+    open: false,
+    x: 0,
+    y: 0,
+    jobId: null
+  });
+  const [paramPresetContextMenu, setParamPresetContextMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    presetId: number | null;
+  }>({
+    open: false,
+    x: 0,
+    y: 0,
+    presetId: null
+  });
+  const [paramPresetLabelDraft, setParamPresetLabelDraft] = useState('');
+  const [pipelineContextMenu, setPipelineContextMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    pipelineId: string | null;
+  }>({
+    open: false,
+    x: 0,
+    y: 0,
+    pipelineId: null
+  });
+  const [fileContextMenu, setFileContextMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    file: VaultFile | null;
+  }>({
+    open: false,
+    x: 0,
+    y: 0,
+    file: null
+  });
   const [vaultFolders, setVaultFolders] = useState<VaultFolder[]>([]);
   const [vaultLoading, setVaultLoading] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
@@ -426,9 +633,17 @@ export default function App() {
   const [vaultTypeFilter, setVaultTypeFilter] = useState<'all' | VaultFileType>('all');
   const [vaultSort, setVaultSort] = useState<'recent' | 'name' | 'size'>('recent');
   const [vaultView, setVaultView] = useState<'grouped' | 'flat'>('grouped');
+  const [vaultGroupCollapsed, setVaultGroupCollapsed] = useState<Record<VaultFileType, boolean>>({
+    video: false,
+    audio: false,
+    subtitle: false,
+    output: false,
+    other: false
+  });
   const [showFolderPanel, setShowFolderPanel] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
+  const [toastType, setToastType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [lastFolderNames, setLastFolderNames] = useState<string[]>([]);
   const [vrModels, setVrModels] = useState<string[]>([]);
@@ -461,6 +676,12 @@ export default function App() {
     y: number;
     folder: VaultFolder | null;
   }>({ open: false, x: 0, y: 0, folder: null });
+  const [importPopupOpen, setImportPopupOpen] = useState(false);
+  const [importProjectName, setImportProjectName] = useState('');
+  const [importProjectPickerOpen, setImportProjectPickerOpen] = useState(false);
+  const [importFiles, setImportFiles] = useState<File[]>([]);
+  const [importSubmitting, setImportSubmitting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [graphNodes, setGraphNodes] = useState<Array<{
     id: string;
     type: string;
@@ -479,6 +700,15 @@ export default function App() {
   const [pipelineName, setPipelineName] = useState('New Pipeline');
   const [pipelineSaving, setPipelineSaving] = useState(false);
   const [showRunPipeline, setShowRunPipeline] = useState(false);
+  const [showRenderStudio, setShowRenderStudio] = useState(false);
+  const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(true);
+  const [renderStudioProjectOpen, setRenderStudioProjectOpen] = useState(true);
+  const [renderStudioInspectorOpen, setRenderStudioInspectorOpen] = useState<Record<'timeline' | 'video' | 'audio' | 'subtitle', boolean>>({
+    timeline: true,
+    video: false,
+    audio: false,
+    subtitle: false
+  });
   const [showPipelinePreview, setShowPipelinePreview] = useState(false);
   const [isEditingPipelineName, setIsEditingPipelineName] = useState(false);
   const [pipelinePreviewTask, setPipelinePreviewTask] = useState<{
@@ -487,13 +717,106 @@ export default function App() {
     desc: string;
     inputs: string[];
     outputs: string[];
-    params?: Array<{ name: string; desc: string; type: 'string' | 'number'; default?: string | number }>;
+    params?: Array<{ name: string; desc: string; type: 'string' | 'number' | 'boolean'; default?: string | number | boolean }>;
     preview?: 'tts';
   } | null>(null);
+  const [showParamPresetEditor, setShowParamPresetEditor] = useState(false);
+  const [paramPresetEditorMode, setParamPresetEditorMode] = useState<'create' | 'edit'>('create');
+  const [paramPresetEditingId, setParamPresetEditingId] = useState<number | null>(null);
+  const [paramPresetTaskType, setParamPresetTaskType] = useState('');
+  const [paramPresetValues, setParamPresetValues] = useState<Record<string, string | boolean>>({});
   const [previewTtsText, setPreviewTtsText] = useState('Xin chào, hôm nay trời đẹp và mình nói tiếng Việt.');
   const [previewTtsVoice, setPreviewTtsVoice] = useState('vi-VN-HoaiMyNeural');
   const [previewTtsRate, setPreviewTtsRate] = useState('');
   const [previewTtsPitch, setPreviewTtsPitch] = useState('');
+  const [runPipelineTtsVoice, setRunPipelineTtsVoice] = useState('vi-VN-HoaiMyNeural');
+  const [runPipelineTtsRate, setRunPipelineTtsRate] = useState('');
+  const [runPipelineTtsPitch, setRunPipelineTtsPitch] = useState('');
+  const [runPipelineTtsOverlapMode, setRunPipelineTtsOverlapMode] = useState<'truncate' | 'overlap'>('overlap');
+  const [runPipelineTtsRemoveLineBreaks, setRunPipelineTtsRemoveLineBreaks] = useState(true);
+  const [renderVideoId, setRenderVideoId] = useState<string | null>(null);
+  const [renderAudioId, setRenderAudioId] = useState<string | null>(null);
+  const [renderSubtitleId, setRenderSubtitleId] = useState<string | null>(null);
+  const [renderTimelineScale, setRenderTimelineScale] = useState(1);
+  const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
+  const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
+  const [renderPreviewLoading, setRenderPreviewLoading] = useState(false);
+  const [renderPreviewError, setRenderPreviewError] = useState<string | null>(null);
+  const [renderSubtitleCues, setRenderSubtitleCues] = useState<Array<{ start: number; end: number; text: string }>>([]);
+  const [renderStudioFocus, setRenderStudioFocus] = useState<'timeline' | 'item'>('timeline');
+  const [renderStudioItemType, setRenderStudioItemType] = useState<'video' | 'audio' | 'subtitle' | null>(null);
+  const [renderTimelineViewportWidth, setRenderTimelineViewportWidth] = useState(0);
+  const renderTimelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const renderTimelineDragRef = useRef<{ active: boolean; startX: number; scrollLeft: number; moved: boolean }>({
+    active: false,
+    startX: 0,
+    scrollLeft: 0,
+    moved: false
+  });
+  const [renderParams, setRenderParams] = useState({
+    timeline: {
+      framerate: '30',
+      resolution: '1920x1080'
+    },
+    video: {
+      trimStart: '',
+      trimEnd: '',
+      speed: '1',
+      volume: '100',
+      fit: 'contain',
+      positionX: '50',
+      positionY: '50',
+      scale: '1',
+      rotation: '0',
+      opacity: '100',
+      colorLut: '',
+      cropX: '0',
+      cropY: '0',
+      cropW: '100',
+      cropH: '100',
+      fadeIn: '0',
+      fadeOut: '0'
+    },
+    audio: {
+      trimStart: '',
+      trimEnd: '',
+      gainDb: '0',
+      normalize: false,
+      ducking: false,
+      duckAmountDb: '12',
+      fadeIn: '0',
+      fadeOut: '0',
+      pan: '0',
+      channelMode: 'stereo'
+    },
+    subtitle: {
+      language: '',
+      stylePreset: 'default',
+      fontFamily: '',
+      fontSize: '32',
+      color: '#ffffff',
+      outlineColor: '#000000',
+      outlineWidth: '2',
+      shadow: '2',
+      position: 'bottom',
+      positionX: '50',
+      positionY: '90',
+      maxWidth: '90',
+      lineHeight: '1.2',
+      bgColor: '#000000',
+      bgOpacity: '0',
+      safeArea: '5',
+      offset: '0'
+    }
+  });
+  const runAgainPrefillRef = useRef(false);
+  const [paramPresets, setParamPresets] = useState<Array<{
+    id: number;
+    taskType: string;
+    params: Record<string, any>;
+    label: string;
+    updatedAt?: string;
+  }>>([]);
   const [previewTtsLoading, setPreviewTtsLoading] = useState(false);
   const [previewTtsError, setPreviewTtsError] = useState<string | null>(null);
   const [previewTtsUrl, setPreviewTtsUrl] = useState<string | null>(null);
@@ -513,28 +836,122 @@ export default function App() {
   const [runPipelineProjectId, setRunPipelineProjectId] = useState<string | null>(null);
   const [runPipelineProjectLocked, setRunPipelineProjectLocked] = useState(false);
   const [runPipelineSubmitting, setRunPipelineSubmitting] = useState(false);
+  const [runPipelineParamPreset, setRunPipelineParamPreset] = useState<Record<string, string>>({});
   const [runPipelineBackend, setRunPipelineBackend] = useState('vr');
   const [downloadUrl, setDownloadUrl] = useState('');
   const [downloadProjectName, setDownloadProjectName] = useState('');
   const [downloadProjectPickerOpen, setDownloadProjectPickerOpen] = useState(false);
   const [downloadCookiesFile, setDownloadCookiesFile] = useState<File | null>(null);
   const [downloadNoPlaylist, setDownloadNoPlaylist] = useState(true);
+  const [downloadMode, setDownloadMode] = useState<'all' | 'subs' | 'media'>('all');
   const [downloadSubtitleLang, setDownloadSubtitleLang] = useState('ai-zh');
   const [downloadAnalyzeLoading, setDownloadAnalyzeLoading] = useState(false);
   const [downloadAnalyzeError, setDownloadAnalyzeError] = useState<string | null>(null);
   const [downloadAnalyzeResult, setDownloadAnalyzeResult] = useState<any>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [runPipelinePrefsReady, setRunPipelinePrefsReady] = useState(false);
+  const runPipelinePrefsReadyRef = useRef(false);
+  const runPipelinePrefsSourceRef = useRef<Record<string, string> | null>(null);
+  const runPipelinePrefsSourceAppliedRef = useRef(false);
+  const runPipelinePrefsPipelineIdRef = useRef<string | null>(null);
+  const runPipelinePrefsPipelineAppliedRef = useRef(false);
+  const paramPresetsLoadedRef = useRef(false);
 
   const TASK_PIPELINE_PREFIX = 'task:';
+  const RUN_PIPELINE_PREFS_KEY = 'mediaforge.runPipelinePrefs.v1';
 
   const selectedFolder = vaultFolders.find(folder => folder.id === vaultFolderId) ?? null;
   const selectedFile = selectedFolder?.files.find(file => file.id === vaultFileId) ?? null;
   const runPipelineProject = vaultFolders.find(folder => folder.id === (runPipelineProjectId ?? '')) ?? null;
   const runPipelineInput = runPipelineProject?.files.find(file => file.id === runPipelineInputId) ?? null;
   const runPipelineHasUvr = Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'uvr'));
+  const runPipelineHasTts = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
+    ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'tts'
+    : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'tts'));
   const runPipelineHasDownload = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
     ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'download'
     : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'download'));
+  const runPipelineHasRender = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
+    ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'render'
+    : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'render'));
+  const renderReady = Boolean(renderVideoId);
+  const renderVideoFile = runPipelineProject?.files.find(file => file.id === renderVideoId) ?? null;
+  const renderAudioFile = runPipelineProject?.files.find(file => file.id === renderAudioId) ?? null;
+  const renderSubtitleFile = runPipelineProject?.files.find(file => file.id === renderSubtitleId) ?? null;
+  const selectProjectDefaults = () => {
+    const files = runPipelineProject?.files ?? [];
+    const firstVideo = files.find(file => file.type === 'video');
+    const firstAudio = files.find(file => file.type === 'audio');
+    const firstSubtitle = files.find(file => file.type === 'subtitle');
+    setRenderVideoId(firstVideo?.id ?? null);
+    setRenderAudioId(firstAudio?.id ?? null);
+    setRenderSubtitleId(firstSubtitle?.id ?? null);
+    setRenderStudioFocus('timeline');
+    setRenderStudioItemType(null);
+  };
+  const renderVideoDuration = renderVideoFile?.durationSeconds ?? parseDurationToSeconds(renderVideoFile?.duration);
+  const renderAudioDuration = renderAudioFile?.durationSeconds ?? parseDurationToSeconds(renderAudioFile?.duration);
+  const renderSubtitleDuration = renderSubtitleFile?.durationSeconds ?? parseDurationToSeconds(renderSubtitleFile?.duration);
+  const updateRenderParam = (section: keyof typeof renderParams, key: string, value: any) => {
+    setRenderParams(prev => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        [key]: value
+      }
+    }));
+  };
+  const renderTimelineMax = Math.max(
+    renderVideoDuration ?? 0,
+    renderAudioDuration ?? 0,
+    renderSubtitleDuration ?? 0
+  );
+  const renderTimelineDuration = renderTimelineMax > 0
+    ? renderTimelineMax * 1.2
+    : 0;
+  const renderSubtitleLanes = useMemo(() => {
+    if (renderSubtitleCues.length === 0) return [];
+    const sorted = [...renderSubtitleCues].sort((a, b) => {
+      if (a.start !== b.start) return a.start - b.start;
+      return a.end - b.end;
+    });
+    const lanes: Array<Array<{ start: number; end: number; text: string }>> = [];
+    sorted.forEach(cue => {
+      let placed = false;
+      for (let i = 0; i < lanes.length; i += 1) {
+        const lane = lanes[i];
+        const last = lane[lane.length - 1];
+        if (!last || last.end <= cue.start) {
+          lane.push(cue);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) lanes.push([cue]);
+    });
+    return lanes;
+  }, [renderSubtitleCues]);
+  const renderSubtitleLaneHeight = 24;
+  const renderSubtitleTrackHeight = Math.max(1, renderSubtitleLanes.length) * renderSubtitleLaneHeight;
+  const renderSubtitleActiveText = useMemo(() => {
+    if (renderSubtitleCues.length === 0) return '';
+    const active = renderSubtitleCues.filter(cue => renderPlayheadSeconds >= cue.start && renderPlayheadSeconds <= cue.end);
+    if (active.length === 0) return '';
+    return active.map(cue => cue.text).join(' ');
+  }, [renderSubtitleCues, renderPlayheadSeconds]);
+  const renderSelectedItem = useMemo(() => {
+    if (renderStudioFocus !== 'item') return null;
+    const files = runPipelineProject?.files ?? [];
+    if (renderStudioItemType === 'video') return files.find(file => file.id === renderVideoId) ?? null;
+    if (renderStudioItemType === 'audio') return files.find(file => file.id === renderAudioId) ?? null;
+    if (renderStudioItemType === 'subtitle') return files.find(file => file.id === renderSubtitleId) ?? null;
+    return null;
+  }, [renderStudioFocus, renderStudioItemType, runPipelineProject?.files, renderVideoId, renderAudioId, renderSubtitleId]);
+  const renderTimelineMinScale = renderTimelineDuration > 0 && renderTimelineViewportWidth > 0
+    ? Math.min(1, Math.max(0.1, renderTimelineViewportWidth / (renderTimelineDuration * 24)))
+    : 0.1;
+  const renderTimelineWidth = Math.max(320, renderTimelineDuration * 24 * renderTimelineScale);
+  const renderTimelineTickCount = Math.max(4, Math.round(renderTimelineWidth / 160));
   const downloadAnalyzeData = downloadAnalyzeResult?.data ?? null;
   const downloadAnalyzeWarnings: string[] = Array.isArray(downloadAnalyzeResult?.warnings) ? downloadAnalyzeResult.warnings : [];
   const downloadAnalyzeFormats = Array.isArray(downloadAnalyzeData?.formats) ? downloadAnalyzeData.formats : [];
@@ -575,6 +992,19 @@ export default function App() {
   const bestSingleFormat = bestMuxedFormat ?? bestVideoFormat ?? bestAudioFormat ?? null;
   const downloadAnalyzeSubtitleCount = downloadAnalyzeListSubs.length;
 
+  const showToast = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    setToastType(type);
+    setToastMessage(message);
+    setToastVisible(true);
+  };
+
+  const toastStyles: Record<'info' | 'success' | 'warning' | 'error', string> = {
+    info: 'border-zinc-500/30 bg-zinc-500/15 text-zinc-200',
+    success: 'border-lime-500/30 bg-lime-500/15 text-lime-200',
+    warning: 'border-amber-500/30 bg-amber-500/15 text-amber-200',
+    error: 'border-red-500/30 bg-red-500/15 text-red-200'
+  };
+
   const forgeProject = vaultFolders.find(folder => folder.id === (vrProjectId ?? vaultFolders[0]?.id));
   const forgeInputs = (forgeProject?.files ?? []).filter(file => file.type === 'video' || file.type === 'audio');
   const selectedForgeInput = forgeInputs.find(file => file.id === vrInputId) ?? forgeInputs[0] ?? null;
@@ -600,13 +1030,6 @@ export default function App() {
     other: 'Other'
   };
 
-  const statusStyles: Record<VaultStatus, string> = {
-    raw: 'text-zinc-400 bg-zinc-400/10',
-    partial: 'text-blue-400 bg-blue-400/10',
-    complete: 'text-lime-400 bg-lime-400/10',
-    error: 'text-red-400 bg-red-400/10',
-    processing: 'text-blue-400 bg-blue-400/10'
-  };
 
   const filteredFiles = (selectedFolder?.files ?? [])
     .filter(file => (vaultTypeFilter === 'all' ? true : file.type === vaultTypeFilter))
@@ -633,6 +1056,8 @@ export default function App() {
   const successRate = settledJobCount > 0 ? Math.round((completedJobCount / settledJobCount) * 1000) / 10 : null;
   const activeJob = jobs.find(job => job.status === 'processing') ?? jobs.find(job => job.status === 'queued') ?? null;
   const jobLogTarget = jobs.find(job => job.id === jobLogJobId) ?? activeJob;
+  const jobContextTarget = jobs.find(job => job.id === jobContextMenu.jobId) ?? null;
+  const pipelineContextTarget = pipelineLibrary.find(item => item.id === pipelineContextMenu.pipelineId) ?? null;
 
   const previewGroups = (folder: VaultFolder) => ([
     { type: 'video' as VaultFileType, label: 'Video' },
@@ -648,6 +1073,318 @@ export default function App() {
     files.length ? files.map(file => file.name).join('\n') : 'No files';
 
   const PREFERRED_TTS_VOICES = ['vi-VN-HoaiMyNeural', 'vi-VN-NamMinhNeural'];
+  const DOWNLOAD_MODE_OPTIONS = [
+    { value: 'all', label: 'All (subs + audio + video)' },
+    { value: 'subs', label: 'Subtitles only' },
+    { value: 'media', label: 'Audio + video only' }
+  ];
+
+  const getParamPresetsForType = (taskType: string) => (
+    paramPresets
+      .filter(preset => preset.taskType === taskType)
+      .slice()
+      .sort((a, b) => {
+        const labelA = (a.label || '').trim().toLowerCase();
+        const labelB = (b.label || '').trim().toLowerCase();
+        if (!labelA && !labelB) return a.id - b.id;
+        if (!labelA) return 1;
+        if (!labelB) return -1;
+        const cmp = labelA.localeCompare(labelB);
+        return cmp !== 0 ? cmp : a.id - b.id;
+      })
+  );
+
+  const hasParamPresets = (taskType: string) => getParamPresetsForType(taskType).length > 0;
+
+  const getSelectedParamPresetId = (taskType: string) => {
+    const value = runPipelineParamPreset[taskType];
+    if (typeof value === 'string' && value.startsWith('preset:')) {
+      const id = Number(value.slice('preset:'.length));
+      return Number.isFinite(id) ? id : null;
+    }
+    return null;
+  };
+
+  const getSelectedParamPreset = (taskType: string) => {
+    const selectedId = getSelectedParamPresetId(taskType);
+    if (selectedId !== null) {
+      return paramPresets.find(preset => preset.id === selectedId) ?? null;
+    }
+    return getParamPresetsForType(taskType)[0] ?? null;
+  };
+
+  const getSelectedParamPresetLabel = (taskType: string) => {
+    const selected = getSelectedParamPreset(taskType);
+    if (selected?.label) return selected.label;
+    const fallback = availableTasks.find(task => task.type === taskType)?.label ?? taskType;
+    return fallback;
+  };
+
+  const getSelectedParamPresetParams = (taskType: string) => getSelectedParamPreset(taskType)?.params ?? {};
+
+  const formatDefaultValue = (value: any) => {
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (value === null || value === undefined) return '--';
+    return String(value);
+  };
+
+  const isParamOverridden = (taskType: string, key: string, currentValue: any) => {
+    if (!runPipelineParamPreset[taskType] || runPipelineParamPreset[taskType] === 'custom') return false;
+    const presetParams = getSelectedParamPresetParams(taskType);
+    if (!(key in presetParams)) return false;
+    const normalize = (value: any) => (value === null || value === undefined ? '' : String(value));
+    return normalize(currentValue) !== normalize(presetParams[key]);
+  };
+
+  const applyParamPresetParams = (taskType: string) => {
+    const params = getSelectedParamPresetParams(taskType);
+    if (!params || typeof params !== 'object') return;
+    if (taskType === 'uvr') {
+      if (params.backend !== undefined) setRunPipelineBackend(String(params.backend));
+      if (params.model !== undefined) setVrModel(String(params.model));
+      if (params.outputFormat !== undefined) {
+        setVrOutputType(String(params.outputFormat) as 'Mp3' | 'Wav' | 'Flac');
+      }
+      return;
+    }
+    if (taskType === 'tts') {
+      if (params.voice !== undefined) setRunPipelineTtsVoice(String(params.voice));
+      if (params.rate !== undefined) setRunPipelineTtsRate(String(params.rate));
+      if (params.pitch !== undefined) setRunPipelineTtsPitch(String(params.pitch));
+      if (params.overlapMode !== undefined) {
+        const mode = String(params.overlapMode);
+        if (mode === 'overlap' || mode === 'truncate') {
+          setRunPipelineTtsOverlapMode(mode);
+        }
+      }
+      if (params.removeLineBreaks !== undefined) {
+        setRunPipelineTtsRemoveLineBreaks(Boolean(params.removeLineBreaks));
+      }
+      return;
+    }
+    if (taskType === 'download') {
+      if (params.downloadMode !== undefined) {
+        const mode = String(params.downloadMode);
+        if (mode === 'all' || mode === 'subs' || mode === 'media') {
+          setDownloadMode(mode);
+        }
+      }
+      if (params.subLangs !== undefined) setDownloadSubtitleLang(String(params.subLangs));
+      if (params.noPlaylist !== undefined) setDownloadNoPlaylist(Boolean(params.noPlaylist));
+      return;
+    }
+    if (taskType === 'render') {
+      Object.entries(params).forEach(([key, value]) => {
+        if (!key.includes('.')) return;
+        const [section, field] = key.split('.');
+        if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle') return;
+        if (value === undefined || value === null) return;
+        if (section === 'subtitle' && field === 'stylePreset') {
+          setRenderSubStyle(String(value));
+        }
+        const normalized = field === 'normalize' || field === 'ducking'
+          ? Boolean(value)
+          : String(value);
+        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle', field, normalized);
+      });
+    }
+  };
+
+  const handleParamPresetChange = (taskType: string, value: string) => {
+    setRunPipelineParamPreset(prev => ({ ...prev, [taskType]: value }));
+    if (value !== 'custom') {
+      applyParamPresetParams(taskType);
+    }
+  };
+
+  const onRenderTimelineMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = renderTimelineScrollRef.current;
+    if (!target) return;
+    event.preventDefault();
+    renderTimelineDragRef.current.active = true;
+    renderTimelineDragRef.current.startX = event.pageX;
+    renderTimelineDragRef.current.scrollLeft = target.scrollLeft;
+    renderTimelineDragRef.current.moved = false;
+  };
+
+  const onRenderTimelineMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!renderTimelineDragRef.current.active) return;
+    const target = renderTimelineScrollRef.current;
+    if (!target) return;
+    if (event.buttons === 0) {
+      renderTimelineDragRef.current.active = false;
+      return;
+    }
+    const delta = event.pageX - renderTimelineDragRef.current.startX;
+    if (Math.abs(delta) > 3) {
+      renderTimelineDragRef.current.moved = true;
+    }
+    target.scrollLeft = renderTimelineDragRef.current.scrollLeft - delta;
+  };
+
+  const onRenderTimelineMouseUp = () => {
+    renderTimelineDragRef.current.active = false;
+  };
+
+  const onRenderTimelineClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = renderTimelineScrollRef.current;
+    if (!target) return;
+    if (renderTimelineDragRef.current.moved) {
+      renderTimelineDragRef.current.moved = false;
+      return;
+    }
+    setRenderStudioFocus('timeline');
+    setRenderStudioItemType(null);
+    if (renderTimelineDuration <= 0) return;
+    const rect = target.getBoundingClientRect();
+    const x = event.clientX - rect.left + target.scrollLeft;
+    const clamped = Math.max(0, Math.min(renderTimelineWidth, x));
+    const seconds = (clamped / renderTimelineWidth) * renderTimelineDuration;
+    setRenderPlayheadSeconds(seconds);
+  };
+
+  const onRenderTimelineWheelNative = (event: WheelEvent) => {
+    const target = renderTimelineScrollRef.current;
+    if (!target) return;
+    if (!event.ctrlKey) return;
+    if (!(event.target instanceof Node) || !target.contains(event.target)) return;
+    event.preventDefault();
+    setRenderTimelineScale(prev => {
+      const next = Math.max(renderTimelineMinScale, Math.min(4, prev + (event.deltaY > 0 ? -0.25 : 0.25)));
+      return Number(next.toFixed(2));
+    });
+  };
+
+  useEffect(() => {
+    const handleWindowMouseUp = () => {
+      renderTimelineDragRef.current.active = false;
+    };
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const target = renderTimelineScrollRef.current;
+    if (!target) return;
+    const updateWidth = () => {
+      if (!renderTimelineScrollRef.current) return;
+      setRenderTimelineViewportWidth(renderTimelineScrollRef.current.clientWidth);
+    };
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(target);
+    const raf = requestAnimationFrame(updateWidth);
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [showRenderStudio, renderTimelineDuration]);
+
+  useEffect(() => {
+    if (renderTimelineScale < renderTimelineMinScale) {
+      setRenderTimelineScale(renderTimelineMinScale);
+    }
+  }, [renderTimelineMinScale, renderTimelineScale]);
+
+  useEffect(() => {
+    if (!showRenderStudio) return;
+    if (renderStudioFocus !== 'timeline') {
+      setRenderPreviewLoading(false);
+      return;
+    }
+    if (!renderVideoFile?.relativePath) {
+      setRenderPreviewUrl(null);
+      setRenderPreviewError(null);
+      setRenderPreviewLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      try {
+        setRenderPreviewLoading(true);
+        setRenderPreviewError(null);
+        const params = new URLSearchParams({
+          videoPath: renderVideoFile.relativePath,
+          at: String(Math.max(0, renderPlayheadSeconds))
+        });
+        if (renderSubtitleFile?.relativePath) {
+          params.set('subtitlePath', renderSubtitleFile.relativePath);
+        }
+        const response = await fetch(`/api/render-preview?${params.toString()}`, { signal: controller.signal });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || 'Unable to render preview');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        setRenderPreviewUrl(prev => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        const message = error instanceof Error ? error.message : 'Unable to render preview';
+        setRenderPreviewError(message);
+      } finally {
+        if (!controller.signal.aborted) setRenderPreviewLoading(false);
+      }
+    }, 150);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [showRenderStudio, renderStudioFocus, renderVideoFile?.relativePath, renderSubtitleFile?.relativePath, renderPlayheadSeconds]);
+
+  useEffect(() => {
+    if (!showRenderStudio) return;
+    if (!renderSubtitleFile?.relativePath) {
+      setRenderSubtitleCues([]);
+      return;
+    }
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const response = await fetch(`/api/vault/text?path=${encodeURIComponent(renderSubtitleFile.relativePath)}`, {
+          signal: controller.signal
+        });
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        const content = typeof data.content === 'string' ? data.content : '';
+        const cues = parseSubtitleCues(content);
+        setRenderSubtitleCues(cues);
+      } catch {
+        if (controller.signal.aborted) return;
+        setRenderSubtitleCues([]);
+      }
+    };
+    load();
+    return () => controller.abort();
+  }, [showRenderStudio, renderSubtitleFile?.relativePath]);
+
+  useEffect(() => {
+    return () => {
+      setRenderPreviewUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('wheel', onRenderTimelineWheelNative, { passive: false, capture: true });
+    return () => {
+      window.removeEventListener('wheel', onRenderTimelineWheelNative as EventListener, { capture: true } as AddEventListenerOptions);
+    };
+  }, []);
+
+
+  const switchPresetToManual = (taskType: string) => {
+    if (runPipelineParamPreset[taskType] === 'custom') return;
+    applyParamPresetParams(taskType);
+    setRunPipelineParamPreset(prev => ({ ...prev, [taskType]: 'custom' }));
+  };
 
   const resolvePipelineIcon = (pipeline: PipelineSummary) => {
     const type = pipeline.primaryType ?? (pipeline.kind === 'task' ? pipeline.id.slice(TASK_PIPELINE_PREFIX.length) : null);
@@ -670,19 +1407,18 @@ export default function App() {
     edges: []
   });
 
-  const availableTasks = [
+  const availableTasks = React.useMemo(() => ([
     {
       type: 'download',
       icon: Download,
-      label: 'Download (yt-dlp)',
+      label: 'Download',
       desc: 'Download video and subtitles using yt-dlp.',
-      inputs: ['URL', 'Project'],
-      outputs: ['Video', 'Subtitle (optional)'],
+      inputs: ['URL'],
+      outputs: ['Project'],
       params: [
-        { name: 'url', desc: 'Video URL to download.', type: 'string' },
-        { name: 'projectName', desc: 'Project folder name.', type: 'string' },
-        { name: 'cookiesFile', desc: 'Optional cookies file upload.', type: 'string' },
-        { name: 'noPlaylist', desc: 'Disable playlist downloads.', type: 'string' }
+        { name: 'downloadMode', desc: 'Download scope: all | subs | media.', type: 'string', default: 'all' },
+        { name: 'subLangs', desc: 'Subtitle language codes (comma-separated).', type: 'string', default: 'ai-zh' },
+        { name: 'noPlaylist', desc: 'Disable playlist downloads.', type: 'boolean', default: true }
       ]
     },
     {
@@ -693,20 +1429,19 @@ export default function App() {
       inputs: ['Video/Audio'],
       outputs: ['Audio'],
       params: [
-        { name: 'backend', desc: 'Processing backend', type: 'string' },
-        { name: 'model', desc: 'Model file to use', type: 'string' },
-        { name: 'outputFormat', desc: 'Output audio format', type: 'string' }
+        { name: 'backend', desc: 'Processing backend', type: 'string', default: 'vr' },
+        { name: 'model', desc: 'Model file to use', type: 'string', default: 'MGM_MAIN_v4.pth' },
+        { name: 'outputFormat', desc: 'Output audio format', type: 'string', default: 'Mp3' }
       ]
     },
     {
       type: 'tts',
       icon: FileAudio,
       label: 'Text-to-Speech',
-      desc: 'Generate speech audio from text.',
-      inputs: ['Text'],
+      desc: 'Generate speech audio from subtitle.',
+      inputs: ['Subtitle'],
       outputs: ['Audio'],
       params: [
-        { name: 'text', desc: 'Text content to synthesize.', type: 'string', default: 'Xin chào, hôm nay trời đẹp và mình nói tiếng Việt.' },
         { name: 'voice', desc: 'Voice name', type: 'string', default: 'vi-VN-HoaiMyNeural' },
         { name: 'rate', desc: 'Speaking rate factor', type: 'number', default: 1 },
         { name: 'pitch', desc: 'Pitch in semitone', type: 'number', default: 0 }
@@ -714,50 +1449,227 @@ export default function App() {
       preview: 'tts'
     },
     {
-      type: 'stt',
-      icon: Type,
-      label: 'Speech-to-Text',
-      desc: 'Whisper-based transcription into subtitles.',
-      inputs: ['Audio'],
-      outputs: ['Subtitle'],
-      params: [
-        { name: 'language', desc: 'Optional language hint.', type: 'string' }
-      ]
-    },
-    {
-      type: 'translate',
-      icon: Languages,
-      label: 'Translation',
-      desc: 'Translate subtitles across languages.',
-      inputs: ['Subtitle'],
-      outputs: ['Subtitle'],
-      params: [
-        { name: 'targetLang', desc: 'Target language code.', type: 'string' }
-      ]
-    },
-    {
-      type: 'edit',
-      icon: Scissors,
-      label: 'Subtitle Editor',
-      desc: 'Refine timing and text.',
-      inputs: ['Subtitle'],
-      outputs: ['Subtitle'],
-      params: [
-        { name: 'mode', desc: 'Editing mode preset.', type: 'string' }
-      ]
-    },
-    {
-      type: 'burn',
+      type: 'render',
       icon: FileVideo,
-      label: 'Subtitle Burn',
-      desc: 'Hardcode subtitles into video.',
-      inputs: ['Video', 'Subtitle'],
+      label: 'Render',
+      desc: 'Combine video, audio, and subtitle into final output.',
+      inputs: ['Project'],
       outputs: ['Video'],
       params: [
-        { name: 'style', desc: 'Subtitle style preset.', type: 'string' }
+        { name: 'timeline.framerate', desc: 'Frame rate', type: 'number', default: 30 },
+        { name: 'timeline.resolution', desc: 'Output resolution (e.g. 1920x1080)', type: 'string', default: '1920x1080' },
+        { name: 'video.trimStart', desc: 'Trim start (s)', type: 'number', default: 0 },
+        { name: 'video.trimEnd', desc: 'Trim end (s)', type: 'number', default: 0 },
+        { name: 'video.speed', desc: 'Playback speed', type: 'number', default: 1 },
+        { name: 'video.volume', desc: 'Video audio volume (%)', type: 'number', default: 100 },
+        { name: 'video.fit', desc: 'contain | cover | stretch', type: 'string', default: 'contain' },
+        { name: 'video.positionX', desc: 'Position X (%)', type: 'number', default: 50 },
+        { name: 'video.positionY', desc: 'Position Y (%)', type: 'number', default: 50 },
+        { name: 'video.scale', desc: 'Scale', type: 'number', default: 1 },
+        { name: 'video.rotation', desc: 'Rotation (deg)', type: 'number', default: 0 },
+        { name: 'video.opacity', desc: 'Opacity (%)', type: 'number', default: 100 },
+        { name: 'video.colorLut', desc: 'Color LUT id', type: 'string', default: '' },
+        { name: 'video.cropX', desc: 'Crop X (%)', type: 'number', default: 0 },
+        { name: 'video.cropY', desc: 'Crop Y (%)', type: 'number', default: 0 },
+        { name: 'video.cropW', desc: 'Crop W (%)', type: 'number', default: 100 },
+        { name: 'video.cropH', desc: 'Crop H (%)', type: 'number', default: 100 },
+        { name: 'video.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
+        { name: 'video.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
+        { name: 'audio.trimStart', desc: 'Trim start (s)', type: 'number', default: 0 },
+        { name: 'audio.trimEnd', desc: 'Trim end (s)', type: 'number', default: 0 },
+        { name: 'audio.gainDb', desc: 'Gain (dB)', type: 'number', default: 0 },
+        { name: 'audio.normalize', desc: 'Normalize', type: 'boolean', default: false },
+        { name: 'audio.ducking', desc: 'Ducking', type: 'boolean', default: false },
+        { name: 'audio.duckAmountDb', desc: 'Duck amount (dB)', type: 'number', default: 12 },
+        { name: 'audio.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
+        { name: 'audio.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
+        { name: 'audio.pan', desc: 'Pan (-100..100)', type: 'number', default: 0 },
+        { name: 'audio.channelMode', desc: 'stereo | mono | left | right', type: 'string', default: 'stereo' },
+        { name: 'subtitle.language', desc: 'Subtitle language code', type: 'string', default: '' },
+        { name: 'subtitle.stylePreset', desc: 'Subtitle style preset', type: 'string', default: 'default' },
+        { name: 'subtitle.fontFamily', desc: 'Font family', type: 'string', default: '' },
+        { name: 'subtitle.fontSize', desc: 'Font size', type: 'number', default: 32 },
+        { name: 'subtitle.color', desc: 'Font color', type: 'string', default: '#ffffff' },
+        { name: 'subtitle.outlineColor', desc: 'Outline color', type: 'string', default: '#000000' },
+        { name: 'subtitle.outlineWidth', desc: 'Outline width', type: 'number', default: 2 },
+        { name: 'subtitle.shadow', desc: 'Shadow', type: 'number', default: 2 },
+        { name: 'subtitle.position', desc: 'bottom | top | custom', type: 'string', default: 'bottom' },
+        { name: 'subtitle.positionX', desc: 'Position X (%)', type: 'number', default: 50 },
+        { name: 'subtitle.positionY', desc: 'Position Y (%)', type: 'number', default: 90 },
+        { name: 'subtitle.maxWidth', desc: 'Max width (%)', type: 'number', default: 90 },
+        { name: 'subtitle.lineHeight', desc: 'Line height', type: 'number', default: 1.2 },
+        { name: 'subtitle.bgColor', desc: 'Background color', type: 'string', default: '#000000' },
+        { name: 'subtitle.bgOpacity', desc: 'Background opacity (%)', type: 'number', default: 0 },
+        { name: 'subtitle.safeArea', desc: 'Safe area (%)', type: 'number', default: 5 },
+        { name: 'subtitle.offset', desc: 'Time offset (s)', type: 'number', default: 0 }
       ]
     }
-  ];
+  ]), []);
+
+  const paramPresetCards = paramPresets
+    .map(preset => {
+      const task = availableTasks.find(item => item.type === preset.taskType);
+      const params = preset.params && typeof preset.params === 'object'
+        ? Object.keys(preset.params).filter(key => preset.params[key] !== undefined)
+        : [];
+      return {
+        id: preset.id,
+        type: preset.taskType,
+        label: preset.label || task?.label || preset.taskType,
+        taskLabel: task?.label ?? preset.taskType,
+        icon: task?.icon,
+        params: params.map(name => ({ name }))
+      };
+    })
+    .filter(node => node.params.length > 0);
+
+  const paramPresetContextTarget = paramPresetCards.find(node => node.id === paramPresetContextMenu.presetId) ?? null;
+
+  const paramPresetTask = availableTasks.find(task => task.type === paramPresetTaskType) ?? null;
+
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const getDefaultParamPresetName = (taskLabel: string, taskType: string) => {
+    const matcher = new RegExp(`^${escapeRegExp(taskLabel)}\\s+preset\\s+(\\d+)$`, 'i');
+    let maxIndex = 0;
+    const candidates = paramPresets.filter(preset => preset.taskType === taskType);
+    candidates.forEach(preset => {
+      const label = (preset.label || taskLabel || '').trim();
+      const match = label.match(matcher);
+      if (!match) return;
+      const value = Number(match[1]);
+      if (Number.isFinite(value)) {
+        maxIndex = Math.max(maxIndex, value);
+      }
+    });
+    return `${taskLabel} preset ${maxIndex + 1}`;
+  };
+
+  const openParamPresetEditor = (taskType?: string, mode: 'create' | 'edit' = 'create') => {
+    const fallbackType = availableTasks[0]?.type ?? '';
+    setParamPresetEditorMode(mode);
+    setParamPresetTaskType(taskType ?? fallbackType);
+    setParamPresetEditingId(null);
+    setShowParamPresetEditor(true);
+  };
+
+  const openParamPresetEditorForEdit = (presetId: number) => {
+    const target = paramPresets.find(preset => preset.id === presetId);
+    if (!target) return;
+    setParamPresetEditorMode('edit');
+    setParamPresetEditingId(presetId);
+    setParamPresetTaskType(target.taskType);
+    setShowParamPresetEditor(true);
+  };
+
+  const saveParamPreset = async () => {
+    if (!paramPresetTask) return;
+    const params: Record<string, any> = {};
+    (paramPresetTask.params ?? []).forEach(param => {
+      const raw = paramPresetValues[param.name];
+      if (raw === undefined || (typeof raw === 'string' && raw.trim() === '')) return;
+      if (param.type === 'number') {
+        const numeric = Number(raw);
+        if (Number.isFinite(numeric)) {
+          params[param.name] = numeric;
+        }
+        return;
+      }
+      if (param.type === 'boolean') {
+        params[param.name] = Boolean(raw);
+        return;
+      }
+      params[param.name] = raw;
+    });
+    if (Object.keys(params).length === 0) {
+      showToast('Please set at least one param value.', 'error');
+      return;
+    }
+    try {
+      const label = paramPresetLabelDraft.trim() || paramPresetTask.label;
+      const normalizedLabel = label.trim().toLowerCase();
+      const hasDuplicateLabel = paramPresets.some(preset => {
+        if (paramPresetEditingId !== null && preset.id === paramPresetEditingId) return false;
+        return preset.label.trim().toLowerCase() === normalizedLabel;
+      });
+      if (hasDuplicateLabel) {
+        showToast('Param preset name already exists.', 'error');
+        return;
+      }
+      const response = await fetch('/api/param-presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: paramPresetEditingId ?? undefined,
+          taskType: paramPresetTask.type,
+          params,
+          label
+        })
+      });
+      if (!response.ok) throw new Error('Unable to save');
+      const data = await response.json().catch(() => ({}));
+      const savedId = Number.isFinite(Number(data?.id)) ? Number(data.id) : paramPresetEditingId;
+      if (paramPresetEditorMode === 'create' && savedId) {
+        setRunPipelineParamPreset(prev => {
+          if (prev[paramPresetTask.type] === 'custom') return prev;
+          return { ...prev, [paramPresetTask.type]: `preset:${savedId}` };
+        });
+      }
+      await loadParamPresets();
+      showToast('Param preset saved.', 'success');
+      setShowParamPresetEditor(false);
+    } catch {
+      showToast('Unable to save param preset.', 'error');
+    }
+  };
+
+  const deleteParamPreset = async (presetId: number, taskType: string) => {
+    try {
+      await fetch(`/api/param-presets/${presetId}`, {
+        method: 'DELETE'
+      });
+      setParamPresetSelection(prev => {
+        if (prev[taskType] !== presetId) return prev;
+        const next = { ...prev };
+        next[taskType] = null;
+        return next;
+      });
+      showToast('Param preset deleted.', 'success');
+      await loadParamPresets();
+    } catch {
+      showToast('Unable to delete param preset.', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (!showParamPresetEditor) return;
+    const task = availableTasks.find(item => item.type === paramPresetTaskType) ?? availableTasks[0];
+    if (!task) return;
+    if (paramPresetTaskType !== task.type) {
+      setParamPresetTaskType(task.type);
+    }
+    const editingPreset = paramPresetEditingId
+      ? paramPresets.find(preset => preset.id === paramPresetEditingId)
+      : null;
+    const savedParams = editingPreset?.params ?? {};
+    const nextValues: Record<string, string | boolean> = {};
+    (task.params ?? []).forEach(param => {
+      const savedValue = savedParams[param.name];
+      if (savedValue !== undefined) {
+        nextValues[param.name] = param.type === 'boolean' ? Boolean(savedValue) : String(savedValue);
+      } else if (param.default !== undefined) {
+        nextValues[param.name] = param.type === 'boolean' ? Boolean(param.default) : String(param.default);
+      } else {
+        nextValues[param.name] = param.type === 'boolean' ? false : '';
+      }
+    });
+    setParamPresetValues(nextValues);
+    if (paramPresetEditorMode === 'create') {
+      setParamPresetLabelDraft(getDefaultParamPresetName(task.label, task.type));
+    } else {
+      setParamPresetLabelDraft(editingPreset?.label ?? task.label);
+    }
+  }, [showParamPresetEditor, paramPresetTaskType, paramPresetEditingId, paramPresets, availableTasks, paramPresetEditorMode]);
 
   const handleTaskDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -824,7 +1736,6 @@ export default function App() {
       });
       setPreviewCustomParams(defaults);
       if (task.type === 'tts') {
-        if (defaults.text !== undefined) setPreviewTtsText(String(defaults.text));
         if (defaults.voice !== undefined) setPreviewTtsVoice(String(defaults.voice));
         setPreviewTtsRate(fromEdgeTtsRate(defaults.rate !== undefined ? String(defaults.rate) : undefined));
         setPreviewTtsPitch(fromEdgeTtsPitch(defaults.pitch !== undefined ? String(defaults.pitch) : undefined));
@@ -839,25 +1750,256 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!showPipelinePreview || pipelinePreviewTask?.preview !== 'tts') return;
-    const loadVoices = async () => {
-      setPreviewTtsVoicesLoading(true);
-      try {
-        const response = await fetch('/api/tts/voices');
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          throw new Error(data.error || 'Unable to load voices');
+    if (showPipelinePreview && pipelinePreviewTask?.preview === 'tts') {
+      setPreviewTtsVoicesLoading(false);
+    }
+  }, [showPipelinePreview, pipelinePreviewTask?.preview]);
+
+  useEffect(() => {
+    if (!showRunPipeline) return;
+    if (runAgainPrefillRef.current) {
+      runAgainPrefillRef.current = false;
+      return;
+    }
+
+    if (runPipelineHasTts && runPipelineParamPreset.tts !== 'custom') {
+      applyParamPresetParams('tts');
+    }
+
+    if (runPipelineHasUvr && runPipelineParamPreset.uvr !== 'custom') {
+      applyParamPresetParams('uvr');
+    }
+
+    if (runPipelineHasRender && runPipelineParamPreset.render !== 'custom') {
+      applyParamPresetParams('render');
+    }
+
+    if (runPipelineHasDownload && runPipelineParamPreset.download !== 'custom') {
+      applyParamPresetParams('download');
+    }
+  }, [
+    showRunPipeline,
+    runPipelineHasTts,
+    runPipelineHasUvr,
+    runPipelineHasRender,
+    runPipelineHasDownload,
+    runPipelineId,
+    paramPresets,
+    runPipelineParamPreset
+  ]);
+
+  useEffect(() => {
+    if (!showRunPipeline) return;
+    if (runAgainPrefillRef.current) return;
+    setRunPipelineParamPreset(prev => {
+      const next = { ...prev };
+      if (runPipelineHasDownload) next.download = next.download ?? 'custom';
+      else delete next.download;
+      if (runPipelineHasUvr) next.uvr = next.uvr ?? 'custom';
+      else delete next.uvr;
+      if (runPipelineHasTts) next.tts = next.tts ?? 'custom';
+      else delete next.tts;
+      if (runPipelineHasRender) next.render = next.render ?? 'custom';
+      else delete next.render;
+      const saved = runPipelinePrefsSourceRef.current;
+      if (saved) {
+        const idsByType = new Map<string, Set<number>>();
+        paramPresets.forEach(preset => {
+          const set = idsByType.get(preset.taskType) ?? new Set<number>();
+          set.add(preset.id);
+          idsByType.set(preset.taskType, set);
+        });
+        Object.entries(saved).forEach(([taskType, value]) => {
+          if (typeof value !== 'string') return;
+          if (!value.startsWith('preset:')) return;
+          const id = Number(value.slice('preset:'.length));
+          if (!Number.isFinite(id)) return;
+          if (!idsByType.get(taskType)?.has(id)) return;
+          next[taskType] = value;
+        });
+      }
+      return next;
+    });
+  }, [showRunPipeline, runPipelineHasDownload, runPipelineHasUvr, runPipelineHasTts, runPipelineHasRender, runPipelineId, paramPresets]);
+
+  useEffect(() => {
+    if (!runPipelineHasRender && showRenderStudio) {
+      setShowRenderStudio(false);
+    }
+  }, [runPipelineHasRender, showRenderStudio]);
+
+  useEffect(() => {
+    setRunPipelineParamPreset(prev => {
+      if (!paramPresetsLoadedRef.current) return prev;
+      const next = { ...prev };
+      ['download', 'uvr', 'tts', 'render'].forEach(taskType => {
+        if (next[taskType] !== 'custom' && !hasParamPresets(taskType)) {
+          next[taskType] = 'custom';
         }
-        const data = await response.json() as { voices: Array<{ Name: string; ShortName?: string; Locale?: string; Gender?: string }> };
-        setPreviewTtsVoices(data.voices ?? []);
-      } catch (error) {
-        setPreviewTtsError(error instanceof Error ? error.message : 'Unable to load voices');
-      } finally {
-        setPreviewTtsVoicesLoading(false);
+      });
+      return next;
+    });
+  }, [paramPresets]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(RUN_PIPELINE_PREFS_KEY);
+      if (!raw) {
+        runPipelinePrefsReadyRef.current = true;
+        return;
+      }
+      const data = JSON.parse(raw);
+      if (data?.paramSource && typeof data.paramSource === 'object') {
+        runPipelinePrefsSourceRef.current = { ...data.paramSource };
+        setRunPipelineParamPreset(prev => ({ ...prev, ...data.paramSource }));
+      }
+      if (typeof data?.pipelineId === 'string' && data.pipelineId.trim()) {
+        runPipelinePrefsPipelineIdRef.current = data.pipelineId;
+        setRunPipelineId(data.pipelineId);
+      }
+      if (typeof data?.projectId === 'string' && data.projectId.trim()) {
+        setRunPipelineProjectId(data.projectId);
+      }
+      if (data?.download && typeof data.download === 'object') {
+        if (typeof data.download.downloadMode === 'string') {
+          const mode = data.download.downloadMode;
+          if (mode === 'all' || mode === 'subs' || mode === 'media') setDownloadMode(mode);
+        }
+        if (typeof data.download.downloadNoPlaylist === 'boolean') setDownloadNoPlaylist(data.download.downloadNoPlaylist);
+        if (typeof data.download.downloadSubtitleLang === 'string') setDownloadSubtitleLang(data.download.downloadSubtitleLang);
+      }
+      if (data?.uvr && typeof data.uvr === 'object') {
+        if (typeof data.uvr.backend === 'string') setRunPipelineBackend(data.uvr.backend);
+        if (typeof data.uvr.model === 'string') setVrModel(data.uvr.model);
+        if (typeof data.uvr.outputType === 'string') {
+          const type = data.uvr.outputType;
+          if (type === 'Mp3' || type === 'Wav' || type === 'Flac') setVrOutputType(type);
+        }
+      }
+      if (data?.tts && typeof data.tts === 'object') {
+        if (typeof data.tts.voice === 'string') setRunPipelineTtsVoice(data.tts.voice);
+        if (typeof data.tts.rate === 'string') setRunPipelineTtsRate(data.tts.rate);
+        if (typeof data.tts.pitch === 'string') setRunPipelineTtsPitch(data.tts.pitch);
+        if (data.tts.overlapMode === 'overlap' || data.tts.overlapMode === 'truncate') {
+          setRunPipelineTtsOverlapMode(data.tts.overlapMode);
+        }
+        if (typeof data.tts.removeLineBreaks === 'boolean') setRunPipelineTtsRemoveLineBreaks(data.tts.removeLineBreaks);
+      }
+      if (data?.render && typeof data.render === 'object') {
+        if (data.render.renderParams && typeof data.render.renderParams === 'object') {
+          setRenderParams(prev => ({
+            timeline: { ...prev.timeline, ...(data.render.renderParams.timeline ?? {}) },
+            video: { ...prev.video, ...(data.render.renderParams.video ?? {}) },
+            audio: { ...prev.audio, ...(data.render.renderParams.audio ?? {}) },
+            subtitle: { ...prev.subtitle, ...(data.render.renderParams.subtitle ?? {}) }
+          }));
+        }
+      }
+    } catch {
+      // ignore bad storage
+    } finally {
+      runPipelinePrefsReadyRef.current = true;
+      setRunPipelinePrefsReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!runPipelinePrefsReadyRef.current || !runPipelinePrefsReady) return;
+    if (typeof window === 'undefined') return;
+    if (paramPresetsLoadedRef.current) {
+      runPipelinePrefsSourceRef.current = runPipelineParamPreset;
+    }
+    const effectiveParamSource = paramPresetsLoadedRef.current
+      ? runPipelineParamPreset
+      : (runPipelinePrefsSourceRef.current ?? runPipelineParamPreset);
+    const payload = {
+      pipelineId: runPipelineId,
+      projectId: runPipelineProjectId,
+      paramSource: effectiveParamSource,
+      download: {
+        downloadMode,
+        downloadNoPlaylist,
+        downloadSubtitleLang
+      },
+      uvr: {
+        backend: runPipelineBackend,
+        model: vrModel,
+        outputType: vrOutputType
+      },
+      tts: {
+        voice: runPipelineTtsVoice,
+        rate: runPipelineTtsRate,
+        pitch: runPipelineTtsPitch,
+        overlapMode: runPipelineTtsOverlapMode,
+        removeLineBreaks: runPipelineTtsRemoveLineBreaks
+      },
+      render: {
+        renderParams
       }
     };
-    loadVoices();
-  }, [showPipelinePreview, pipelinePreviewTask?.preview]);
+    try {
+      window.localStorage.setItem(RUN_PIPELINE_PREFS_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    runPipelinePrefsReady,
+    runPipelineId,
+    runPipelineParamPreset,
+    downloadMode,
+    downloadNoPlaylist,
+    downloadSubtitleLang,
+    runPipelineBackend,
+    vrModel,
+    vrOutputType,
+    runPipelineTtsVoice,
+    runPipelineTtsRate,
+    runPipelineTtsPitch,
+    runPipelineTtsOverlapMode,
+    runPipelineTtsRemoveLineBreaks,
+    renderParams
+  ]);
+
+  useEffect(() => {
+    if (!runPipelinePrefsSourceRef.current || runPipelinePrefsSourceAppliedRef.current === true) return;
+    const saved = runPipelinePrefsSourceRef.current;
+    if (!saved || typeof saved !== 'object') return;
+    const idsByType = new Map<string, Set<number>>();
+    paramPresets.forEach(preset => {
+      const set = idsByType.get(preset.taskType) ?? new Set<number>();
+      set.add(preset.id);
+      idsByType.set(preset.taskType, set);
+    });
+    let didApply = false;
+    setRunPipelineParamPreset(prev => {
+      const next = { ...prev };
+      Object.entries(saved).forEach(([taskType, value]) => {
+        if (typeof value !== 'string') return;
+        if (!value.startsWith('preset:')) return;
+        const id = Number(value.slice('preset:'.length));
+        if (!Number.isFinite(id)) return;
+        if (!idsByType.get(taskType)?.has(id)) return;
+        if (next[taskType] && next[taskType] !== 'custom') return;
+        next[taskType] = value;
+        didApply = true;
+      });
+      return next;
+    });
+    if (didApply) {
+      runPipelinePrefsSourceAppliedRef.current = true;
+    }
+  }, [paramPresets]);
+
+  useEffect(() => {
+    if (!runPipelinePrefsPipelineIdRef.current || runPipelinePrefsPipelineAppliedRef.current) return;
+    const desired = runPipelinePrefsPipelineIdRef.current;
+    if (!desired) return;
+    if (pipelineLibrary.find(item => item.id === desired)) {
+      setRunPipelineId(desired);
+      runPipelinePrefsPipelineAppliedRef.current = true;
+    }
+  }, [pipelineLibrary]);
 
   useEffect(() => {
     if (!pipelinePreviewTask) return;
@@ -901,8 +2043,7 @@ export default function App() {
       setShowPipelineEditor(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load pipeline';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     } finally {
       setRunPipelineLoading(false);
     }
@@ -957,9 +2098,59 @@ export default function App() {
       }));
       const nextPipelines = [...taskPipelines, ...savedPipelines];
       setPipelineLibrary(nextPipelines);
+      const preferredId = runPipelinePrefsPipelineIdRef.current;
+      if (preferredId && nextPipelines.find(item => item.id === preferredId)) {
+        setRunPipelineId(preferredId);
+        return;
+      }
       if (!nextPipelines.find(item => item.id === runPipelineId)) {
         setRunPipelineId(nextPipelines[0]?.id ?? null);
       }
+    } catch {
+      paramPresetsLoadedRef.current = true;
+      return;
+    }
+  };
+
+  const loadParamPresets = async () => {
+    try {
+      const response = await fetch('/api/param-presets');
+      if (!response.ok) {
+        paramPresetsLoadedRef.current = true;
+        return;
+      }
+      const data = await response.json();
+      const presets = Array.isArray(data?.presets) ? data.presets : [];
+      const normalizedPresets = presets
+        .map((preset: any) => ({
+          id: Number(preset?.id),
+          taskType: String(preset?.taskType ?? ''),
+          params: preset?.params && typeof preset.params === 'object' ? preset.params : {},
+          label: String(preset?.label ?? ''),
+          updatedAt: preset?.updatedAt
+        }))
+        .filter(preset => Number.isFinite(preset.id) && preset.taskType);
+      setParamPresets(normalizedPresets);
+      paramPresetsLoadedRef.current = true;
+      setRunPipelineParamPreset(prev => {
+        const next = { ...prev };
+        const idsByType = new Map<string, Set<number>>();
+        normalizedPresets.forEach(preset => {
+          const set = idsByType.get(preset.taskType) ?? new Set<number>();
+          set.add(preset.id);
+          idsByType.set(preset.taskType, set);
+        });
+        Object.keys(next).forEach(taskType => {
+          const value = next[taskType];
+          if (typeof value === 'string' && value.startsWith('preset:')) {
+            const id = Number(value.slice('preset:'.length));
+            if (!idsByType.get(taskType)?.has(id)) {
+              next[taskType] = 'custom';
+            }
+          }
+        });
+        return next;
+      });
     } catch {
       return;
     }
@@ -967,6 +2158,10 @@ export default function App() {
 
   useEffect(() => {
     loadPipelines();
+  }, []);
+
+  useEffect(() => {
+    loadParamPresets();
   }, []);
 
   const loadJobs = async () => {
@@ -990,8 +2185,7 @@ export default function App() {
       await loadJobs();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to cancel job';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     }
   };
 
@@ -1015,9 +2209,149 @@ export default function App() {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to delete job';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     }
+  };
+
+  const openFileContextMenu = (event: React.MouseEvent, file: VaultFile) => {
+    event.preventDefault();
+    setFileContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      file
+    });
+  };
+
+  const closeFileContextMenu = () => {
+    setFileContextMenu(prev => ({ ...prev, open: false, file: null }));
+  };
+
+  const downloadVaultFile = (file: VaultFile) => {
+    if (!file.relativePath) return;
+    const link = document.createElement('a');
+    link.href = `/api/vault/stream?path=${encodeURIComponent(file.relativePath)}`;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const performImport = async () => {
+    if (!importProjectName.trim()) {
+      setImportError('Enter a project name');
+      return;
+    }
+    if (importFiles.length === 0) {
+      setImportError('Select at least one file');
+      return;
+    }
+    setImportSubmitting(true);
+    setImportError(null);
+    try {
+      const form = new FormData();
+      form.append('projectName', importProjectName.trim());
+      importFiles.forEach(file => form.append('files', file));
+      const response = await fetch('/api/vault/import', {
+        method: 'POST',
+        body: form
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || 'Import failed');
+      }
+      showToast(`Imported ${data.count ?? importFiles.length} file(s)`, 'success');
+      setImportPopupOpen(false);
+      setImportProjectName('');
+      setImportFiles([]);
+      await loadVault();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Import failed';
+      setImportError(message);
+    } finally {
+      setImportSubmitting(false);
+    }
+  };
+
+  const openRunPipelineFromJob = (job: MediaJob) => {
+    const jobAny = job as any;
+    const jobParams = job.params ?? {};
+    runAgainPrefillRef.current = true;
+    const jobName = (job.name ?? '').trim().toLowerCase();
+    const pipelineMatch = pipelineLibrary.find(item => item.name.trim().toLowerCase() === jobName);
+    let nextPipelineId = pipelineMatch?.id ?? null;
+    if (!nextPipelineId) {
+      if (job.tasks.length === 1) {
+        const taskType = job.tasks[0].type;
+        if (availableTasks.some(task => task.type === taskType)) {
+          nextPipelineId = `${TASK_PIPELINE_PREFIX}${taskType}`;
+        }
+      } else if (job.tasks.some(task => task.type.startsWith('download'))) {
+        nextPipelineId = `${TASK_PIPELINE_PREFIX}download`;
+      }
+    }
+    if (nextPipelineId) {
+      setRunPipelineId(nextPipelineId);
+    } else {
+      showToast('Select a pipeline to rerun', 'warning');
+    }
+
+    const projectName = (jobParams.projectName ?? job.projectName)?.trim();
+    const inputRelativePath = typeof jobParams.inputRelativePath === 'string'
+      ? jobParams.inputRelativePath
+      : (typeof jobAny.__inputRelativePath === 'string' ? jobAny.__inputRelativePath : '');
+    let projectMatch: VaultFolder | undefined;
+    let fileMatch: VaultFile | undefined;
+    if (inputRelativePath) {
+      projectMatch = vaultFolders.find(folder => folder.files.some(file => file.relativePath === inputRelativePath));
+      fileMatch = projectMatch?.files.find(file => file.relativePath === inputRelativePath);
+    }
+    if (!projectMatch && projectName) {
+      projectMatch = vaultFolders.find(folder => folder.name.toLowerCase() === projectName.toLowerCase());
+    }
+    if (projectMatch) {
+      setRunPipelineProjectLocked(false);
+      setRunPipelineProjectId(projectMatch.id);
+      if (fileMatch) {
+        setRunPipelineInputId(fileMatch.id);
+      }
+    }
+
+    if (job.tasks.some(task => task.type.startsWith('download'))) {
+      const url = jobParams.download?.url || (typeof jobAny.__downloadUrl === 'string' ? jobAny.__downloadUrl : job.fileName);
+      setDownloadUrl(url || '');
+      if (projectName) setDownloadProjectName(projectName);
+      if (typeof jobParams.download?.noPlaylist === 'boolean') setDownloadNoPlaylist(jobParams.download.noPlaylist);
+      else if (typeof jobAny.__downloadNoPlaylist === 'boolean') setDownloadNoPlaylist(jobAny.__downloadNoPlaylist);
+      if (typeof jobParams.download?.subLangs === 'string') setDownloadSubtitleLang(jobParams.download.subLangs);
+      else if (typeof jobAny.__downloadSubLangs === 'string') setDownloadSubtitleLang(jobAny.__downloadSubLangs);
+      const mode = jobParams.download?.mode || (typeof jobAny.__downloadMode === 'string' ? jobAny.__downloadMode : '');
+      if (mode === 'all' || mode === 'subs' || mode === 'media') setDownloadMode(mode);
+    }
+
+    if (typeof jobParams.uvr?.backend === 'string') setRunPipelineBackend(jobParams.uvr.backend);
+    else if (typeof jobAny.__backend === 'string') setRunPipelineBackend(jobAny.__backend);
+    if (typeof jobParams.uvr?.model === 'string') setVrModel(jobParams.uvr.model);
+    else if (typeof jobAny.__model === 'string') setVrModel(jobAny.__model);
+    if (typeof jobParams.uvr?.outputFormat === 'string') setVrOutputType(jobParams.uvr.outputFormat);
+    else if (typeof jobAny.__outputFormat === 'string') setVrOutputType(jobAny.__outputFormat);
+    if (typeof jobParams.tts?.voice === 'string') setRunPipelineTtsVoice(jobParams.tts.voice);
+    else if (typeof jobAny.__ttsVoice === 'string') setRunPipelineTtsVoice(jobAny.__ttsVoice);
+    if (typeof jobParams.tts?.rate === 'number') setRunPipelineTtsRate(String(jobParams.tts.rate));
+    else if (typeof jobAny.__ttsRate === 'number') setRunPipelineTtsRate(String(jobAny.__ttsRate));
+    if (typeof jobParams.tts?.pitch === 'number') setRunPipelineTtsPitch(String(jobParams.tts.pitch));
+    else if (typeof jobAny.__ttsPitch === 'number') setRunPipelineTtsPitch(String(jobAny.__ttsPitch));
+    const overlapMode = jobParams.tts?.overlapMode || jobAny.__ttsOverlapMode;
+    if (overlapMode === 'overlap' || overlapMode === 'truncate') {
+      setRunPipelineTtsOverlapMode(overlapMode);
+    }
+    if (typeof jobParams.tts?.removeLineBreaks === 'boolean') {
+      setRunPipelineTtsRemoveLineBreaks(jobParams.tts.removeLineBreaks);
+    } else if (typeof jobAny.__ttsRemoveLineBreaks === 'boolean') {
+      setRunPipelineTtsRemoveLineBreaks(jobAny.__ttsRemoveLineBreaks);
+    }
+
+    setShowRunPipeline(true);
   };
 
   useEffect(() => {
@@ -1041,9 +2375,25 @@ export default function App() {
   }, [pipelineLibrary, runPipelineId]);
 
   useEffect(() => {
+    if (!runPipelineProjectId) return;
+    const match = vaultFolders.find(folder => folder.id === runPipelineProjectId);
+    if (match) return;
+    setRunPipelineProjectId(null);
+    if (runPipelineHasDownload) {
+      setDownloadProjectName('');
+    }
+  }, [runPipelineProjectId, runPipelineHasDownload, vaultFolders]);
+
+  useEffect(() => {
     if (runPipelineHasDownload) {
       setDownloadProjectName(prev => prev || runPipelineProject?.name || '');
       return;
+    }
+    if (!runPipelineProjectId && downloadProjectName.trim()) {
+      const match = vaultFolders.find(folder => folder.name.toLowerCase() === downloadProjectName.trim().toLowerCase());
+      if (match) {
+        setRunPipelineProjectId(match.id);
+      }
     }
     setDownloadProjectName('');
     setDownloadUrl('');
@@ -1052,7 +2402,7 @@ export default function App() {
     setDownloadSubtitleLang('ai-zh');
     setDownloadAnalyzeError(null);
     setDownloadAnalyzeResult(null);
-  }, [runPipelineHasDownload, runPipelineProject?.name]);
+  }, [runPipelineHasDownload, runPipelineProject?.name, runPipelineProjectId, downloadProjectName, vaultFolders]);
 
   const loadPipelineDetail = async (id: string) => {
     if (id.startsWith(TASK_PIPELINE_PREFIX)) {
@@ -1077,8 +2427,7 @@ export default function App() {
     } catch (error) {
       setRunPipelineGraph(null);
       const message = error instanceof Error ? error.message : 'Unable to load pipeline';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     } finally {
       setRunPipelineLoading(false);
     }
@@ -1090,22 +2439,36 @@ export default function App() {
     }
   }, [runPipelineId]);
 
+
   useEffect(() => {
     if (!selectedFolder) return;
-    const firstMedia = selectedFolder.files.find(file => file.type === 'video' || file.type === 'audio');
-    setRunPipelineInputId(firstMedia?.id ?? null);
-  }, [selectedFolder?.id]);
+    const firstInput = runPipelineHasTts
+      ? selectedFolder.files.find(file => file.type === 'subtitle')
+      : selectedFolder.files.find(file => file.type === 'video' || file.type === 'audio');
+    setRunPipelineInputId(firstInput?.id ?? null);
+  }, [selectedFolder?.id, runPipelineHasTts]);
 
   useEffect(() => {
     if (!runPipelineProject) return;
-    const firstMedia = runPipelineProject.files.find(file => file.type === 'video' || file.type === 'audio');
-    setRunPipelineInputId(firstMedia?.id ?? null);
-  }, [runPipelineProject?.id]);
+    const firstInput = runPipelineHasTts
+      ? runPipelineProject.files.find(file => file.type === 'subtitle')
+      : runPipelineProject.files.find(file => file.type === 'video' || file.type === 'audio');
+    setRunPipelineInputId(firstInput?.id ?? null);
+  }, [runPipelineProject?.id, runPipelineHasTts]);
+
+  useEffect(() => {
+    if (!runPipelineProject || !runPipelineHasRender) return;
+    const firstVideo = runPipelineProject.files.find(file => file.type === 'video');
+    const firstAudio = runPipelineProject.files.find(file => file.type === 'audio');
+    const firstSubtitle = runPipelineProject.files.find(file => file.type === 'subtitle');
+    setRenderVideoId(firstVideo?.id ?? null);
+    setRenderAudioId(firstAudio?.id ?? null);
+    setRenderSubtitleId(firstSubtitle?.id ?? null);
+  }, [runPipelineProject?.id, runPipelineHasRender]);
 
   const savePipeline = async (nameOverride?: string) => {
     if (!graphNodes.length) {
-      setToastMessage('Add at least 1 task');
-      setToastVisible(true);
+      showToast('Add at least 1 task', 'warning');
       return;
     }
     setPipelineSaving(true);
@@ -1127,14 +2490,12 @@ export default function App() {
         throw new Error(data.error || 'Unable to save pipeline');
       }
       await loadPipelines();
-      setToastMessage('Pipeline saved');
-      setToastVisible(true);
+      showToast('Pipeline saved', 'success');
       setPipelineName(finalName);
       setShowPipelineEditor(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save pipeline';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     } finally {
       setPipelineSaving(false);
     }
@@ -1142,15 +2503,13 @@ export default function App() {
 
   const performDeletePipeline = async (id: string) => {
     if (id.startsWith(TASK_PIPELINE_PREFIX)) {
-      setToastMessage('Built-in tasks cannot be deleted.');
-      setToastVisible(true);
+      showToast('Built-in tasks cannot be deleted.', 'warning');
       return;
     }
     const previous = pipelineLibrary;
     setPipelineLibrary(prev => prev.filter(item => item.id !== id));
     if (!Number.isFinite(Number(id))) {
-      setToastMessage('Pipeline removed (local)');
-      setToastVisible(true);
+      showToast('Pipeline removed (local)', 'info');
       return;
     }
     try {
@@ -1160,20 +2519,17 @@ export default function App() {
         throw new Error(data.error || 'Unable to delete pipeline');
       }
       await loadPipelines();
-      setToastMessage('Pipeline deleted');
-      setToastVisible(true);
+      showToast('Pipeline deleted', 'success');
     } catch (error) {
       setPipelineLibrary(previous);
       const message = error instanceof Error ? error.message : 'Unable to delete pipeline';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     }
   };
 
   const deletePipeline = (id: string) => {
     if (id.startsWith(TASK_PIPELINE_PREFIX)) {
-      setToastMessage('Built-in tasks cannot be deleted.');
-      setToastVisible(true);
+      showToast('Built-in tasks cannot be deleted.', 'warning');
       return;
     }
     const pipeline = pipelineLibrary.find(item => item.id === id);
@@ -1209,38 +2565,49 @@ export default function App() {
             size: formatBytes(file.sizeBytes),
             relativePath: normalizedRelative,
             duration: formatDuration(file.durationSeconds),
+            durationSeconds: file.durationSeconds,
             language: file.type === 'subtitle' ? guessLanguage(file.name) : undefined,
-            status: file.type === 'output' ? 'complete' : file.type === 'subtitle' ? 'partial' : 'raw',
+            status: file.type === 'output'
+              ? 'complete'
+              : file.type === 'subtitle'
+                ? 'partial'
+                : 'raw',
             version: file.type === 'subtitle' ? guessVersion(file.name) : undefined,
             createdAt: formatRelativeTime(file.modifiedAt),
             uvr: file.uvr,
+            tts: file.tts,
+            linkedToPath: file.linkedTo,
+            origin: file.tts?.role === 'output'
+              ? 'tts'
+              : file.uvr?.role === 'output'
+                ? 'vr'
+                : 'source'
           };
         });
 
-        const mainVideo = mappedFiles.find(item => item.type === 'video')?.id;
-        const linkedFiles = mappedFiles.map(item => {
-          if (item.type !== 'video' && mainVideo) {
-            return { ...item, linkedTo: mainVideo };
-          }
-          return item;
+        const relativeToId = new Map(mappedFiles.map(item => [item.relativePath, item.id]));
+        const mappedWithLinks = mappedFiles.map(item => {
+          if (!item.linkedToPath) return item;
+          const linkedId = relativeToId.get(item.linkedToPath);
+          return linkedId ? { ...item, linkedTo: linkedId } : item;
         });
+
+        const mainVideo = mappedWithLinks.find(item => item.type === 'video')?.id;
+        const linkedFiles = mappedWithLinks;
 
         const status = computeFolderStatus(linkedFiles);
         const tags = status === 'complete'
           ? ['Ready']
           : status === 'partial'
-            ? ['In review']
+            ? ['In progress']
             : status === 'error'
               ? ['Needs attention']
-              : ['Raw'];
+              : [];
 
         const hasSubtitle = linkedFiles.some(item => item.type === 'subtitle');
-        const hasOutput = linkedFiles.some(item => item.type === 'output');
         const suggestedAction = !hasSubtitle
           ? 'No subtitles detected → Generate now?'
-          : !hasOutput
-            ? 'No outputs yet → Render preview?'
-            : undefined;
+          : undefined;
 
         const lastActivity = linkedFiles.length
           ? formatRelativeTime(folder.files.map(file => file.modifiedAt).sort().slice(-1)[0])
@@ -1271,8 +2638,7 @@ export default function App() {
           : [addedCount > 0 ? `+${addedCount} added` : null, removedCount > 0 ? `-${removedCount} removed` : null]
               .filter(Boolean)
               .join(' • ');
-        setToastMessage(message);
-        setToastVisible(true);
+        showToast(message, 'info');
       } else {
         setHasLoadedOnce(true);
       }
@@ -1286,6 +2652,25 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const previousJobs = previousJobsRef.current;
+    if (previousJobs.length === 0) {
+      previousJobsRef.current = jobs;
+      return;
+    }
+    const previousStatus = new Map(previousJobs.map(job => [job.id, job.status]));
+    const outputCompleted = jobs.some(job => {
+      const was = previousStatus.get(job.id);
+      if (was === job.status) return false;
+      if (job.status !== 'completed') return false;
+      return job.tasks.some(task => task.type === 'uvr' || task.type === 'tts');
+    });
+    if (outputCompleted) {
+      loadVault();
+    }
+    previousJobsRef.current = jobs;
+  }, [jobs]);
+
   const performDeleteVaultProject = async (folder: VaultFolder) => {
     try {
       const response = await fetch('/api/vault/project', {
@@ -1297,8 +2682,7 @@ export default function App() {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.error || `Delete failed (${response.status})`);
       }
-      setToastMessage(`Deleted ${folder.name}`);
-      setToastVisible(true);
+      showToast(`Deleted ${folder.name}`, 'success');
       if (vaultFolderId === folder.id) {
         setVaultFolderId(null);
         setVaultFileId(null);
@@ -1306,8 +2690,7 @@ export default function App() {
       await loadVault();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to delete project';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     }
   };
 
@@ -1406,33 +2789,34 @@ export default function App() {
 
   const runPipelineJob = async () => {
     if (!runPipelineId) {
-      setToastMessage('Select a pipeline first');
-      setToastVisible(true);
+      showToast('Select a pipeline first', 'warning');
       return;
     }
     if (runPipelineHasDownload) {
       if (!downloadUrl.trim()) {
-        setToastMessage('Enter a download URL first');
-        setToastVisible(true);
+        showToast('Enter a download URL first', 'warning');
         return;
       }
       if (!downloadProjectName.trim()) {
-        setToastMessage('Enter a project name first');
-        setToastVisible(true);
+        showToast('Enter a project name first', 'warning');
+        return;
+      }
+    } else if (runPipelineHasRender) {
+      if (!renderVideoId) {
+        showToast('Select a video track first', 'warning');
         return;
       }
     } else if (!runPipelineInput?.relativePath) {
-      setToastMessage('Select an input file first');
-      setToastVisible(true);
+      showToast('Select an input file first', 'warning');
       return;
     }
-    setRunPipelineSubmitting(true);
-    try {
+    const sendPipeline = async (overwrite: boolean) => {
       const pipelinePayload: Record<string, any> = runPipelineHasDownload
         ? {
             url: downloadUrl.trim(),
             projectName: downloadProjectName.trim(),
             noPlaylist: downloadNoPlaylist,
+            downloadMode,
             subLangs: downloadSubtitleLang.trim(),
             model: vrModel,
             backend: runPipelineBackend,
@@ -1444,6 +2828,95 @@ export default function App() {
             backend: runPipelineBackend,
             outputFormat: vrOutputType
           };
+      if (runPipelineHasRender) {
+        const videoFile = runPipelineProject?.files.find(file => file.id === renderVideoId);
+        const audioFile = runPipelineProject?.files.find(file => file.id === renderAudioId);
+        const subtitleFile = runPipelineProject?.files.find(file => file.id === renderSubtitleId);
+        pipelinePayload.inputPath = videoFile?.relativePath ?? pipelinePayload.inputPath;
+        pipelinePayload.videoPath = videoFile?.relativePath;
+        pipelinePayload.audioPath = audioFile?.relativePath;
+        pipelinePayload.subtitlePath = subtitleFile?.relativePath;
+        pipelinePayload.renderParams = {
+          timeline: {
+            framerate: coerceNumber(renderParams.timeline.framerate, 30),
+            resolution: renderParams.timeline.resolution || null,
+            scale: renderTimelineScale,
+            playhead: renderPlayheadSeconds
+          },
+          video: {
+            trimStart: coerceNumber(renderParams.video.trimStart, 0),
+            trimEnd: coerceNumber(renderParams.video.trimEnd, 0),
+            speed: coerceNumber(renderParams.video.speed, 1),
+            volume: coerceNumber(renderParams.video.volume, 100),
+            fit: renderParams.video.fit,
+            position: {
+              x: coerceNumber(renderParams.video.positionX, 50),
+              y: coerceNumber(renderParams.video.positionY, 50)
+            },
+            scale: coerceNumber(renderParams.video.scale, 1),
+            rotation: coerceNumber(renderParams.video.rotation, 0),
+            opacity: coerceNumber(renderParams.video.opacity, 100),
+            colorLut: renderParams.video.colorLut || null,
+            crop: {
+              x: coerceNumber(renderParams.video.cropX, 0),
+              y: coerceNumber(renderParams.video.cropY, 0),
+              w: coerceNumber(renderParams.video.cropW, 100),
+              h: coerceNumber(renderParams.video.cropH, 100)
+            },
+            fadeIn: coerceNumber(renderParams.video.fadeIn, 0),
+            fadeOut: coerceNumber(renderParams.video.fadeOut, 0)
+          },
+          audio: {
+            trimStart: coerceNumber(renderParams.audio.trimStart, 0),
+            trimEnd: coerceNumber(renderParams.audio.trimEnd, 0),
+            gainDb: coerceNumber(renderParams.audio.gainDb, 0),
+            normalize: renderParams.audio.normalize,
+            ducking: renderParams.audio.ducking,
+            duckAmountDb: coerceNumber(renderParams.audio.duckAmountDb, 12),
+            fadeIn: coerceNumber(renderParams.audio.fadeIn, 0),
+            fadeOut: coerceNumber(renderParams.audio.fadeOut, 0),
+            pan: coerceNumber(renderParams.audio.pan, 0),
+            channelMode: renderParams.audio.channelMode
+          },
+          subtitle: {
+            language: renderParams.subtitle.language || null,
+            stylePreset: renderParams.subtitle.stylePreset,
+            fontFamily: renderParams.subtitle.fontFamily || null,
+            fontSize: coerceNumber(renderParams.subtitle.fontSize, 32),
+            color: renderParams.subtitle.color,
+            outlineColor: renderParams.subtitle.outlineColor,
+            outlineWidth: coerceNumber(renderParams.subtitle.outlineWidth, 2),
+            shadow: coerceNumber(renderParams.subtitle.shadow, 2),
+            position: {
+              mode: renderParams.subtitle.position,
+              x: coerceNumber(renderParams.subtitle.positionX, 50),
+              y: coerceNumber(renderParams.subtitle.positionY, 90)
+            },
+            maxWidth: coerceNumber(renderParams.subtitle.maxWidth, 90),
+            lineHeight: coerceNumber(renderParams.subtitle.lineHeight, 1.2),
+            bgColor: renderParams.subtitle.bgColor,
+            bgOpacity: coerceNumber(renderParams.subtitle.bgOpacity, 0),
+            safeArea: coerceNumber(renderParams.subtitle.safeArea, 5),
+            offset: coerceNumber(renderParams.subtitle.offset, 0)
+          }
+        };
+      }
+      if (overwrite) {
+        pipelinePayload.overwrite = true;
+      }
+      if (runPipelineHasTts) {
+        pipelinePayload.voice = runPipelineTtsVoice;
+        pipelinePayload.overlapMode = runPipelineTtsOverlapMode;
+        pipelinePayload.removeLineBreaks = runPipelineTtsRemoveLineBreaks;
+        if (runPipelineTtsRate !== '') {
+          const numeric = Number(runPipelineTtsRate);
+          if (Number.isFinite(numeric)) pipelinePayload.rate = numeric;
+        }
+        if (runPipelineTtsPitch !== '') {
+          const numeric = Number(runPipelineTtsPitch);
+          if (Number.isFinite(numeric)) pipelinePayload.pitch = numeric;
+        }
+      }
       if (runPipelineHasDownload && downloadCookiesFile) {
         pipelinePayload.cookiesFileName = downloadCookiesFile.name;
         pipelinePayload.cookiesContent = await downloadCookiesFile.text();
@@ -1467,24 +2940,52 @@ export default function App() {
         body: JSON.stringify(pipelinePayload)
       });
       const data = await response.json().catch(() => ({}));
+      if (response.status === 409) {
+        return { conflict: true, data };
+      }
       if (!response.ok) {
         throw new Error(data.error || 'Unable to run pipeline');
       }
       if (data?.skipped) {
-        setToastMessage(data.message || 'Project already exists. Skipped download.');
-        setToastVisible(true);
+        showToast(data.message || 'Project already exists. Skipped download.', 'warning');
         setShowRunPipeline(false);
-        return;
+        return { conflict: false, done: true };
       }
       await loadJobs();
-      setToastMessage('Pipeline queued');
-      setToastVisible(true);
+      showToast('Pipeline queued', 'success');
       setShowRunPipeline(false);
       setActiveTab('dashboard');
+      return { conflict: false, done: true };
+    };
+
+    setRunPipelineSubmitting(true);
+    try {
+      const result = await sendPipeline(false);
+      if (result?.conflict) {
+        setRunPipelineSubmitting(false);
+        openConfirm(
+          {
+            title: 'Overwrite existing output?',
+            description: 'Output already exists. Do you want to overwrite it or cancel?',
+            confirmLabel: 'Overwrite',
+            variant: 'danger'
+          },
+          async () => {
+            setRunPipelineSubmitting(true);
+            try {
+              await sendPipeline(true);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Unable to run pipeline';
+              showToast(message, 'error');
+            } finally {
+              setRunPipelineSubmitting(false);
+            }
+          }
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to run pipeline';
-      setToastMessage(message);
-      setToastVisible(true);
+      showToast(message, 'error');
     } finally {
       setRunPipelineSubmitting(false);
     }
@@ -1495,6 +2996,7 @@ export default function App() {
     setDownloadUrl('');
     setDownloadCookiesFile(null);
     setDownloadNoPlaylist(true);
+    setDownloadMode('all');
     setDownloadAnalyzeError(null);
     setDownloadAnalyzeResult(null);
   };
@@ -1736,14 +3238,14 @@ export default function App() {
 
                 {/* Job List Table */}
                 <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
-                  <div className="grid grid-cols-[130px_minmax(0,1fr)_130px_120px_110px_100px_72px] gap-4 px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                  <div className="grid grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] gap-4 px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                    <span className="text-right pr-0.5">#</span>
                     <span>Created</span>
                     <span>Job Details</span>
                     <span>Pipeline</span>
                     <span>Progress</span>
-                    <span>Duration</span>
                     <span>Status</span>
-                    <span>Actions</span>
+                    <span className="text-right -ml-2">Duration</span>
                   </div>
                   
                   <div className="flex flex-col">
@@ -1752,16 +3254,20 @@ export default function App() {
                     ) : (
                       jobs
                         .slice((jobPage - 1) * 10, jobPage * 10)
-                        .map(job => (
+                        .map((job, index) => (
                         <JobRow
                           key={job.id}
                           job={job}
-                          onLog={(jobId) => {
-                            setJobLogJobId(jobId);
-                            setJobLogOpen(true);
+                          index={(jobPage - 1) * 10 + index + 1}
+                          onContextMenu={(event, targetJob) => {
+                            event.preventDefault();
+                            setJobContextMenu({
+                              open: true,
+                              x: event.clientX,
+                              y: event.clientY,
+                              jobId: targetJob.id
+                            });
                           }}
-                          onCancel={cancelJob}
-                          onDelete={deleteJob}
                         />
                       ))
                     )}
@@ -1822,74 +3328,133 @@ export default function App() {
                   <p className="text-sm text-zinc-500">Construct a multi-step processing sequence</p>
                 </div>
 
-                <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5 mb-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Available pipelines</h3>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-zinc-500">{pipelineLibrary.length} pipelines</span>
-                      <button
-                        onClick={() => setShowPipelineEditor(true)}
-                        className="px-3 py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded-md hover:bg-lime-400 transition-colors"
-                      >
-                        + New
-                      </button>
+                <div className="grid grid-cols-2 gap-6 mb-6">
+                  <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Pipelines</h3>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-zinc-500">{pipelineLibrary.length} pipelines</span>
+                        <button
+                          onClick={() => setShowPipelineEditor(true)}
+                          className="px-3 py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded-md hover:bg-lime-400 transition-colors"
+                        >
+                          + New
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    {pipelineLibrary.map(pipeline => {
-                      const PipelineIcon = resolvePipelineIcon(pipeline);
-                      return (
-                      <div
-                        key={pipeline.id}
-                        onClick={() => {
-                          if (pipeline.kind === 'task') {
-                            openPipelinePreview(pipeline);
-                          } else {
-                            openPipelineEditor(pipeline);
-                          }
-                        }}
-                        onKeyDown={event => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
+                    <div className="grid grid-cols-3 gap-4">
+                      {pipelineLibrary.map(pipeline => {
+                        const PipelineIcon = resolvePipelineIcon(pipeline);
+                        return (
+                        <div
+                          key={pipeline.id}
+                          onClick={() => {
                             if (pipeline.kind === 'task') {
                               openPipelinePreview(pipeline);
                             } else {
                               openPipelineEditor(pipeline);
                             }
-                          }
-                        }}
-                        role="button"
-                        tabIndex={0}
-                        className="group text-left p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="h-9 w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
-                            <PipelineIcon size={18} className="text-zinc-200" />
-                          </div>
-                          <div>
-                          <div className="text-sm font-semibold text-zinc-100">{pipeline.name}</div>
-                          <div className="mt-2 text-xs text-zinc-500">
-                            {pipeline.steps} steps • {pipeline.updatedAt === 'Built-in' ? 'Built-in' : `Updated ${pipeline.updatedAt}`}
-                          </div>
+                          }}
+                          onContextMenu={event => {
+                            event.preventDefault();
+                            setPipelineContextMenu({
+                              open: true,
+                              x: event.clientX,
+                              y: event.clientY,
+                              pipelineId: pipeline.id
+                            });
+                          }}
+                          onKeyDown={event => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              if (pipeline.kind === 'task') {
+                                openPipelinePreview(pipeline);
+                              } else {
+                                openPipelineEditor(pipeline);
+                              }
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          className="group text-left p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="h-9 w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
+                              <PipelineIcon size={18} className="text-zinc-200" />
+                            </div>
+                            <div>
+                            <div className="text-sm font-semibold text-zinc-100">{pipeline.name}</div>
+                            <div className="mt-2 text-xs text-zinc-500">
+                              {pipeline.updatedAt === 'Built-in'
+                                ? 'Built-in'
+                                : `${pipeline.steps} steps • Updated ${pipeline.updatedAt}`}
+                            </div>
+                            </div>
                           </div>
                         </div>
-                        {pipeline.kind === 'saved' && (
-                          <button
-                            onClick={event => {
-                              event.stopPropagation();
-                              deletePipeline(pipeline.id);
-                            }}
-                            className="h-8 w-8 rounded-md border border-transparent text-red-300/0 opacity-0 transition-all group-hover:opacity-100 group-hover:text-red-300 hover:border-red-400/40 hover:text-red-200"
-                            title="Delete pipeline"
-                            aria-label="Delete pipeline"
-                            type="button"
-                          >
-                            <Trash2 size={14} className="mx-auto" />
-                          </button>
-                        )}
+                      );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Param Presets</h3>
+                      <div className="flex items-center gap-2">
+                        <div className="text-[10px] text-zinc-500">{paramPresetCards.length} presets</div>
+                        <button
+                          onClick={() => openParamPresetEditor(undefined, 'create')}
+                          className="px-3 py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded-md hover:bg-lime-400 transition-colors"
+                        >
+                          + New
+                        </button>
                       </div>
-                    );
-                    })}
+                    </div>
+                    {paramPresetCards.length === 0 ? (
+                      <div className="text-sm text-zinc-500">No param presets yet. Click Add to create one.</div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-4">
+                        {paramPresetCards.map(node => {
+                        const NodeIcon = node.icon ?? Settings;
+                        return (
+                          <div
+                            key={node.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openParamPresetEditorForEdit(node.id)}
+                            onContextMenu={event => {
+                              event.preventDefault();
+                              setParamPresetContextMenu({
+                                open: true,
+                                x: event.clientX,
+                                y: event.clientY,
+                                presetId: node.id
+                              });
+                            }}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                openParamPresetEditorForEdit(node.id);
+                              }
+                            }}
+                            className="group text-left p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="h-9 w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
+                                <NodeIcon size={18} className="text-zinc-200" />
+                              </div>
+                              <div>
+                                <div className="text-sm font-semibold text-zinc-100">{node.label}</div>
+                                <div className="mt-2 text-xs text-zinc-500">
+                                  {node.taskLabel} • {node.params.length} params
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2089,6 +3654,109 @@ export default function App() {
                   </div>
                 )}
 
+                {showParamPresetEditor && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+                    <div className="absolute inset-0" onClick={() => setShowParamPresetEditor(false)} />
+                    <div className="relative w-[min(520px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl overflow-hidden">
+                      <div>
+                        <div className="text-xs text-zinc-500 uppercase tracking-widest">
+                          {paramPresetEditorMode === 'edit' ? 'Edit Param Preset' : 'Create Param Preset'}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className="text-sm font-semibold text-zinc-100">
+                            {paramPresetTask?.label ?? 'Pipeline'}
+                          </span>
+                          <span className="text-[10px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                            Pipeline
+                          </span>
+                        </div>
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          <label className="text-xs text-zinc-500 uppercase tracking-widest">Name</label>
+                          <input
+                            value={paramPresetLabelDraft}
+                            onChange={e => setParamPresetLabelDraft(e.target.value)}
+                            className="w-full bg-transparent text-lg font-semibold text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                            placeholder="Param preset name"
+                          />
+                        </div>
+                      </div>
+                      {paramPresetEditorMode === 'create' && (
+                        <div className="flex flex-col gap-2">
+                          <label className="text-xs text-zinc-500 uppercase tracking-widest">Pipeline</label>
+                          <select
+                            value={paramPresetTaskType}
+                            onChange={e => setParamPresetTaskType(e.target.value)}
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-2 text-sm text-zinc-200 focus:outline-none"
+                          >
+                            {availableTasks.map(task => (
+                              <option key={task.type} value={task.type}>{task.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <div className="flex flex-col gap-3 max-h-[50vh] overflow-y-auto pr-1">
+                        <div className="text-xs text-zinc-500 uppercase tracking-widest">Params</div>
+                        {paramPresetTask?.params?.length ? (
+                          <div className="flex flex-col gap-2">
+                            {paramPresetTask.params.map(param => (
+                              <div key={param.name} className="flex flex-col gap-1.5">
+                                <label className="text-[11px] text-zinc-500">{param.name}</label>
+                                {param.type === 'boolean' ? (
+                                  <label className="flex items-center gap-2 text-sm text-zinc-200">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(paramPresetValues[param.name])}
+                                      onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.checked }))}
+                                      className="accent-lime-400"
+                                    />
+                                  </label>
+                                ) : param.name === 'downloadMode' ? (
+                                  <select
+                                    value={typeof paramPresetValues[param.name] === 'string' ? paramPresetValues[param.name] : 'all'}
+                                    onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.value }))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                                  >
+                                    {DOWNLOAD_MODE_OPTIONS.map(option => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={param.type === 'number' ? 'number' : 'text'}
+                                    value={typeof paramPresetValues[param.name] === 'string' ? paramPresetValues[param.name] : ''}
+                                    onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.value }))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                                    placeholder={param.default !== undefined ? String(param.default) : ''}
+                                  />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-zinc-500">No params for this pipeline.</div>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => setShowParamPresetEditor(false)}
+                          className="px-4 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={saveParamPreset}
+                          disabled={!paramPresetTask?.params?.length}
+                          className="px-4 py-2 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
 
                 {showPipelinePreview && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
@@ -2142,52 +3810,21 @@ export default function App() {
                                       <div className="text-[11px] text-zinc-500">{param.desc}</div>
                                     </div>
                                     {pipelinePreviewTask.preview === 'tts' && pipelinePreviewTask.type === 'tts' && param.name === 'voice' ? (
-                                      previewTtsVoicesLoading ? (
-                                        <div className="text-xs text-zinc-500">Loading voices...</div>
-                                      ) : (
-                                        <select
-                                          value={previewTtsVoice}
-                                          onChange={e => {
-                                            const value = e.target.value;
-                                            setPreviewTtsVoice(value);
-                                            setPreviewCustomParams(prev => ({ ...prev, voice: value }));
-                                          }}
-                                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-                                        >
-                                          {(() => {
-                                            const byKey = new Map<string, { Name: string; ShortName?: string; Locale?: string; Gender?: string }>();
-                                            previewTtsVoices.forEach(voice => {
-                                              const key = voice.ShortName || voice.Name;
-                                              if (key) byKey.set(key, voice);
-                                            });
-                                            PREFERRED_TTS_VOICES.forEach(name => {
-                                              if (!byKey.has(name)) {
-                                                byKey.set(name, { Name: name, ShortName: name, Locale: 'vi-VN' });
-                                              }
-                                            });
-                                            const sorted = Array.from(byKey.values()).sort((a, b) => {
-                                              const aKey = a.ShortName || a.Name;
-                                              const bKey = b.ShortName || b.Name;
-                                              const aPreferred = PREFERRED_TTS_VOICES.includes(aKey) ? 0 : 1;
-                                              const bPreferred = PREFERRED_TTS_VOICES.includes(bKey) ? 0 : 1;
-                                              if (aPreferred !== bPreferred) return aPreferred - bPreferred;
-                                              return aKey.localeCompare(bKey);
-                                            });
-                                            if (!sorted.length) {
-                                              return <option value={previewTtsVoice}>{previewTtsVoice}</option>;
-                                            }
-                                            return sorted.map(voice => {
-                                              const value = voice.ShortName || voice.Name;
-                                              const label = `${value}${voice.Locale ? ` • ${voice.Locale}` : ''}${voice.Gender ? ` • ${voice.Gender}` : ''}`;
-                                              return (
-                                                <option key={value} value={value}>
-                                                  {label}
-                                                </option>
-                                              );
-                                            });
-                                          })()}
-                                        </select>
-                                      )
+                                      <select
+                                        value={previewTtsVoice}
+                                        onChange={e => {
+                                          const value = e.target.value;
+                                          setPreviewTtsVoice(value);
+                                          setPreviewCustomParams(prev => ({ ...prev, voice: value }));
+                                        }}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                                      >
+                                        {PREFERRED_TTS_VOICES.map(name => (
+                                          <option key={name} value={name}>
+                                            {name}
+                                          </option>
+                                        ))}
+                                      </select>
                                     ) : pipelinePreviewTask.preview === 'tts' && pipelinePreviewTask.type === 'tts' && param.name === 'rate' ? (
                                       <input
                                         type="number"
@@ -2264,7 +3901,6 @@ export default function App() {
                               onChange={e => {
                                 const value = e.target.value;
                                 setPreviewTtsText(value);
-                                setPreviewCustomParams(prev => ({ ...prev, text: value }));
                               }}
                               className="min-h-[110px] bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
                             />
@@ -2278,10 +3914,18 @@ export default function App() {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
-                                      text: previewCustomParams.text ?? previewTtsText,
+                                      text: previewTtsText,
                                       voice: previewCustomParams.voice ?? previewTtsVoice,
-                                      rate: toEdgeTtsRate(String(previewCustomParams.rate ?? previewTtsRate)) || undefined,
-                                      pitch: toEdgeTtsPitch(String(previewCustomParams.pitch ?? previewTtsPitch)) || undefined
+                                      rate: (() => {
+                                        const raw = previewCustomParams.rate ?? previewTtsRate;
+                                        const numeric = Number(raw);
+                                        return Number.isFinite(numeric) && raw !== '' ? numeric : undefined;
+                                      })(),
+                                      pitch: (() => {
+                                        const raw = previewCustomParams.pitch ?? previewTtsPitch;
+                                        const numeric = Number(raw);
+                                        return Number.isFinite(numeric) && raw !== '' ? numeric : undefined;
+                                      })()
                                     })
                                   });
                                   if (!response.ok) {
@@ -2320,7 +3964,7 @@ export default function App() {
             )}
 
             {toastVisible && toastMessage && (
-              <div className="fixed bottom-6 right-6 z-[70] px-4 py-2 rounded-lg border border-lime-500/30 bg-lime-500/15 text-lime-200 text-sm shadow-lg">
+              <div className={`fixed bottom-6 right-6 z-[70] px-4 py-2 rounded-lg border text-sm shadow-lg ${toastStyles[toastType]}`}>
                 {toastMessage}
               </div>
             )}
@@ -2385,13 +4029,22 @@ export default function App() {
                         placeholder="Search"
                         className="bg-transparent focus:outline-none"
                       />
-                      <button
-                        onClick={loadVault}
-                        className="ml-auto text-zinc-400 hover:text-zinc-100 transition-colors"
-                        title="Rescan folders"
-                      >
-                        <RefreshCw size={14} className={vaultLoading ? 'animate-spin-soft' : ''} />
-                      </button>
+                      <div className="ml-auto flex items-center gap-2">
+                        <button
+                          onClick={() => setImportPopupOpen(true)}
+                          className="px-2 py-1 rounded-md border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-lime-500/40"
+                          title="Import files"
+                        >
+                          <Upload size={14} />
+                        </button>
+                        <button
+                          onClick={loadVault}
+                          className="text-zinc-400 hover:text-zinc-100 transition-colors"
+                          title="Rescan folders"
+                        >
+                          <RefreshCw size={14} className={vaultLoading ? 'animate-spin-soft' : ''} />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto pr-1">
@@ -2440,8 +4093,8 @@ export default function App() {
                                     <div className="flex items-center gap-2">
                                       <span className="text-sm font-semibold text-zinc-100 truncate">{folder.name}</span>
                                     </div>
-                                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${statusStyles[folder.status]}`}>
-                                      {folder.status}
+                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-500/15 text-zinc-400">
+                                      Project
                                     </span>
                                   </div>
                                   <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500">
@@ -2512,8 +4165,14 @@ export default function App() {
                       </div>
                       <div className="flex items-center gap-2">
                         {selectedFile && (
-                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${statusStyles[selectedFile.status ?? 'raw']}`}>
-                            {selectedFile.status ?? 'raw'}
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                            selectedFile.origin === 'tts'
+                              ? 'bg-amber-500/15 text-amber-300'
+                              : selectedFile.origin === 'vr'
+                                ? 'bg-lime-500/15 text-lime-400'
+                                : 'bg-zinc-500/15 text-zinc-400'
+                          }`}>
+                            {selectedFile.origin === 'tts' ? 'TTS' : selectedFile.origin === 'vr' ? 'VR' : 'Source'}
                           </span>
                         )}
                         <button
@@ -2555,7 +4214,11 @@ export default function App() {
                             ) : (
                               <div className="mt-3 flex flex-col gap-2">
                                 {group.items.map(item => (
-                                  <div key={item.id} className="flex items-center justify-between text-xs text-zinc-300">
+                                  <div
+                                    key={item.id}
+                                    className="flex items-center justify-between text-xs text-zinc-300"
+                                    onContextMenu={event => openFileContextMenu(event, item)}
+                                  >
                                     <div className="min-w-0">
                                       <div className="truncate text-zinc-200">{item.name}</div>
                                       <div className="text-[10px] text-zinc-500 mt-1">
@@ -2563,10 +4226,23 @@ export default function App() {
                                         {item.duration ? ` • ${item.duration}` : ''}
                                         {item.language ? ` • ${item.language}` : ''}
                                       </div>
+                                      {item.linkedTo && (
+                                        <div className="text-[10px] text-zinc-500 mt-1">
+                                          Generated from {selectedFolder.files.find(file => file.id === item.linkedTo)?.name ?? 'source file'}
+                                        </div>
+                                      )}
                                     </div>
-                                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${statusStyles[item.status ?? 'raw']}`}>
-                                      {item.status ?? 'raw'}
-                                    </span>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                        item.origin === 'tts'
+                                          ? 'bg-amber-500/15 text-amber-300'
+                                          : item.origin === 'vr'
+                                            ? 'bg-lime-500/15 text-lime-400'
+                                            : 'bg-zinc-500/15 text-zinc-400'
+                                      }`}>
+                                        {item.origin === 'tts' ? 'TTS' : item.origin === 'vr' ? 'VR' : 'Source'}
+                                      </span>
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -2582,150 +4258,133 @@ export default function App() {
                   </div>
                 </div>
 
-                {showFolderPanel && selectedFolder && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-                    <div className="absolute inset-0" onClick={() => setShowFolderPanel(false)} />
-                    <div className="relative w-[min(960px,92vw)] h-[min(720px,86vh)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-5 shadow-2xl">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="text-xs text-zinc-500 uppercase tracking-widest">Root / {selectedFolder.name}</div>
-                          <h3 className="text-xl font-bold text-zinc-100 mt-1">{selectedFolder.name}</h3>
-                          <div className="flex items-center gap-2 mt-2">
-                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${statusStyles[selectedFolder.status]}`}>
-                              {selectedFolder.status}
-                            </span>
-                            <span className="text-xs text-zinc-500">Last activity {selectedFolder.lastActivity}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button className="px-3 py-2 text-xs font-semibold bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/40 transition-colors">
-                            Quick Actions
-                          </button>
-                          <button className="px-3 py-2 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400 transition-colors">
-                            New Job
-                          </button>
-                          <button
-                            onClick={() => setShowFolderPanel(false)}
-                            className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                          >
-                            Close
-                          </button>
-                        </div>
+              </motion.div>
+            )}
+
+            {showFolderPanel && selectedFolder && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+                <div className="absolute inset-0" onClick={() => setShowFolderPanel(false)} />
+                <div className="relative w-[min(960px,92vw)] h-[min(720px,86vh)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 shadow-2xl min-h-0 overflow-y-auto">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="text-xl font-bold text-zinc-100">{selectedFolder.name}</h3>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-500/15 text-zinc-400">
+                          Project
+                        </span>
+                        <span className="text-xs text-zinc-500">Last activity {selectedFolder.lastActivity}</span>
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button className="px-2.5 py-1.5 text-xs font-semibold bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/40 transition-colors">
+                        Quick Actions
+                      </button>
+                      <button className="px-2.5 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400 transition-colors">
+                        New Job
+                      </button>
+                      <button
+                        onClick={() => setShowFolderPanel(false)}
+                        className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
 
-                      {selectedFolder.suggestedAction && (
-                        <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 text-blue-200 px-4 py-3 rounded-xl text-sm">
-                          <span>{selectedFolder.suggestedAction}</span>
-                          <button className="px-3 py-1 text-xs font-semibold bg-blue-500/20 text-blue-100 rounded-lg border border-blue-500/40">
-                            Do It
-                          </button>
-                        </div>
-                      )}
+                  <div className="flex flex-col gap-3">
+                    {selectedFolder.suggestedAction && (
+                      <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 text-blue-200 px-3 py-2 rounded-xl text-sm">
+                        <span>{selectedFolder.suggestedAction}</span>
+                        <button className="px-2.5 py-1 text-xs font-semibold bg-blue-500/20 text-blue-100 rounded-lg border border-blue-500/40">
+                          Do It
+                        </button>
+                      </div>
+                    )}
 
-                      <div className="grid grid-cols-4 gap-3">
-                        {(['video', 'audio', 'subtitle', 'output'] as VaultFileType[]).map(type => {
-                          const count = selectedFolder.files.filter(file => file.type === type).length;
-                          const Icon = fileTypeIcons[type];
-                          return (
-                            <div key={type} className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-3">
-                              <div className="flex items-center gap-2 text-xs text-zinc-500">
-                                <Icon size={14} />
-                                {fileTypeLabels[type]}
-                              </div>
-                              <div className="text-lg font-bold text-zinc-100 mt-2">{count}</div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {(['video', 'audio', 'subtitle', 'output'] as VaultFileType[]).map(type => {
+                        const count = selectedFolder.files.filter(file => file.type === type).length;
+                        const Icon = fileTypeIcons[type];
+                        return (
+                          <div key={type} className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-2.5">
+                            <div className="flex items-center gap-2 text-xs text-zinc-500">
+                              <Icon size={14} />
+                              {fileTypeLabels[type]}
                             </div>
-                          );
-                        })}
+                            <div className="text-lg font-bold text-zinc-100 mt-2">{count}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <div className="text-xs text-zinc-500 uppercase tracking-widest">Files</div>
+                        <div className="text-xs text-zinc-500">({filteredFiles.length})</div>
                       </div>
-
-                      {selectedFile && (
-                        <div className="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3">
-                          <div>
-                            <div className="text-xs text-zinc-500 uppercase tracking-widest">Selected File</div>
-                            <div className="text-sm font-semibold text-zinc-100">{selectedFile.name}</div>
-                            <div className="text-xs text-zinc-500 mt-1">{fileTypeLabels[selectedFile.type]} • {selectedFile.size}</div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {selectedFile.type === 'video' && (
-                              <>
-                                <button className="px-3 py-2 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40">Extract Audio</button>
-                                <button className="px-3 py-2 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40">Generate Subs</button>
-                                <button className="px-3 py-2 text-xs bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400">Burn Subs</button>
-                              </>
-                            )}
-                            {selectedFile.type === 'audio' && (
-                              <>
-                                <button className="px-3 py-2 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40">Run UVR</button>
-                                <button className="px-3 py-2 text-xs bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400">Normalize</button>
-                              </>
-                            )}
-                            {selectedFile.type === 'subtitle' && (
-                              <>
-                                <button className="px-3 py-2 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40">Edit</button>
-                                <button className="px-3 py-2 text-xs bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400">Translate</button>
-                              </>
-                            )}
-                          </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-400">
+                          <Search size={14} />
+                          <input
+                            value={vaultQuery}
+                            onChange={e => setVaultQuery(e.target.value)}
+                            placeholder="Search inside folder"
+                            className="bg-transparent focus:outline-none"
+                          />
                         </div>
-                      )}
-
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="text-xs text-zinc-500 uppercase tracking-widest">Files</div>
-                          <div className="text-xs text-zinc-500">({filteredFiles.length})</div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-400">
-                            <Search size={14} />
-                            <input
-                              value={vaultQuery}
-                              onChange={e => setVaultQuery(e.target.value)}
-                              placeholder="Search inside folder"
-                              className="bg-transparent focus:outline-none"
-                            />
-                          </div>
-                          <select
-                            value={vaultTypeFilter}
-                            onChange={e => setVaultTypeFilter(e.target.value as VaultFileType | 'all')}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-2 text-xs text-zinc-300 focus:outline-none"
-                          >
-                            <option value="all">All Types</option>
-                            <option value="video">Video</option>
-                            <option value="audio">Audio</option>
-                            <option value="subtitle">Subtitle</option>
-                            <option value="output">Output</option>
-                            <option value="other">Other</option>
-                          </select>
-                          <select
-                            value={vaultSort}
-                            onChange={e => setVaultSort(e.target.value as 'recent' | 'name' | 'size')}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-2 text-xs text-zinc-300 focus:outline-none"
-                          >
-                            <option value="recent">Recent</option>
-                            <option value="name">Name</option>
-                            <option value="size">Size</option>
-                          </select>
-                          <button
-                            onClick={() => setVaultView(vaultView === 'grouped' ? 'flat' : 'grouped')}
-                            className="px-3 py-2 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40"
-                          >
-                            {vaultView === 'grouped' ? 'Flat View' : 'Grouped View'}
-                          </button>
-                        </div>
+                        <select
+                          value={vaultTypeFilter}
+                          onChange={e => setVaultTypeFilter(e.target.value as VaultFileType | 'all')}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:outline-none"
+                        >
+                          <option value="all">All Types</option>
+                          <option value="video">Video</option>
+                          <option value="audio">Audio</option>
+                          <option value="subtitle">Subtitle</option>
+                          <option value="output">Output</option>
+                          <option value="other">Other</option>
+                        </select>
+                        <select
+                          value={vaultSort}
+                          onChange={e => setVaultSort(e.target.value as 'recent' | 'name' | 'size')}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:outline-none"
+                        >
+                          <option value="recent">Recent</option>
+                          <option value="name">Name</option>
+                          <option value="size">Size</option>
+                        </select>
+                        <button
+                          onClick={() => setVaultView(vaultView === 'grouped' ? 'flat' : 'grouped')}
+                          className="px-2.5 py-1.5 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40"
+                        >
+                          {vaultView === 'grouped' ? 'Flat View' : 'Grouped View'}
+                        </button>
                       </div>
+                    </div>
 
-                      <div className="flex-1 overflow-y-auto pr-1">
-                        <div className="flex flex-col gap-4">
-                          {vaultView === 'grouped' ? (
-                            groupedFiles.map(group => {
-                              if (group.items.length === 0) return null;
-                              return (
-                                <div key={group.type} className="flex flex-col gap-2">
-                                  <div className="flex items-center justify-between text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-                                    <span>{fileTypeLabels[group.type]}</span>
-                                    <span>{group.items.length}</span>
-                                  </div>
-                                  <div className="flex flex-col gap-2">
+                    <div className="pr-1">
+                      <div className="flex flex-col gap-4">
+                        {vaultView === 'grouped' ? (
+                          groupedFiles.map(group => {
+                            if (group.items.length === 0) return null;
+                            return (
+                              <div key={group.type} className="flex flex-col gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setVaultGroupCollapsed(prev => ({ ...prev, [group.type]: !prev[group.type] }))}
+                                  className="flex items-center justify-between text-[10px] font-semibold text-zinc-400 uppercase tracking-widest hover:text-zinc-300"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <ChevronRight
+                                      size={12}
+                                      className={`transition-transform ${vaultGroupCollapsed[group.type] ? '' : 'rotate-90'}`}
+                                    />
+                                    {fileTypeLabels[group.type]}
+                                  </span>
+                                  <span>{group.items.length}</span>
+                                </button>
+                                {!vaultGroupCollapsed[group.type] && (
+                                  <div className="flex flex-col gap-1.5">
                                     {group.items.map(file => {
                                       const isSelected = file.id === selectedFile?.id;
                                       const Icon = fileTypeIcons[file.type];
@@ -2733,37 +4392,43 @@ export default function App() {
                                         <button
                                           key={file.id}
                                           onClick={() => setVaultFileId(file.id)}
-                                          className={`text-left border rounded-xl p-4 transition-colors ${
+                                          onContextMenu={event => openFileContextMenu(event, file)}
+                                          className={`group text-left border rounded-xl p-2.5 transition-colors ${
                                             isSelected ? 'border-lime-500/50 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700'
                                           }`}
                                         >
                                           <div className="flex items-start justify-between gap-4">
                                             <div className="flex items-start gap-3">
-                                              <div className="p-2 bg-zinc-800 rounded-lg text-zinc-400">
-                                                <Icon size={16} />
+                                              <div className="p-1.5 bg-zinc-800 rounded-lg text-zinc-400">
+                                                <Icon size={14} />
                                               </div>
                                               <div>
-                                                <div className="text-sm font-semibold text-zinc-100">{file.name}</div>
-                                                <div className="text-xs text-zinc-500 mt-1">
+                                                <div className="text-xs font-semibold text-zinc-100">{file.name}</div>
+                                                <div className="text-[11px] text-zinc-500 mt-0.5">
                                                   {fileTypeLabels[file.type]} • {file.size}{file.duration ? ` • ${file.duration}` : ''}{file.language ? ` • ${file.language}` : ''}
                                                 </div>
-                                                {file.linkedTo && (
-                                                  <div className="text-[11px] text-zinc-500 mt-1">Linked to {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}</div>
-                                                )}
+                                                  {file.linkedTo && (
+                                                    <div className="text-[11px] text-zinc-500 mt-0.5">
+                                                      Generated from {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}
+                                                    </div>
+                                                  )}
+                                                  {file.origin === 'tts' && file.tts?.overlapSeconds !== undefined && file.tts?.overlapMode !== 'truncate' && (
+                                                    <div className="text-[11px] text-zinc-500 mt-0.5">
+                                                      Overlap total {formatOverlapDisplay(file.tts.overlapSeconds, file.durationSeconds)}
+                                                    </div>
+                                                  )}
                                               </div>
                                             </div>
-                                            <div className="flex flex-col items-end gap-2">
-                                              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${statusStyles[file.status ?? 'raw']}`}>
-                                                {file.status ?? 'raw'}
+                                            <div className="flex flex-col items-end gap-1.5">
+                                              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                                file.origin === 'tts'
+                                                  ? 'bg-amber-500/15 text-amber-300'
+                                                  : file.origin === 'vr'
+                                                    ? 'bg-lime-500/15 text-lime-400'
+                                                    : 'bg-zinc-500/15 text-zinc-400'
+                                              }`}>
+                                                {file.origin === 'tts' ? 'TTS' : file.origin === 'vr' ? 'VR' : 'Source'}
                                               </span>
-                                              {file.uvr && (
-                                                <span
-                                                  title={`UVR • ${formatLocalDateTime(file.uvr.processedAt)}${file.uvr.model ? ` • ${file.uvr.model}` : ''}${file.uvr.backend ? ` • ${file.uvr.backend}` : ''}`}
-                                                  className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-lime-500/15 text-lime-400"
-                                                >
-                                                  UVR
-                                                </span>
-                                              )}
                                               <span className="text-[10px] text-zinc-500">{file.createdAt}</span>
                                             </div>
                                           </div>
@@ -2778,86 +4443,208 @@ export default function App() {
                                               </div>
                                             </div>
                                           )}
-                                          <div className="mt-3 flex items-center gap-2 text-xs text-zinc-400">
-                                            <button className="px-2 py-1 border border-zinc-800 rounded-md hover:border-lime-500/40">Actions</button>
-                                            <button className="px-2 py-1 border border-zinc-800 rounded-md hover:border-lime-500/40">Create Job</button>
-                                          </div>
+                                          {isSelected && file.type === 'audio' && file.relativePath && (
+                                            <div className="mt-2 border border-zinc-800 rounded-lg p-2 bg-zinc-900/80">
+                                              <audio
+                                                className="w-full mt-1.5 h-8 rounded-md bg-zinc-900"
+                                                style={{ colorScheme: 'dark' }}
+                                                controls
+                                              >
+                                                <source src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}&preview=1`} />
+                                              </audio>
+                                              {file.sizeBytes > 20 * 1024 * 1024 && (
+                                                <div className="text-[11px] text-zinc-500 mt-1.5">
+                                                  Preview limited to the first 60 seconds for files over 20MB.
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                          <div className="mt-2" />
                                         </button>
                                       );
                                     })}
                                   </div>
-                                </div>
-                              );
-                            })
-                          ) : (
-                            <div className="flex flex-col gap-2">
-                              {filteredFiles.map(file => {
-                                    const isSelected = file.id === selectedFile?.id;
-                                    const Icon = fileTypeIcons[file.type];
-                                    return (
-                                      <button
-                                        key={file.id}
-                                        onClick={() => setVaultFileId(file.id)}
-                                        className={`text-left border rounded-xl p-4 transition-colors ${
-                                          isSelected ? 'border-lime-500/50 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700'
-                                        }`}
-                                      >
-                                        <div className="flex items-start justify-between gap-4">
-                                          <div className="flex items-start gap-3">
-                                            <div className="p-2 bg-zinc-800 rounded-lg text-zinc-400">
-                                              <Icon size={16} />
-                                            </div>
-                                            <div>
-                                              <div className="text-sm font-semibold text-zinc-100">{file.name}</div>
-                                              <div className="text-xs text-zinc-500 mt-1">
-                                                {fileTypeLabels[file.type]} • {file.size}{file.duration ? ` • ${file.duration}` : ''}{file.language ? ` • ${file.language}` : ''}
-                                              </div>
-                                              {file.linkedTo && (
-                                                <div className="text-[11px] text-zinc-500 mt-1">Linked to {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}</div>
-                                              )}
-                                            </div>
-                                          </div>
-                                          <div className="flex flex-col items-end gap-2">
-                                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${statusStyles[file.status ?? 'raw']}`}>
-                                              {file.status ?? 'raw'}
-                                            </span>
-                                            {file.uvr && (
-                                              <span
-                                                title={`UVR • ${formatLocalDateTime(file.uvr.processedAt)}${file.uvr.model ? ` • ${file.uvr.model}` : ''}${file.uvr.backend ? ` • ${file.uvr.backend}` : ''}`}
-                                                className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-lime-500/15 text-lime-400"
-                                              >
-                                                UVR
-                                              </span>
-                                            )}
-                                            <span className="text-[10px] text-zinc-500">{file.createdAt}</span>
-                                          </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="flex flex-col gap-1.5">
+                            {filteredFiles.map(file => {
+                              const isSelected = file.id === selectedFile?.id;
+                              const Icon = fileTypeIcons[file.type];
+                              return (
+                                <button
+                                  key={file.id}
+                                  onClick={() => setVaultFileId(file.id)}
+                                  onContextMenu={event => openFileContextMenu(event, file)}
+                                  className={`group text-left border rounded-xl p-2.5 transition-colors ${
+                                    isSelected ? 'border-lime-500/50 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex items-start gap-3">
+                                      <div className="p-1.5 bg-zinc-800 rounded-lg text-zinc-400">
+                                        <Icon size={14} />
+                                      </div>
+                                      <div>
+                                        <div className="text-xs font-semibold text-zinc-100">{file.name}</div>
+                                        <div className="text-[11px] text-zinc-500 mt-0.5">
+                                          {fileTypeLabels[file.type]} • {file.size}{file.duration ? ` • ${file.duration}` : ''}{file.language ? ` • ${file.language}` : ''}
                                         </div>
-                                        {file.status === 'processing' && typeof file.progress === 'number' && (
-                                          <div className="mt-3">
-                                            <div className="flex justify-between text-[10px] text-zinc-500">
-                                              <span>Processing</span>
-                                              <span>{file.progress}%</span>
-                                            </div>
-                                            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1">
-                                              <div className="h-full bg-blue-500" style={{ width: `${file.progress}%` }} />
-                                            </div>
+                                        {file.linkedTo && (
+                                          <div className="text-[11px] text-zinc-500 mt-0.5">
+                                            Generated from {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}
                                           </div>
                                         )}
-                                        <div className="mt-3 flex items-center gap-2 text-xs text-zinc-400">
-                                          <button className="px-2 py-1 border border-zinc-800 rounded-md hover:border-lime-500/40">Actions</button>
-                                          <button className="px-2 py-1 border border-zinc-800 rounded-md hover:border-lime-500/40">Create Job</button>
+                                        {file.origin === 'tts' && file.tts?.overlapSeconds !== undefined && file.tts?.overlapMode !== 'truncate' && (
+                                          <div className="text-[11px] text-zinc-500 mt-0.5">
+                                            Overlap total {formatOverlapDisplay(file.tts.overlapSeconds, file.durationSeconds)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-col items-end gap-1.5">
+                                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                        file.origin === 'tts'
+                                          ? 'bg-amber-500/15 text-amber-300'
+                                          : file.origin === 'vr'
+                                            ? 'bg-lime-500/15 text-lime-400'
+                                            : 'bg-zinc-500/15 text-zinc-400'
+                                      }`}>
+                                        {file.origin === 'tts' ? 'TTS' : file.origin === 'vr' ? 'VR' : 'Source'}
+                                      </span>
+                                      <span className="text-[10px] text-zinc-500">{file.createdAt}</span>
+                                    </div>
+                                  </div>
+                                  {file.status === 'processing' && typeof file.progress === 'number' && (
+                                    <div className="mt-3">
+                                      <div className="flex justify-between text-[10px] text-zinc-500">
+                                        <span>Processing</span>
+                                        <span>{file.progress}%</span>
+                                      </div>
+                                      <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1">
+                                        <div className="h-full bg-blue-500" style={{ width: `${file.progress}%` }} />
+                                      </div>
+                                    </div>
+                                  )}
+                                  {isSelected && file.type === 'audio' && file.relativePath && (
+                                    <div className="mt-2 border border-zinc-800 rounded-lg p-2 bg-zinc-900/80">
+                                      <audio
+                                        className="w-full mt-1.5 h-8 rounded-md bg-zinc-900"
+                                        style={{ colorScheme: 'dark' }}
+                                        controls
+                                      >
+                                        <source src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}&preview=1`} />
+                                      </audio>
+                                      {file.sizeBytes > 20 * 1024 * 1024 && (
+                                        <div className="text-[11px] text-zinc-500 mt-1.5">
+                                          Preview limited to the first 60 seconds for files over 20MB.
                                         </div>
-                                      </button>
-                                    );
-                              })}
-                            </div>
-                          )}
-                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  <div className="mt-2" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
-                )}
-              </motion.div>
+                </div>
+              </div>
+            )}
+
+            {importPopupOpen && (
+              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+                <div className="absolute inset-0" onClick={() => setImportPopupOpen(false)} />
+                <div className="relative w-[min(560px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-xs text-zinc-500 uppercase tracking-widest">Import Files</div>
+                      <div className="text-sm font-semibold text-zinc-100">Add files to project</div>
+                    </div>
+                    <button
+                      onClick={() => setImportPopupOpen(false)}
+                      className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs text-zinc-500 uppercase tracking-widest">Project</label>
+                    <div className="relative">
+                      <input
+                        value={importProjectName}
+                        onChange={e => {
+                          const nextValue = e.target.value;
+                          setImportProjectName(nextValue);
+                          setImportProjectPickerOpen(true);
+                        }}
+                        onFocus={() => setImportProjectPickerOpen(true)}
+                        onBlur={() => setTimeout(() => setImportProjectPickerOpen(false), 120)}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                        placeholder="Project name (new or existing)"
+                        autoComplete="off"
+                      />
+                      {importProjectPickerOpen && vaultFolders.length > 0 && (
+                        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl">
+                          {vaultFolders
+                            .filter(folder => folder.name.toLowerCase().includes(importProjectName.trim().toLowerCase()))
+                            .map(folder => (
+                              <button
+                                type="button"
+                                key={folder.id}
+                                onMouseDown={() => {
+                                  setImportProjectName(folder.name);
+                                  setImportProjectPickerOpen(false);
+                                }}
+                                className="w-full px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-900"
+                              >
+                                {folder.name}
+                              </button>
+                            ))}
+                          {vaultFolders.filter(folder => folder.name.toLowerCase().includes(importProjectName.trim().toLowerCase())).length === 0 && (
+                            <div className="px-3 py-2 text-xs text-zinc-500">No matches</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs text-zinc-500 uppercase tracking-widest">Files</label>
+                    <label className="flex items-center justify-between gap-3 px-3 py-2 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
+                      <span>{importFiles.length ? `${importFiles.length} file(s) selected` : 'Choose files'}</span>
+                      <input
+                        type="file"
+                        multiple
+                        onChange={e => setImportFiles(Array.from(e.target.files ?? []))}
+                        className="hidden"
+                      />
+                    </label>
+                    {importFiles.length > 0 && (
+                      <div className="text-[11px] text-zinc-500">
+                        {importFiles.slice(0, 3).map(file => file.name).join(', ')}
+                        {importFiles.length > 3 ? ` +${importFiles.length - 3} more` : ''}
+                      </div>
+                    )}
+                  </div>
+
+                  {importError && <div className="text-xs text-red-400">{importError}</div>}
+
+                  <button
+                    onClick={performImport}
+                    disabled={importSubmitting}
+                    className="w-full px-4 py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {importSubmitting ? 'Importing...' : 'Import'}
+                  </button>
+                </div>
+              </div>
             )}
           </AnimatePresence>
 
@@ -2887,8 +4674,7 @@ export default function App() {
                         await Promise.resolve(action?.());
                       } catch (error) {
                         const message = error instanceof Error ? error.message : 'Action failed';
-                        setToastMessage(message);
-                        setToastVisible(true);
+                        showToast(message, 'error');
                       }
                     }}
                     className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
@@ -2904,26 +4690,32 @@ export default function App() {
             </div>
           )}
 
-          {showRunPipeline && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-              <div className="absolute inset-0" onClick={() => setShowRunPipeline(false)} />
-              <div className="relative w-[min(700px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-5 shadow-2xl overflow-y-auto">
+            {showRunPipeline && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+                <div className="absolute inset-0" onClick={() => {
+                  setShowRunPipeline(false);
+                  setShowRenderStudio(false);
+                }} />
+              <div className="relative w-[min(700px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 shadow-2xl overflow-y-auto">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-xs text-zinc-500 uppercase tracking-widest">Run Pipeline</div>
-                    <div className="text-lg font-semibold text-zinc-100">
+                    <div className="text-sm font-semibold text-zinc-100">
                       {runPipelineHasDownload ? (downloadProjectName || 'New Project') : (runPipelineProject?.name ?? 'Project')}
                     </div>
                   </div>
                   <button
-                    onClick={() => setShowRunPipeline(false)}
-                    className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                    onClick={() => {
+                      setShowRunPipeline(false);
+                      setShowRenderStudio(false);
+                    }}
+                    className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
                   >
                     Close
                   </button>
                 </div>
 
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs text-zinc-500 uppercase tracking-widest">
                     {runPipelineHasDownload ? 'Project' : 'Project'}
                   </label>
@@ -2933,12 +4725,17 @@ export default function App() {
                         <input
                           value={downloadProjectName}
                           onChange={e => {
-                            setDownloadProjectName(e.target.value);
+                            const nextValue = e.target.value;
+                            setDownloadProjectName(nextValue);
                             setDownloadProjectPickerOpen(true);
+                            const match = vaultFolders.find(folder => folder.name.toLowerCase() === nextValue.trim().toLowerCase());
+                            if (match) {
+                              setRunPipelineProjectId(match.id);
+                            }
                           }}
                           onFocus={() => setDownloadProjectPickerOpen(true)}
                           onBlur={() => setTimeout(() => setDownloadProjectPickerOpen(false), 120)}
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                           placeholder="Project name (new or existing)"
                           autoComplete="off"
                         />
@@ -2952,15 +4749,16 @@ export default function App() {
                                   key={folder.id}
                                   onMouseDown={() => {
                                     setDownloadProjectName(folder.name);
+                                    setRunPipelineProjectId(folder.id);
                                     setDownloadProjectPickerOpen(false);
                                   }}
-                                  className="w-full px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-900"
+                                  className="w-full px-2.5 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-900"
                                 >
                                   {folder.name}
                                 </button>
                               ))}
                             {vaultFolders.filter(folder => folder.name.toLowerCase().includes(downloadProjectName.trim().toLowerCase())).length === 0 && (
-                              <div className="px-3 py-2 text-xs text-zinc-500">No matches</div>
+                              <div className="px-2.5 py-1.5 text-xs text-zinc-500">No matches</div>
                             )}
                           </div>
                         )}
@@ -2971,7 +4769,7 @@ export default function App() {
                       value={runPipelineProject?.id ?? ''}
                       onChange={e => setRunPipelineProjectId(e.target.value || null)}
                       disabled={runPipelineProjectLocked}
-                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none disabled:opacity-60"
+                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none disabled:opacity-60"
                     >
                       <option value="" disabled>Select a project</option>
                       {vaultFolders.map(folder => (
@@ -2981,13 +4779,13 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs text-zinc-500 uppercase tracking-widest">Pipeline</label>
                   <select
                     value={runPipelineId ?? ''}
                     onChange={e => setRunPipelineId(e.target.value || null)}
                     disabled={pipelineLibrary.length === 0}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                   >
                     {pipelineLibrary.length === 0 && (
                       <option value="">No pipelines saved</option>
@@ -2998,153 +4796,346 @@ export default function App() {
                   </select>
                 </div>
 
-                <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/70">
-                  <div className="text-xs text-zinc-500 uppercase tracking-widest mb-3">
-                    {runPipelineHasDownload ? 'Inputs (URL)' : 'Inputs (Video/Audio)'}
-                  </div>
-                  {runPipelineLoading ? (
-                    <div className="text-xs text-zinc-500">Loading...</div>
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      {runPipelineHasDownload ? (
-                        <div className="flex flex-col gap-2">
-                          <input
-                            value={downloadUrl}
-                            onChange={e => setDownloadUrl(e.target.value)}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-                            placeholder="https://..."
-                          />
-                          <label className="flex items-center justify-between gap-3 px-3 py-2 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
-                            <span>{downloadCookiesFile?.name ?? 'Upload cookies.txt (optional)'}</span>
-                            <input
-                              type="file"
-                              accept=".txt"
-                              onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
-                              className="hidden"
-                            />
-                          </label>
-                          <input
-                            value={downloadSubtitleLang}
-                            onChange={e => setDownloadSubtitleLang(e.target.value)}
-                            list="ytdlp-sub-langs"
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-                            placeholder="Subtitle language (e.g. ai-zh)"
-                          />
-                          {downloadAnalyzeListSubs.length > 0 && (
-                            <datalist id="ytdlp-sub-langs">
-                              {downloadAnalyzeListSubs.map((entry: any) => (
-                                <option key={entry.lang} value={entry.lang} />
-                              ))}
-                            </datalist>
-                          )}
-                          <label className="flex items-center gap-2 text-xs text-zinc-300">
-                            <input
-                              type="checkbox"
-                              checked={downloadNoPlaylist}
-                              onChange={e => setDownloadNoPlaylist(e.target.checked)}
-                              className="accent-lime-400"
-                            />
-                            No playlist
-                          </label>
-                          <button
-                            onClick={analyzeYtDlp}
-                            disabled={downloadAnalyzeLoading || !downloadUrl.trim()}
-                            className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 disabled:opacity-60 disabled:cursor-not-allowed"
-                          >
-                            {downloadAnalyzeLoading ? 'Analyzing...' : 'Analyze URL'}
-                          </button>
-                          {downloadAnalyzeError && (
-                            <div className="text-[11px] text-red-400">{downloadAnalyzeError}</div>
-                          )}
-                          {downloadAnalyzeResult && (
-                            <div className="mt-1 border border-zinc-800 rounded-lg p-3 bg-zinc-900/70">
-                              <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Analyze Result</div>
-                              <div className="text-xs text-zinc-200 mt-2">
-                                {downloadAnalyzeData?.title ? (
-                                  <div className="font-semibold text-zinc-100">{downloadAnalyzeData.title}</div>
-                                ) : (
-                                  <div className="text-zinc-500">No title</div>
-                                )}
-                                {downloadAnalyzeData?.webpage_url && (
-                                  <div className="text-[11px] text-zinc-500 mt-1">{downloadAnalyzeData.webpage_url}</div>
-                                )}
-                              </div>
-                              <div className="grid gap-2 mt-3 text-[11px] text-zinc-400">
-                                <div>Video formats: {downloadAnalyzeVideoFormats.length}</div>
-                                <div>Audio formats: {downloadAnalyzeAudioFormats.length}</div>
-                                <div>Subtitle languages: {downloadAnalyzeSubtitleCount}</div>
-                              </div>
-                              {bestSingleFormat && (
-                                <div className="mt-3 text-[11px] text-zinc-300">
-                                  <div className="font-semibold text-zinc-200 mb-1">Best Format</div>
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-mono text-zinc-400">{bestSingleFormat.format_id}</span>
-                                    <span>{bestSingleFormat.ext ?? 'unknown'}</span>
-                                    <span>
-                                      {bestSingleFormat.resolution ?? (bestSingleFormat.height ? `${bestSingleFormat.height}p` : bestSingleFormat.vcodec === 'none' ? 'audio' : 'video')}
-                                    </span>
-                                    <span>
-                                      {bestSingleFormat.vcodec !== 'none' ? (bestSingleFormat.vcodec ?? 'vcodec') : (bestSingleFormat.acodec ?? 'acodec')}
-                                    </span>
-                                  </div>
-                                </div>
-                              )}
-                              {downloadAnalyzeListSubs.length > 0 && (
-                                <div className="mt-3 text-[11px] text-zinc-300">
-                                  <div className="font-semibold text-zinc-200 mb-1">Subtitles</div>
-                                  <div className="max-h-32 overflow-y-auto space-y-1">
-                                    {downloadAnalyzeListSubs.map((entry: any) => (
-                                      <div key={entry.lang} className="flex items-center justify-between gap-2">
-                                        <span className="font-mono text-zinc-400">{entry.lang}</span>
-                                        <span className="text-zinc-500">
-                                          {Array.isArray(entry.formats) ? entry.formats.join(', ') : '--'}
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                              {downloadAnalyzeWarnings.length > 0 ? null : null}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <>
+                <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">
+                      {runPipelineHasDownload
+                        ? 'Inputs (URL)'
+                        : runPipelineHasRender
+                          ? 'Inputs (Video/Audio/Subtitle)'
+                          : runPipelineHasTts
+                            ? 'Inputs (Subtitle)'
+                            : 'Inputs (Video/Audio)'}
+                    </div>
+                    {runPipelineLoading ? (
+                      <div className="text-xs text-zinc-500">Loading...</div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {runPipelineHasDownload ? (
                           <div className="flex flex-col gap-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                value={downloadUrl}
+                                onChange={e => setDownloadUrl(e.target.value)}
+                                className="col-span-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                                placeholder="https://..."
+                              />
+                            </div>
+                            {downloadAnalyzeError && (
+                              <div className="text-[11px] text-red-400">{downloadAnalyzeError}</div>
+                            )}
+                            {downloadAnalyzeResult && (
+                              <div className="mt-1 border border-zinc-800 rounded-lg p-2.5 bg-zinc-900/70">
+                                <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Analyze Result</div>
+                                <div className="text-xs text-zinc-200 mt-2">
+                                  {downloadAnalyzeData?.title ? (
+                                    <div className="font-semibold text-zinc-100">{downloadAnalyzeData.title}</div>
+                                  ) : (
+                                    <div className="text-zinc-500">No title</div>
+                                  )}
+                                  {downloadAnalyzeData?.webpage_url && (
+                                    <div className="text-[11px] text-zinc-500 mt-1">{downloadAnalyzeData.webpage_url}</div>
+                                  )}
+                                </div>
+                                <div className="grid gap-1.5 mt-2 text-[11px] text-zinc-400">
+                                  <div>Video formats: {downloadAnalyzeVideoFormats.length}</div>
+                                  <div>Audio formats: {downloadAnalyzeAudioFormats.length}</div>
+                                  <div>Subtitle languages: {downloadAnalyzeSubtitleCount}</div>
+                                </div>
+                                {bestSingleFormat && (
+                                  <div className="mt-2 text-[11px] text-zinc-300">
+                                    <div className="font-semibold text-zinc-200 mb-1">Best Format</div>
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-mono text-zinc-400">{bestSingleFormat.format_id}</span>
+                                      <span>{bestSingleFormat.ext ?? 'unknown'}</span>
+                                      <span>
+                                        {bestSingleFormat.resolution ?? (bestSingleFormat.height ? `${bestSingleFormat.height}p` : bestSingleFormat.vcodec === 'none' ? 'audio' : 'video')}
+                                      </span>
+                                      <span>
+                                        {bestSingleFormat.vcodec !== 'none' ? (bestSingleFormat.vcodec ?? 'vcodec') : (bestSingleFormat.acodec ?? 'acodec')}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+                                {downloadAnalyzeListSubs.length > 0 && (
+                                  <div className="mt-2 text-[11px] text-zinc-300">
+                                    <div className="font-semibold text-zinc-200 mb-1">Subtitles</div>
+                                    <div className="max-h-32 overflow-y-auto space-y-1">
+                                      {downloadAnalyzeListSubs.map((entry: any) => (
+                                        <div key={entry.lang} className="flex items-center justify-between gap-2">
+                                          <span className="font-mono text-zinc-400">{entry.lang}</span>
+                                          <span className="text-zinc-500">
+                                            {Array.isArray(entry.formats) ? entry.formats.join(', ') : '--'}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {downloadAnalyzeWarnings.length > 0 ? null : null}
+                              </div>
+                            )}
+                          </div>
+                        ) : runPipelineHasRender ? (
+                          <div className="grid grid-cols-2 gap-2">
                             <select
-                              value={runPipelineInputId ?? ''}
-                              onChange={e => setRunPipelineInputId(e.target.value || null)}
-                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                              value={renderVideoId ?? ''}
+                              onChange={e => setRenderVideoId(e.target.value || null)}
+                              className="col-span-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                             >
+                              <option value="" disabled>Select video (required)</option>
                               {runPipelineProject?.files
-                                .filter(file => file.type === 'video' || file.type === 'audio')
+                                .filter(file => file.type === 'video')
                                 .map(file => (
-                                  <option key={file.id} value={file.id}>{file.name}</option>
+                                  <option
+                                    key={file.id}
+                                    value={file.id}
+                                    title={file.name}
+                                  >
+                                    {truncateLabel(file.name, 52)}
+                                  </option>
+                                ))}
+                            </select>
+                            <select
+                              value={renderAudioId ?? ''}
+                              onChange={e => setRenderAudioId(e.target.value || null)}
+                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                            >
+                              <option value="">Audio (optional)</option>
+                              {runPipelineProject?.files
+                                .filter(file => file.type === 'audio')
+                                .map(file => (
+                                  <option
+                                    key={file.id}
+                                    value={file.id}
+                                    title={file.name}
+                                  >
+                                    {truncateLabel(file.name, 52)}
+                                  </option>
+                                ))}
+                            </select>
+                            <select
+                              value={renderSubtitleId ?? ''}
+                              onChange={e => setRenderSubtitleId(e.target.value || null)}
+                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                            >
+                              <option value="">Subtitle (optional)</option>
+                              {runPipelineProject?.files
+                                .filter(file => file.type === 'subtitle')
+                                .map(file => (
+                                  <option
+                                    key={file.id}
+                                    value={file.id}
+                                    title={file.name}
+                                  >
+                                    {truncateLabel(file.name, 52)}
+                                  </option>
                                 ))}
                             </select>
                           </div>
-                          {!runPipelineGraph?.nodes && pipelineLibrary.length === 0 && (
-                            <div className="text-[11px] text-zinc-500">No saved pipeline yet.</div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
+                        ) : (
+                          <>
+                            <div className="flex flex-col gap-1.5">
+                              <select
+                                value={runPipelineInputId ?? ''}
+                                onChange={e => setRunPipelineInputId(e.target.value || null)}
+                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                              >
+                                {runPipelineProject?.files
+                                  .filter(file => (runPipelineHasTts ? file.type === 'subtitle' : file.type === 'video' || file.type === 'audio'))
+                                  .map(file => (
+                                    <option
+                                      key={file.id}
+                                      value={file.id}
+                                      title={`${file.origin === 'tts' ? '(TTS)' : file.origin === 'vr' ? '(VR)' : '(Source)'} ${file.name}`}
+                                    >
+                                      {file.origin === 'tts' ? '(TTS)' : file.origin === 'vr' ? '(VR)' : '(Source)'} {truncateLabel(file.name, 52)}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                            {!runPipelineGraph?.nodes && pipelineLibrary.length === 0 && (
+                              <div className="text-[11px] text-zinc-500">No saved pipeline yet.</div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                {runPipelineHasDownload && (
+                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Download</div>
+                    {hasParamPresets('download') ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                          {runPipelineParamPreset.download !== 'custom' && null}
+                        </div>
+                        <select
+                          value={runPipelineParamPreset.download ?? 'custom'}
+                          onChange={e => handleParamPresetChange('download', e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                        >
+                          <option value="custom">Manual</option>
+                          {getParamPresetsForType('download').map(preset => (
+                            <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                          ))}
+                        </select>
+                        {runPipelineParamPreset.download !== 'custom' && (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => switchPresetToManual('download')}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                switchPresetToManual('download');
+                              }
+                            }}
+                            title="Switch to manual and load these params"
+                            className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                          >
+                            <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                              {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
+                                <div key={key} className="flex items-center justify-between gap-2">
+                                  <span className="font-mono text-zinc-500">{key}</span>
+                                  <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
+                    )}
+                    {runPipelineParamPreset.download === 'custom' && (
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <select
+                          value={downloadMode}
+                          onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                        >
+                          <option value="all">Download: All (subs + audio + video)</option>
+                          <option value="subs">Download: Subtitles only</option>
+                          <option value="media">Download: Audio + Video only</option>
+                        </select>
+                        <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
+                          <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
+                          <input
+                            type="file"
+                            accept=".txt"
+                            onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
+                            className="hidden"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
+                          <input
+                            type="checkbox"
+                            checked={downloadNoPlaylist}
+                            onChange={e => setDownloadNoPlaylist(e.target.checked)}
+                            className="accent-lime-400"
+                          />
+                          No playlist
+                        </label>
+                        {downloadMode !== 'media' ? (
+                          <>
+                            <input
+                              value={downloadSubtitleLang}
+                              onChange={e => setDownloadSubtitleLang(e.target.value)}
+                              list="ytdlp-sub-langs"
+                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                              placeholder="Subtitle language (e.g. ai-zh)"
+                              title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
+                            />
+                            {downloadAnalyzeListSubs.length > 0 && (
+                              <datalist id="ytdlp-sub-langs">
+                                {downloadAnalyzeListSubs.map((entry: any) => (
+                                  <option key={entry.lang} value={entry.lang} />
+                                ))}
+                              </datalist>
+                            )}
+                          </>
+                        ) : (
+                          <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
+                            Subtitles disabled for media-only.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {runPipelineHasUvr && (
-                  <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/70">
-                    <div className="text-xs text-zinc-500 uppercase tracking-widest mb-3">Block Config: VR (UVR)</div>
-                    <div className="grid gap-4 md:grid-cols-2">
+                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: VR (UVR)</div>
+                    {hasParamPresets('uvr') && (
+                      <div className="mb-3 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                          {runPipelineParamPreset.uvr !== 'custom' && null}
+                        </div>
+                        <select
+                          value={runPipelineParamPreset.uvr ?? 'custom'}
+                          onChange={e => handleParamPresetChange('uvr', e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                        >
+                          <option value="custom">Manual</option>
+                          {getParamPresetsForType('uvr').map(preset => (
+                            <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                          ))}
+                        </select>
+                        {runPipelineParamPreset.uvr !== 'custom' && (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => switchPresetToManual('uvr')}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                switchPresetToManual('uvr');
+                              }
+                            }}
+                            title="Switch to manual and load these params"
+                            className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                          >
+                            <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                              {Object.entries(getSelectedParamPresetParams('uvr')).map(([key, value]) => (
+                                <div key={key} className="flex items-center justify-between gap-2">
+                                  <span className="font-mono text-zinc-500">{key}</span>
+                                  <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {runPipelineParamPreset.uvr === 'custom' && (
+                      <div className="grid gap-3 md:grid-cols-2">
                       <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Backend</label>
+                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          Backend
+                          {isParamOverridden('uvr', 'backend', runPipelineBackend) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                              Overridden
+                            </span>
+                          )}
+                        </label>
                         <input
                           list="uvr-backends"
                           value={runPipelineBackend}
                           onChange={e => setRunPipelineBackend(e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                            isParamOverridden('uvr', 'backend', runPipelineBackend) ? 'border-amber-500/60' : 'border-zinc-800'
+                          }`}
                           placeholder="vr"
                         />
+                        {runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').backend !== undefined && (
+                          <div className="text-[10px] text-zinc-500">
+                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').backend)}
+                          </div>
+                        )}
                         <datalist id="uvr-backends">
                           <option value="vr" />
                           <option value="mdx" />
@@ -3152,12 +5143,21 @@ export default function App() {
                         </datalist>
                       </div>
                       <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Model</label>
+                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          Model
+                          {isParamOverridden('uvr', 'model', vrModel) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                              Overridden
+                            </span>
+                          )}
+                        </label>
                         {vrModels.length ? (
                           <select
                             value={vrModel}
                             onChange={e => setVrModel(e.target.value)}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                            className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                              isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
+                            }`}
                           >
                             {vrModels.map(model => (
                               <option key={model} value={model}>{model}</option>
@@ -3167,22 +5167,1292 @@ export default function App() {
                           <input
                             value={vrModel}
                             onChange={e => setVrModel(e.target.value)}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                            className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                              isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
+                            }`}
                             placeholder="MGM_MAIN_v4.pth"
                           />
                         )}
+                        {runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').model !== undefined && (
+                          <div className="text-[10px] text-zinc-500">
+                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').model)}
+                          </div>
+                        )}
                       </div>
                     </div>
+                    )}
                   </div>
                 )}
 
+                {runPipelineHasTts && (
+                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: TTS</div>
+                    {hasParamPresets('tts') && (
+                      <div className="mb-3 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                          {runPipelineParamPreset.tts !== 'custom' && null}
+                        </div>
+                        <select
+                          value={runPipelineParamPreset.tts ?? 'custom'}
+                          onChange={e => handleParamPresetChange('tts', e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                        >
+                          <option value="custom">Manual</option>
+                          {getParamPresetsForType('tts').map(preset => (
+                            <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                          ))}
+                        </select>
+                        {runPipelineParamPreset.tts !== 'custom' && (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => switchPresetToManual('tts')}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                switchPresetToManual('tts');
+                              }
+                            }}
+                            title="Switch to manual and load these params"
+                            className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                          >
+                            <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                              {Object.entries(getSelectedParamPresetParams('tts')).map(([key, value]) => (
+                                <div key={key} className="flex items-center justify-between gap-2">
+                                  <span className="font-mono text-zinc-500">{key}</span>
+                                  <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {runPipelineParamPreset.tts === 'custom' && (
+                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          Voice
+                          {isParamOverridden('tts', 'voice', runPipelineTtsVoice) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                              Overridden
+                            </span>
+                          )}
+                        </label>
+                        <select
+                          value={runPipelineTtsVoice}
+                          onChange={e => setRunPipelineTtsVoice(e.target.value)}
+                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                            isParamOverridden('tts', 'voice', runPipelineTtsVoice) ? 'border-amber-500/60' : 'border-zinc-800'
+                          }`}
+                        >
+                          {PREFERRED_TTS_VOICES.map(name => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').voice !== undefined && (
+                          <div className="text-[10px] text-zinc-500">
+                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').voice)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          Long Cue
+                          {isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                              Overridden
+                            </span>
+                          )}
+                        </label>
+                        <select
+                          value={runPipelineTtsOverlapMode}
+                          onChange={e => setRunPipelineTtsOverlapMode(e.target.value as 'truncate' | 'overlap')}
+                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                            isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) ? 'border-amber-500/60' : 'border-zinc-800'
+                          }`}
+                        >
+                          <option value="overlap">Overlap voices</option>
+                          <option value="truncate">Cut previous voice (truncate)</option>
+                        </select>
+                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').overlapMode !== undefined && (
+                          <div className="text-[10px] text-zinc-500">
+                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').overlapMode)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          Rate
+                          {isParamOverridden('tts', 'rate', runPipelineTtsRate) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                              Overridden
+                            </span>
+                          )}
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={runPipelineTtsRate}
+                          onChange={e => setRunPipelineTtsRate(e.target.value)}
+                          placeholder="1.0"
+                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                            isParamOverridden('tts', 'rate', runPipelineTtsRate) ? 'border-amber-500/60' : 'border-zinc-800'
+                          }`}
+                        />
+                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').rate !== undefined && (
+                          <div className="text-[10px] text-zinc-500">
+                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').rate)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                          Pitch
+                          {isParamOverridden('tts', 'pitch', runPipelineTtsPitch) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                              Overridden
+                            </span>
+                          )}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={runPipelineTtsPitch}
+                            onChange={e => setRunPipelineTtsPitch(e.target.value)}
+                            placeholder="0"
+                            className={`flex-1 bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                              isParamOverridden('tts', 'pitch', runPipelineTtsPitch) ? 'border-amber-500/60' : 'border-zinc-800'
+                            }`}
+                          />
+                          <span className="text-xs text-zinc-500">st</span>
+                        </div>
+                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').pitch !== undefined && (
+                          <div className="text-[10px] text-zinc-500">
+                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').pitch)}
+                          </div>
+                        )}
+                      </div>
+                      <label className="flex items-center gap-2 text-xs text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={runPipelineTtsRemoveLineBreaks}
+                          onChange={e => setRunPipelineTtsRemoveLineBreaks(e.target.checked)}
+                          className="accent-lime-400"
+                        />
+                        <span className="flex items-center gap-2">
+                          Remove line breaks
+                          {isParamOverridden('tts', 'removeLineBreaks', runPipelineTtsRemoveLineBreaks) && (
+                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                              Overridden
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                      {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').removeLineBreaks !== undefined && (
+                        <div className="text-[10px] text-zinc-500">
+                          Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').removeLineBreaks)}
+                        </div>
+                      )}
+                    </div>
+                    )}
+                  </div>
+                )}
+
+                {runPipelineHasDownload && (
+                  <button
+                    onClick={analyzeYtDlp}
+                    disabled={downloadAnalyzeLoading || !downloadUrl.trim()}
+                    className="w-full px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {downloadAnalyzeLoading ? 'Analyzing...' : 'Analyze URL'}
+                  </button>
+                )}
+                {runPipelineHasRender && (
+                  <button
+                    onClick={() => setShowRenderStudio(true)}
+                    disabled={!runPipelineProject}
+                    className="w-full px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300"
+                  >
+                    Preview
+                  </button>
+                )}
                 <button
                   onClick={runPipelineJob}
                   disabled={runPipelineSubmitting}
-                  className="w-full px-4 py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {runPipelineSubmitting ? 'Queuing...' : 'Run'}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {showRenderStudio && runPipelineHasRender && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+              <div className="absolute inset-0" onClick={() => setShowRenderStudio(false)} />
+              <div className="relative w-[min(1480px,98vw)] h-[min(920px,94vh)] bg-zinc-950/95 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800 bg-gradient-to-r from-zinc-900/80 via-zinc-900/40 to-zinc-950/90">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-xl bg-lime-500/15 text-lime-400 flex items-center justify-center">
+                      <FileVideo size={18} />
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Render Studio</div>
+                      <div className="text-sm font-semibold text-zinc-100">
+                        {runPipelineProject?.name ?? 'Project'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] text-zinc-500">
+                      {renderReady ? 'Ready to render' : 'Select a video source'}
+                    </span>
+                    <button
+                      onClick={() => setShowRenderStudio(false)}
+                      className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={runPipelineJob}
+                      disabled={!renderReady || runPipelineSubmitting}
+                      className="px-4 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {runPipelineSubmitting ? 'Queuing...' : 'Render'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-[260px_minmax(0,1fr)_300px] flex-1 min-h-0">
+                  <div className="border-r border-zinc-800 bg-zinc-900/60 p-4 flex flex-col gap-4 min-h-0">
+                    <div className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest">
+                      <span>Media Bin</span>
+                      <div className="flex items-center gap-2">
+                        <span>{runPipelineProject?.files.length ?? 0} items</span>
+                        <button
+                          onClick={() => setRenderStudioMediaBinOpen(prev => !prev)}
+                          className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                        >
+                          <Menu size={12} />
+                        </button>
+                      </div>
+                    </div>
+                    {renderStudioMediaBinOpen && (
+                      <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1">
+                        {runPipelineProject?.files.map(file => {
+                          const isVideo = file.type === 'video';
+                          const isAudio = file.type === 'audio';
+                          const isSubtitle = file.type === 'subtitle';
+                        const isSelected = renderStudioFocus === 'item'
+                          ? isVideo
+                            ? renderStudioItemType === 'video' && renderVideoId === file.id
+                            : isAudio
+                              ? renderStudioItemType === 'audio' && renderAudioId === file.id
+                              : isSubtitle
+                                ? renderStudioItemType === 'subtitle' && renderSubtitleId === file.id
+                                : false
+                          : false;
+                          const icon = isVideo ? FileVideo : isAudio ? FileAudio : Type;
+                          const iconClass = isVideo
+                            ? 'bg-lime-500/15 text-lime-300'
+                            : isAudio
+                              ? 'bg-amber-500/15 text-amber-300'
+                              : 'bg-blue-500/15 text-blue-300';
+                        const selectedClass = 'border-lime-500/50 bg-lime-500/10 text-zinc-100';
+                        const onClick = isVideo
+                          ? () => {
+                            setRenderVideoId(file.id);
+                            setRenderStudioFocus('item');
+                            setRenderStudioItemType('video');
+                          }
+                          : isAudio
+                            ? () => {
+                              setRenderAudioId(file.id);
+                              setRenderStudioFocus('item');
+                              setRenderStudioItemType('audio');
+                            }
+                            : isSubtitle
+                              ? () => {
+                                setRenderSubtitleId(file.id);
+                                setRenderStudioFocus('item');
+                                setRenderStudioItemType('subtitle');
+                              }
+                              : undefined;
+                          return (
+                            <button
+                              key={file.id}
+                              onClick={onClick}
+                              disabled={!onClick}
+                              className={`rounded-lg border p-2 text-left flex flex-col gap-1 ${
+                                isSelected ? selectedClass : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700'
+                              } ${!onClick ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            >
+                              <div className={`h-7 w-7 rounded-md ${iconClass} flex items-center justify-center`}>
+                                {React.createElement(icon, { size: 14 })}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-[11px] font-semibold truncate">{file.name}</div>
+                                <div className="text-[10px] text-zinc-500 truncate">{file.duration ?? file.size}</div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                        {runPipelineProject?.files.length === 0 && (
+                          <div className="text-[11px] text-zinc-500">No files</div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest pt-2 border-t border-zinc-800/60">
+                      <span>Timeline</span>
+                      <button
+                        onClick={() => setRenderStudioProjectOpen(prev => !prev)}
+                        className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                      >
+                        <Menu size={12} />
+                      </button>
+                    </div>
+                    {renderStudioProjectOpen && (
+                      <button
+                        type="button"
+                        onClick={selectProjectDefaults}
+                        className={`rounded-xl border bg-zinc-950/40 p-3 text-[11px] text-zinc-400 flex flex-col gap-2 text-left hover:border-zinc-700 ${
+                          renderStudioFocus === 'timeline' ? 'border-lime-500/50' : 'border-zinc-800'
+                        }`}
+                      >
+                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Timeline</div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1 text-zinc-300">
+                            <FileVideo size={12} />
+                            <span>{renderVideoFile ? 1 : 0}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-zinc-300">
+                            <FileAudio size={12} />
+                            <span>{renderAudioFile ? 1 : 0}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-zinc-300">
+                            <Type size={12} />
+                            <span>{renderSubtitleFile ? 1 : 0}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-zinc-300 pt-1 border-t border-zinc-800/60">
+                          <span>Duration</span>
+                          <span>{formatDuration(renderTimelineDuration) ?? '00:00'}</span>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col min-h-0 bg-zinc-950/40">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+                      <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Preview</div>
+                      <div className="text-[11px] text-zinc-500">
+                        {renderVideoFile?.name ?? 'No video selected'}
+                      </div>
+                    </div>
+                      <div className="flex-1 p-4 flex flex-col gap-4 min-h-0">
+                        <div className="flex-1 rounded-2xl border border-zinc-800 bg-[radial-gradient(circle_at_top,#1f2937_0%,#0b0f12_55%,#050607_100%)] flex items-center justify-center text-zinc-400 text-sm overflow-hidden relative">
+                          {renderStudioFocus === 'item' && renderStudioItemType === 'video' && renderVideoFile?.relativePath ? (
+                            canBrowserPlayVideo(getVideoMimeType(renderVideoFile.name)) ? (
+                              <video
+                                key={renderVideoFile.relativePath}
+                                className="w-full h-full object-contain bg-black"
+                                controls
+                                preload="auto"
+                                playsInline
+                              >
+                                <source
+                                  src={`/api/vault/stream?path=${encodeURIComponent(renderVideoFile.relativePath)}`}
+                                  type={getVideoMimeType(renderVideoFile.name)}
+                                />
+                              </video>
+                            ) : (
+                              <div className="flex flex-col items-center gap-2 text-sm text-zinc-400 text-center">
+                                <FileVideo size={22} className="text-zinc-500" />
+                                <div>Browser không hỗ trợ phát định dạng này.</div>
+                                <div className="text-[11px] text-zinc-500">Hãy convert về MP4 hoặc WebM.</div>
+                              </div>
+                            )
+                          ) : renderStudioFocus === 'item' && renderStudioItemType === 'audio' && renderAudioFile?.relativePath ? (
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-4 p-6">
+                              <div className="h-12 w-12 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center">
+                                <FileAudio size={22} />
+                              </div>
+                              <audio
+                                className="w-full max-w-[520px] h-10 rounded-md bg-zinc-900"
+                                style={{ colorScheme: 'dark' }}
+                                controls
+                              >
+                                <source src={`/api/vault/stream?path=${encodeURIComponent(renderAudioFile.relativePath)}`} />
+                              </audio>
+                            </div>
+                          ) : renderPreviewUrl ? (
+                            <img src={renderPreviewUrl} alt="Render preview" className="w-full h-full object-contain" />
+                          ) : renderVideoFile ? (
+                            'Preview ready'
+                          ) : (
+                            'Select a video from the media bin'
+                          )}
+                          {renderStudioFocus === 'timeline' && renderPreviewLoading && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/40">
+                              <div className="h-8 w-8 rounded-full border-2 border-zinc-500 border-t-lime-400 animate-spin-soft" />
+                            </div>
+                          )}
+                          {renderStudioFocus === 'timeline' && renderPreviewError && (
+                            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-xs text-red-400 bg-zinc-950/70 px-2 py-1 rounded">
+                              {renderPreviewError}
+                            </div>
+                          )}
+                          {renderStudioFocus === 'timeline' && renderSubtitleActiveText && (
+                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 max-w-[85%] text-center text-sm text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] bg-zinc-900/60 px-3 py-1.5 rounded">
+                              {renderSubtitleActiveText}
+                            </div>
+                          )}
+                          {renderStudioFocus === 'timeline' && renderTimelineDuration > 0 && (
+                            <div className="absolute top-3 right-3 text-[10px] text-zinc-200 bg-zinc-950/70 px-2 py-1 rounded">
+                              {formatDurationFine(renderPlayheadSeconds)}
+                            </div>
+                          )}
+                        </div>
+                      {renderStudioFocus === 'timeline' && (
+                        <div className="border border-zinc-800 rounded-2xl bg-zinc-900/60 p-3 flex flex-col gap-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Timeline</div>
+                          <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                            <span>{formatDuration(renderTimelineDuration) ?? '00:00'}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px]">Zoom</span>
+                              <input
+                                type="range"
+                                min={renderTimelineMinScale}
+                                max={4}
+                                step={0.25}
+                                value={renderTimelineScale}
+                                onChange={e => setRenderTimelineScale(Number(e.target.value))}
+                                className="w-20 accent-lime-400"
+                              />
+                              <span className="text-[10px]">{renderTimelineScale.toFixed(2)}x</span>
+                            </div>
+                            <div className="flex items-center gap-1 text-[10px] text-zinc-500" title="Ctrl + scroll to zoom">
+                              <MousePointer2 size={12} />
+                              <span>Ctrl + scroll</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 text-[11px] text-zinc-400">
+                          <div className="w-16 flex flex-col gap-2">
+                            <span className="h-5" />
+                            <span className="text-zinc-500 h-2 flex items-center">Video</span>
+                            <span className="text-zinc-500 h-2 flex items-center">Audio</span>
+                            <span className="text-zinc-500 flex items-center" style={{ height: renderSubtitleTrackHeight }}>Subtitle</span>
+                          </div>
+                          <div
+                            ref={renderTimelineScrollRef}
+                            onMouseDown={onRenderTimelineMouseDown}
+                            onMouseMove={onRenderTimelineMouseMove}
+                            onMouseUp={onRenderTimelineMouseUp}
+                            onMouseLeave={onRenderTimelineMouseUp}
+                            onClick={onRenderTimelineClick}
+                            className="flex-1 overflow-x-auto render-timeline-scroll cursor-grab active:cursor-grabbing"
+                          >
+                            <div className="relative flex flex-col gap-2" style={{ width: renderTimelineWidth }}>
+                              {renderTimelineDuration > 0 && (
+                                <div
+                                  className="absolute top-0 bottom-0 z-10 pointer-events-none"
+                                  style={{ left: `${(renderPlayheadSeconds / renderTimelineDuration) * 100}%` }}
+                                >
+                                  <div className="w-0.5 bg-lime-400/80 h-full" />
+                                  <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-lime-400/90 rounded-sm rotate-45" />
+                                </div>
+                              )}
+                              <div className="relative h-5">
+                                {renderTimelineDuration > 0 && (
+                                  <div className="absolute inset-0">
+                                    {Array.from({ length: renderTimelineTickCount + 1 }).map((_, idx) => {
+                                      const left = (idx / renderTimelineTickCount) * 100;
+                                      const time = formatDuration((renderTimelineDuration * idx) / renderTimelineTickCount) ?? '00:00';
+                                      return (
+                                        <div
+                                          key={idx}
+                                          className="absolute top-0 h-full border-r border-zinc-800"
+                                          style={{ left: `${left}%` }}
+                                        >
+                                          <span className="absolute -top-0.5 left-1 text-[10px] text-zinc-500">
+                                            {time}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                              {[
+                                { label: 'Video', color: 'bg-lime-500/50', duration: renderVideoDuration },
+                                { label: 'Audio', color: 'bg-amber-500/50', duration: renderAudioDuration }
+                              ].map(track => (
+                                <div key={track.label} className="h-2 rounded-full bg-zinc-800 relative">
+                                  {track.duration && renderTimelineDuration > 0 ? (
+                                    <div
+                                      className={`h-full rounded-full ${track.color}`}
+                                      style={{ width: `${Math.min(100, (track.duration / renderTimelineDuration) * 100)}%` }}
+                                    />
+                                  ) : null}
+                                </div>
+                              ))}
+                              <div
+                                className="rounded-md bg-zinc-800/60 relative overflow-hidden"
+                                style={{ height: renderSubtitleTrackHeight }}
+                              >
+                                {renderTimelineDuration > 0 && renderSubtitleCues.length > 0 ? (
+                                  renderSubtitleLanes.map((lane, laneIndex) => (
+                                    lane.map((cue, idx) => {
+                                      const startPct = Math.max(0, Math.min(100, (cue.start / renderTimelineDuration) * 100));
+                                      const endPct = Math.max(0, Math.min(100, (cue.end / renderTimelineDuration) * 100));
+                                      const widthPct = Math.max(1.5, endPct - startPct);
+                                      const top = (renderSubtitleLanes.length - 1 - laneIndex) * renderSubtitleLaneHeight + 2;
+                                      const height = Math.max(16, renderSubtitleLaneHeight - 4);
+                                      return (
+                                        <div
+                                          key={`${cue.start}-${cue.end}-${laneIndex}-${idx}`}
+                                          className="absolute bg-zinc-200 text-zinc-800 text-[10px] px-1 rounded-sm flex items-center truncate shadow-sm"
+                                          style={{ left: `${startPct}%`, width: `${widthPct}%`, top, height }}
+                                          title={cue.text}
+                                        >
+                                          <span className="truncate">{cue.text || '...'}</span>
+                                        </div>
+                                      );
+                                    })
+                                  ))
+                                ) : renderSubtitleDuration ? (
+                                  <div
+                                    className="h-full rounded-sm bg-zinc-200/70"
+                                    style={{ width: `${Math.min(100, (renderSubtitleDuration / renderTimelineDuration) * 100)}%` }}
+                                  />
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="w-[52px] flex flex-col gap-2 items-end text-zinc-500 text-[10px]">
+                            <span className="h-5" />
+                            <span className="h-2 flex items-center">{formatDuration(renderVideoDuration) ?? '--'}</span>
+                            <span className="h-2 flex items-center">{formatDuration(renderAudioDuration) ?? '--'}</span>
+                            <span className="flex items-center" style={{ height: renderSubtitleTrackHeight }}>
+                              {formatDuration(renderSubtitleDuration) ?? '--'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border-l border-zinc-800 bg-zinc-900/70 p-4 flex flex-col gap-4 min-h-0">
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Inspector</div>
+                    {renderStudioFocus === 'timeline' ? (
+                      <div className="flex flex-col gap-3 text-xs text-zinc-300 min-h-0 overflow-y-auto pr-1">
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Timeline</span>
+                            <button
+                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }))}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                          {renderStudioInspectorOpen.timeline && (
+                            <div className="p-3 flex flex-col gap-3">
+                              <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                <span>Timeline</span>
+                                <span className="text-zinc-300">{formatDuration(renderTimelineDuration) ?? '--'}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                <span>Playhead</span>
+                                <span className="text-zinc-300">{formatDurationFine(renderPlayheadSeconds)}</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Resolution</label>
+                                  <input
+                                    type="text"
+                                    placeholder="1920x1080"
+                                    value={renderParams.timeline.resolution}
+                                    onChange={e => updateRenderParam('timeline', 'resolution', e.target.value)}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Framerate</label>
+                                  <select
+                                    value={renderParams.timeline.framerate}
+                                    onChange={e => updateRenderParam('timeline', 'framerate', e.target.value)}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="24">24 fps</option>
+                                    <option value="25">25 fps</option>
+                                    <option value="30">30 fps</option>
+                                    <option value="50">50 fps</option>
+                                    <option value="60">60 fps</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div className="text-[11px] text-zinc-500">
+                                Output will be saved to the project output folder.
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Video</span>
+                            <button
+                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }))}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                          {renderStudioInspectorOpen.video && (
+                            <div className="p-3 flex flex-col gap-2">
+                              {renderVideoFile ? (
+                                <>
+                                  <div className="flex items-center gap-2 text-sm text-zinc-100">
+                                    <FileVideo size={14} />
+                                    <span className="truncate font-semibold">{renderVideoFile.name}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                    <span>Duration</span>
+                                    <span className="text-zinc-300">{formatDuration(renderVideoDuration) ?? '--'}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                    <span>Size</span>
+                                    <span className="text-zinc-300">{renderVideoFile.size ?? renderVideoFile.sizeBytes ?? '--'}</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 pt-1">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim Start (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.video.trimStart}
+                                        onChange={e => updateRenderParam('video', 'trimStart', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim End (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.video.trimEnd}
+                                        onChange={e => updateRenderParam('video', 'trimEnd', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Speed</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        min="0.25"
+                                        value={renderParams.video.speed}
+                                        onChange={e => updateRenderParam('video', 'speed', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Volume (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        value={renderParams.video.volume}
+                                        onChange={e => updateRenderParam('video', 'volume', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fit</label>
+                                      <select
+                                        value={renderParams.video.fit}
+                                        onChange={e => updateRenderParam('video', 'fit', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="contain">Contain</option>
+                                        <option value="cover">Cover</option>
+                                        <option value="stretch">Stretch</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale</label>
+                                      <input
+                                        type="number"
+                                        step="0.05"
+                                        min="0.1"
+                                        value={renderParams.video.scale}
+                                        onChange={e => updateRenderParam('video', 'scale', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position X (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.video.positionX}
+                                        onChange={e => updateRenderParam('video', 'positionX', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position Y (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.video.positionY}
+                                        onChange={e => updateRenderParam('video', 'positionY', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Rotation (deg)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.video.rotation}
+                                        onChange={e => updateRenderParam('video', 'rotation', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Opacity (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        max="100"
+                                        value={renderParams.video.opacity}
+                                        onChange={e => updateRenderParam('video', 'opacity', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop X (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.video.cropX}
+                                        onChange={e => updateRenderParam('video', 'cropX', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop Y (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.video.cropY}
+                                        onChange={e => updateRenderParam('video', 'cropY', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop W (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.video.cropW}
+                                        onChange={e => updateRenderParam('video', 'cropW', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop H (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.video.cropH}
+                                        onChange={e => updateRenderParam('video', 'cropH', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade In (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.video.fadeIn}
+                                        onChange={e => updateRenderParam('video', 'fadeIn', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade Out (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.video.fadeOut}
+                                        onChange={e => updateRenderParam('video', 'fadeOut', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Color LUT</label>
+                                    <input
+                                      value={renderParams.video.colorLut}
+                                      onChange={e => updateRenderParam('video', 'colorLut', e.target.value)}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      placeholder="e.g. cinematic-01"
+                                    />
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="text-[11px] text-zinc-500">No video selected.</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Audio</span>
+                            <button
+                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }))}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                          {renderStudioInspectorOpen.audio && (
+                            <div className="p-3 flex flex-col gap-2">
+                              {renderAudioFile ? (
+                                <>
+                                  <div className="flex items-center gap-2 text-sm text-zinc-100">
+                                    <FileAudio size={14} />
+                                    <span className="truncate font-semibold">{renderAudioFile.name}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                    <span>Duration</span>
+                                    <span className="text-zinc-300">{formatDuration(renderAudioDuration) ?? '--'}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                    <span>Size</span>
+                                    <span className="text-zinc-300">{renderAudioFile.size ?? renderAudioFile.sizeBytes ?? '--'}</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 pt-1">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim Start (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.audio.trimStart}
+                                        onChange={e => updateRenderParam('audio', 'trimStart', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim End (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.audio.trimEnd}
+                                        onChange={e => updateRenderParam('audio', 'trimEnd', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        value={renderParams.audio.gainDb}
+                                        onChange={e => updateRenderParam('audio', 'gainDb', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pan</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="-100"
+                                        max="100"
+                                        value={renderParams.audio.pan}
+                                        onChange={e => updateRenderParam('audio', 'pan', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <label className="flex items-center gap-2 text-[11px] text-zinc-300">
+                                      <input
+                                        type="checkbox"
+                                        checked={renderParams.audio.normalize}
+                                        onChange={e => updateRenderParam('audio', 'normalize', e.target.checked)}
+                                        className="accent-lime-400"
+                                      />
+                                      Normalize
+                                    </label>
+                                    <label className="flex items-center gap-2 text-[11px] text-zinc-300">
+                                      <input
+                                        type="checkbox"
+                                        checked={renderParams.audio.ducking}
+                                        onChange={e => updateRenderParam('audio', 'ducking', e.target.checked)}
+                                        className="accent-lime-400"
+                                      />
+                                      Ducking
+                                    </label>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Duck Amt (dB)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.audio.duckAmountDb}
+                                        onChange={e => updateRenderParam('audio', 'duckAmountDb', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Channel</label>
+                                      <select
+                                        value={renderParams.audio.channelMode}
+                                        onChange={e => updateRenderParam('audio', 'channelMode', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="stereo">Stereo</option>
+                                        <option value="mono">Mono</option>
+                                        <option value="left">Left</option>
+                                        <option value="right">Right</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade In (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.audio.fadeIn}
+                                        onChange={e => updateRenderParam('audio', 'fadeIn', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade Out (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.audio.fadeOut}
+                                        onChange={e => updateRenderParam('audio', 'fadeOut', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="text-[11px] text-zinc-500">No audio selected.</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Subtitle</span>
+                            <button
+                              onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }))}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                          {renderStudioInspectorOpen.subtitle && (
+                            <div className="p-3 flex flex-col gap-2">
+                              {renderSubtitleFile ? (
+                                <>
+                                  <div className="flex items-center gap-2 text-sm text-zinc-100">
+                                    <Type size={14} />
+                                    <span className="truncate font-semibold">{renderSubtitleFile.name}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                    <span>Duration</span>
+                                    <span className="text-zinc-300">{formatDuration(renderSubtitleDuration) ?? '--'}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                                    <span>Cues</span>
+                                    <span className="text-zinc-300">{renderSubtitleCues.length}</span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 pt-1">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Language</label>
+                                      <input
+                                        value={renderParams.subtitle.language}
+                                        onChange={e => updateRenderParam('subtitle', 'language', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        placeholder="vi, en, ja..."
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Style</label>
+                                      <select
+                                        value={renderParams.subtitle.stylePreset}
+                                        onChange={e => updateRenderParam('subtitle', 'stylePreset', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="default">Default</option>
+                                        <option value="bold">Bold</option>
+                                        <option value="minimal">Minimal</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font</label>
+                                      <input
+                                        value={renderParams.subtitle.fontFamily}
+                                        onChange={e => updateRenderParam('subtitle', 'fontFamily', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        placeholder="Inter, Roboto..."
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font Size</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.subtitle.fontSize}
+                                        onChange={e => updateRenderParam('subtitle', 'fontSize', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Color</label>
+                                      <input
+                                        type="color"
+                                        value={renderParams.subtitle.color}
+                                        onChange={e => updateRenderParam('subtitle', 'color', e.target.value)}
+                                        className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Outline</label>
+                                      <div className="flex gap-2">
+                                        <input
+                                          type="color"
+                                          value={renderParams.subtitle.outlineColor}
+                                          onChange={e => updateRenderParam('subtitle', 'outlineColor', e.target.value)}
+                                          className="h-9 w-10 bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                        />
+                                        <input
+                                          type="number"
+                                          step="1"
+                                          value={renderParams.subtitle.outlineWidth}
+                                          onChange={e => updateRenderParam('subtitle', 'outlineWidth', e.target.value)}
+                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow (px)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.subtitle.shadow}
+                                        onChange={e => updateRenderParam('subtitle', 'shadow', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Line Height</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.subtitle.lineHeight}
+                                        onChange={e => updateRenderParam('subtitle', 'lineHeight', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position</label>
+                                      <select
+                                        value={renderParams.subtitle.position}
+                                        onChange={e => updateRenderParam('subtitle', 'position', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="bottom">Bottom</option>
+                                        <option value="top">Top</option>
+                                        <option value="custom">Custom</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Offset (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParams.subtitle.offset}
+                                        onChange={e => updateRenderParam('subtitle', 'offset', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos X (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.subtitle.positionX}
+                                        onChange={e => updateRenderParam('subtitle', 'positionX', e.target.value)}
+                                        disabled={renderParams.subtitle.position !== 'custom'}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none disabled:opacity-60"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos Y (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.subtitle.positionY}
+                                        onChange={e => updateRenderParam('subtitle', 'positionY', e.target.value)}
+                                        disabled={renderParams.subtitle.position !== 'custom'}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none disabled:opacity-60"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Max Width (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.subtitle.maxWidth}
+                                        onChange={e => updateRenderParam('subtitle', 'maxWidth', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Safe Area (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParams.subtitle.safeArea}
+                                        onChange={e => updateRenderParam('subtitle', 'safeArea', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">BG Color</label>
+                                      <input
+                                        type="color"
+                                        value={renderParams.subtitle.bgColor}
+                                        onChange={e => updateRenderParam('subtitle', 'bgColor', e.target.value)}
+                                        className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">BG Opacity</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        min="0"
+                                        max="100"
+                                        value={renderParams.subtitle.bgOpacity}
+                                        onChange={e => updateRenderParam('subtitle', 'bgOpacity', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="text-[11px] text-zinc-500">No subtitle selected.</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : renderSelectedItem ? (
+                      <div className="text-xs text-zinc-300 flex flex-col gap-2">
+                        <div className="flex items-center gap-2 text-sm text-zinc-100">
+                          {renderSelectedItem.type === 'video' ? <FileVideo size={14} /> : renderSelectedItem.type === 'audio' ? <FileAudio size={14} /> : <Type size={14} />}
+                          <span className="truncate font-semibold">{renderSelectedItem.name}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Type</span>
+                          <span className="text-zinc-300">{renderSelectedItem.type}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Size</span>
+                          <span className="text-zinc-300">{renderSelectedItem.size ?? renderSelectedItem.sizeBytes ?? '--'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Duration</span>
+                          <span className="text-zinc-300">{renderSelectedItem.duration ?? formatDuration(renderSelectedItem.durationSeconds) ?? '--'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Language</span>
+                          <span className="text-zinc-300">{renderSelectedItem.language ?? '--'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Version</span>
+                          <span className="text-zinc-300">{renderSelectedItem.version ?? '--'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Origin</span>
+                          <span className="text-zinc-300">{renderSelectedItem.origin ?? '--'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Status</span>
+                          <span className="text-zinc-300">{renderSelectedItem.status ?? '--'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Created</span>
+                          <span className="text-zinc-300">{renderSelectedItem.createdAt ?? '--'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span>Path</span>
+                          <span className="text-zinc-300 truncate max-w-[160px]" title={renderSelectedItem.relativePath ?? '--'}>
+                            {renderSelectedItem.relativePath ?? '--'}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-zinc-500">Select an item from the media bin.</div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -3197,16 +6467,223 @@ export default function App() {
                     <div className="text-sm font-semibold text-zinc-100">{jobLogTarget.name}</div>
                     <div className="text-xs text-zinc-500 mt-1">{jobLogTarget.fileName}</div>
                   </div>
-                  <button
-                    onClick={() => setJobLogOpen(false)}
-                    className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                  >
-                    Close
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        const content = jobLogTarget.log || jobLogTarget.error || '';
+                        const fallbackCopy = () => {
+                          try {
+                            const textarea = document.createElement('textarea');
+                            textarea.value = content;
+                            textarea.setAttribute('readonly', 'true');
+                            textarea.style.position = 'fixed';
+                            textarea.style.opacity = '0';
+                            document.body.appendChild(textarea);
+                            textarea.select();
+                            const ok = document.execCommand('copy');
+                            document.body.removeChild(textarea);
+                            return ok;
+                          } catch {
+                            return false;
+                          }
+                        };
+                        try {
+                          if (navigator.clipboard?.writeText) {
+                            await navigator.clipboard.writeText(content);
+                            showToast('Log copied', 'success');
+                            return;
+                          }
+                          const ok = fallbackCopy();
+                          showToast(ok ? 'Log copied' : 'Unable to copy log', ok ? 'success' : 'error');
+                        } catch {
+                          const ok = fallbackCopy();
+                          showToast(ok ? 'Log copied' : 'Unable to copy log', ok ? 'success' : 'error');
+                        }
+                      }}
+                      className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                    >
+                      Copy
+                    </button>
+                    <button
+                      onClick={() => setJobLogOpen(false)}
+                      className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
                 <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap overflow-y-auto">
                   {jobLogTarget.log || jobLogTarget.error || 'No log output yet.'}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {jobContextMenu.open && jobContextTarget && (
+            <div className="fixed inset-0 z-[55]" onClick={() => setJobContextMenu(prev => ({ ...prev, open: false }))}>
+              <div
+                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
+                style={{ top: jobContextMenu.y, left: jobContextMenu.x }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {jobContextTarget.projectName?.trim() && (
+                  <button
+                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                    onClick={() => {
+                      const projectName = jobContextTarget.projectName?.trim();
+                      const match = projectName
+                        ? vaultFolders.find(folder => folder.name.toLowerCase() === projectName.toLowerCase())
+                        : undefined;
+                      if (!projectName || !match) {
+                        showToast('Project not found in Media Vault', 'warning');
+                        setJobContextMenu(prev => ({ ...prev, open: false }));
+                        return;
+                      }
+                      setVaultFolderId(match.id);
+                      setVaultFileId(match.files[0]?.id ?? null);
+                      setShowFolderPanel(true);
+                      setJobContextMenu(prev => ({ ...prev, open: false }));
+                    }}
+                  >
+                    Open project
+                  </button>
+                )}
+                <button
+                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                  onClick={() => {
+                    setJobContextMenu(prev => ({ ...prev, open: false }));
+                    openRunPipelineFromJob(jobContextTarget);
+                  }}
+                >
+                  Run again
+                </button>
+                <button
+                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                  onClick={() => {
+                    setJobLogJobId(jobContextTarget.id);
+                    setJobLogOpen(true);
+                    setJobContextMenu(prev => ({ ...prev, open: false }));
+                  }}
+                >
+                  View log
+                </button>
+                {(jobContextTarget.status === 'queued' || jobContextTarget.status === 'processing') ? (
+                  <button
+                    className="w-full px-3 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10 rounded-md"
+                    onClick={() => {
+                      setJobContextMenu(prev => ({ ...prev, open: false }));
+                      cancelJob(jobContextTarget.id);
+                    }}
+                  >
+                    Cancel job
+                  </button>
+                ) : (
+                  <button
+                    className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 rounded-md"
+                    onClick={() => {
+                      setJobContextMenu(prev => ({ ...prev, open: false }));
+                      deleteJob(jobContextTarget.id);
+                    }}
+                  >
+                    Delete job
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {pipelineContextMenu.open && pipelineContextTarget && (
+            <div className="fixed inset-0 z-[55]" onClick={() => setPipelineContextMenu(prev => ({ ...prev, open: false }))}>
+              <div
+                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
+                style={{ top: pipelineContextMenu.y, left: pipelineContextMenu.x }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                  onClick={() => {
+                    setPipelineContextMenu(prev => ({ ...prev, open: false }));
+                    if (pipelineContextTarget.kind === 'task') {
+                      openPipelinePreview(pipelineContextTarget);
+                    } else {
+                      openPipelineEditor(pipelineContextTarget);
+                    }
+                  }}
+                >
+                  Open
+                </button>
+                {pipelineContextTarget.kind === 'saved' && (
+                  <button
+                    className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 rounded-md"
+                    onClick={() => {
+                      setPipelineContextMenu(prev => ({ ...prev, open: false }));
+                      deletePipeline(pipelineContextTarget.id);
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {paramPresetContextMenu.open && paramPresetContextTarget && (
+            <div className="fixed inset-0 z-[55]" onClick={() => setParamPresetContextMenu(prev => ({ ...prev, open: false }))}>
+              <div
+                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
+                style={{ top: paramPresetContextMenu.y, left: paramPresetContextMenu.x }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                  onClick={() => {
+                    setParamPresetContextMenu(prev => ({ ...prev, open: false }));
+                    openParamPresetEditorForEdit(paramPresetContextTarget.id);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 rounded-md"
+                  onClick={() => {
+                    setParamPresetContextMenu(prev => ({ ...prev, open: false }));
+                    openConfirm({
+                      title: `Delete ${paramPresetContextTarget.label}?`,
+                      description: 'This will remove saved preset params for this preset.',
+                      confirmLabel: 'Delete',
+                      variant: 'danger'
+                    }, () => {
+                      deleteParamPreset(paramPresetContextTarget.id, paramPresetContextTarget.type);
+                    });
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          )}
+
+          {fileContextMenu.open && fileContextMenu.file && (
+            <div className="fixed inset-0 z-[55]" onClick={closeFileContextMenu}>
+              <div
+                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
+                style={{ top: fileContextMenu.y, left: fileContextMenu.x }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                  onClick={() => {
+                    if (fileContextMenu.file) {
+                      downloadVaultFile(fileContextMenu.file);
+                    }
+                    closeFileContextMenu();
+                  }}
+                >
+                  <span className="flex items-center gap-2">
+                    <Download size={12} />
+                    Download
+                  </span>
+                </button>
               </div>
             </div>
           )}

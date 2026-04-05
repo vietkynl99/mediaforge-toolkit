@@ -4,6 +4,7 @@ import fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
+import os from 'os';
 import path from 'path';
 import initSqlJs from 'sql.js';
 import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR_CLI_PATH, UVR_OUTPUT_DIRNAME } from './constants.js';
@@ -17,13 +18,29 @@ type VaultFileDTO = {
   type: 'video' | 'audio' | 'subtitle' | 'output' | 'other';
   extension: string;
   durationSeconds?: number;
+  linkedTo?: string;
   uvr?: {
     processedAt: string;
     backend?: string;
     model?: string;
     outputFormat?: string;
     outputs?: string[];
+    role?: 'source' | 'output';
+    sourceRelativePath?: string;
   };
+    tts?: {
+      processedAt: string;
+      voice?: string;
+      rate?: number;
+      pitch?: number;
+      volume?: number;
+      overlapSeconds?: number;
+      overlapMode?: 'overlap' | 'truncate';
+      removeLineBreaks?: boolean;
+      outputs?: string[];
+      role?: 'source' | 'output';
+      sourceRelativePath?: string;
+    };
 };
 
 type VaultFolderDTO = {
@@ -35,6 +52,12 @@ type VaultFolderDTO = {
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
 const AUDIO_EXT = new Set(['.wav', '.mp3', '.aac', '.flac', '.ogg', '.m4a']);
 const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
+const PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
+const PREVIEW_MAX_SECONDS = 60;
+const EDGE_TTS_CMD = process.env.EDGE_TTS_CMD?.trim() || 'edge-tts';
+const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
+const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
+const TTS_PITCH_BASE_HZ = 200;
 
 const app = express();
 const PORT = Number(process.env.VAULT_PORT ?? 3001);
@@ -81,21 +104,69 @@ db.run(
     finished_at TEXT,
     duration_ms INTEGER,
     error TEXT,
-    log TEXT
+    log TEXT,
+    params_json TEXT
   )`
 );
 
-db.run(
-  `CREATE TABLE IF NOT EXISTS file_uvr (
-    relative_path TEXT PRIMARY KEY,
-    processed_at TEXT NOT NULL,
-    backend TEXT,
-    model TEXT,
-    output_format TEXT,
-    output_paths_json TEXT,
-    last_job_id TEXT
-  )`
-);
+try {
+  db.run('ALTER TABLE jobs ADD COLUMN params_json TEXT');
+} catch {
+  // ignore if already exists
+}
+
+const paramPresetTableInfo = db.exec("PRAGMA table_info('param_presets')");
+const paramPresetColumns = (paramPresetTableInfo[0]?.values ?? []).map((row: any[]) => String(row[1]));
+const hasParamPresetId = paramPresetColumns.includes('id');
+
+if (!hasParamPresetId) {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS param_presets_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_type TEXT NOT NULL,
+      params_json TEXT NOT NULL,
+      label TEXT,
+      updated_at TEXT NOT NULL
+    )`
+  );
+  try {
+    db.run(
+      `INSERT INTO param_presets_new (task_type, params_json, label, updated_at)
+       SELECT task_type, params_json, label, updated_at FROM param_presets`
+    );
+  } catch {
+    // ignore if old table does not exist yet
+  }
+  try {
+    db.run(
+      `INSERT INTO param_presets_new (task_type, params_json, label, updated_at)
+       SELECT task_type, params_json, label, updated_at FROM pipeline_defaults`
+    );
+  } catch {
+    // ignore if old table does not exist
+  }
+  db.run('DROP TABLE IF EXISTS param_presets');
+  db.run('DROP TABLE IF EXISTS pipeline_defaults');
+  db.run('ALTER TABLE param_presets_new RENAME TO param_presets');
+} else {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS param_presets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_type TEXT NOT NULL,
+      params_json TEXT NOT NULL,
+      label TEXT,
+      updated_at TEXT NOT NULL
+    )`
+  );
+}
+
+try {
+  db.run('CREATE INDEX IF NOT EXISTS idx_param_presets_task_type ON param_presets (task_type)');
+} catch {
+  // ignore
+}
+
+db.run('DROP TABLE IF EXISTS file_uvr');
 
 const persistDb = async () => {
   const data = db.export();
@@ -120,11 +191,15 @@ type JobRecord = {
   durationMs?: number;
   error?: string;
   log?: string;
+  params?: Record<string, any>;
 };
 
 const jobs: JobRecord[] = [];
 const jobQueue: string[] = [];
+const downloadQueue: string[] = [];
 let activeJobId: string | null = null;
+let activeDownloadCount = 0;
+const MAX_ACTIVE_DOWNLOADS = 4;
 const CANCELLED_ERROR_MESSAGE = 'Job cancelled';
 const MAX_JOB_LOG_CHARS = 20000;
 const jobPersistTimers = new Map<string, NodeJS.Timeout>();
@@ -166,8 +241,8 @@ const upsertJobRecord = (job: JobRecord) => {
   db.run(
     `INSERT OR REPLACE INTO jobs (
       id, name, project_name, file_name, file_size, status, progress,
-      tasks_json, created_at, started_at, finished_at, duration_ms, error, log
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      tasks_json, created_at, started_at, finished_at, duration_ms, error, log, params_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       job.id,
       job.name,
@@ -182,7 +257,8 @@ const upsertJobRecord = (job: JobRecord) => {
       job.finishedAt ?? null,
       job.durationMs ?? null,
       job.error ?? null,
-      job.log ?? null
+      job.log ?? null,
+      job.params ? JSON.stringify(job.params) : null
     ]
   );
   schedulePersistDb();
@@ -207,58 +283,93 @@ const upsertUvrMetadata = (payload: {
   outputs?: string[];
   jobId?: string;
 }) => {
-  db.run(
-    `INSERT OR REPLACE INTO file_uvr (
-      relative_path, processed_at, backend, model, output_format, output_paths_json, last_job_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      payload.relativePath,
-      payload.processedAt,
-      payload.backend ?? null,
-      payload.model ?? null,
-      payload.outputFormat ?? null,
-      payload.outputs ? JSON.stringify(payload.outputs) : null,
-      payload.jobId ?? null
-    ]
-  );
-  schedulePersistDb();
+  const relative = payload.relativePath.replace(/\\/g, '/');
+  const projectName = relative.split('/')[0];
+  if (!projectName) return;
+  const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
+  const metaDir = path.join(projectRoot, '.mediaforge');
+  const metaFile = path.join(metaDir, 'uvr.json');
+  const readMeta = async () => {
+    try {
+      const raw = await fs.readFile(metaFile, 'utf-8');
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+  const writeMeta = async (data: Record<string, VaultFileDTO['uvr']>) => {
+    await fs.mkdir(metaDir, { recursive: true });
+    await fs.writeFile(metaFile, JSON.stringify(data, null, 2), 'utf-8');
+  };
+  readMeta()
+    .then(data => {
+      data[relative] = {
+        processedAt: payload.processedAt,
+        backend: payload.backend ?? undefined,
+        model: payload.model ?? undefined,
+        outputFormat: payload.outputFormat ?? undefined,
+        outputs: payload.outputs,
+        role: 'source'
+      };
+      return writeMeta(data);
+    })
+    .catch(() => null);
 };
 
-const loadUvrMetadataMap = () => {
-  const map = new Map<string, VaultFileDTO['uvr']>();
-  try {
-    const result = db.exec(
-      `SELECT relative_path, processed_at, backend, model, output_format, output_paths_json
-       FROM file_uvr`
-    );
-    const rows = result[0]?.values ?? [];
-    rows.forEach((row: any[]) => {
-      const [relativePath, processedAt, backend, model, outputFormat, outputPathsJson] = row;
-      let outputs: string[] | undefined;
-      try {
-        outputs = outputPathsJson ? JSON.parse(outputPathsJson) : undefined;
-      } catch {
-        outputs = undefined;
-      }
-      map.set(relativePath, {
-        processedAt,
-        backend: backend ?? undefined,
-        model: model ?? undefined,
-        outputFormat: outputFormat ?? undefined,
-        outputs
-      });
-    });
-  } catch {
-    return map;
-  }
-  return map;
+const upsertTtsMetadata = (payload: {
+  relativePath: string;
+  processedAt: string;
+  voice?: string;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  overlapSeconds?: number;
+  overlapMode?: 'overlap' | 'truncate';
+  outputs?: string[];
+}) => {
+  const relative = payload.relativePath.replace(/\\/g, '/');
+  const projectName = relative.split('/')[0];
+  if (!projectName) return;
+  const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
+  const metaDir = path.join(projectRoot, '.mediaforge');
+  const metaFile = path.join(metaDir, 'tts.json');
+  const readMeta = async () => {
+    try {
+      const raw = await fs.readFile(metaFile, 'utf-8');
+      const parsed = JSON.parse(raw);
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+  const writeMeta = async (data: Record<string, VaultFileDTO['tts']>) => {
+    await fs.mkdir(metaDir, { recursive: true });
+    await fs.writeFile(metaFile, JSON.stringify(data, null, 2), 'utf-8');
+  };
+  readMeta()
+    .then(data => {
+      data[relative] = {
+        processedAt: payload.processedAt,
+        voice: payload.voice ?? undefined,
+        rate: payload.rate,
+        pitch: payload.pitch,
+        volume: payload.volume,
+        overlapSeconds: payload.overlapSeconds,
+        overlapMode: payload.overlapMode,
+        outputs: payload.outputs,
+        role: 'source'
+      };
+      return writeMeta(data);
+    })
+    .catch(() => null);
 };
 
 const loadJobsFromDb = () => {
   try {
     const result = db.exec(
       `SELECT id, name, project_name, file_name, file_size, status, progress,
-        tasks_json, created_at, started_at, finished_at, duration_ms, error, log
+        tasks_json, created_at, started_at, finished_at, duration_ms, error, log, params_json
        FROM jobs
        ORDER BY created_at DESC`
     );
@@ -279,7 +390,8 @@ const loadJobsFromDb = () => {
         finishedAt,
         durationMs,
         error,
-        log
+        log,
+        paramsJson
       ] = row;
       let tasks: JobTask[] = [];
       try {
@@ -303,6 +415,13 @@ const loadJobsFromDb = () => {
         error: error ?? undefined,
         log: log ?? undefined
       };
+      if (paramsJson) {
+        try {
+          job.params = JSON.parse(paramsJson);
+        } catch {
+          job.params = undefined;
+        }
+      }
       if (job.status === 'queued' || job.status === 'processing') {
         job.status = 'failed';
         job.error = 'Job interrupted by server restart';
@@ -398,14 +517,7 @@ const buildTasksFromGraph = (graph: any): JobTask[] => {
 
 const getJobById = (id: string) => jobs.find(job => job.id === id);
 
-const processNextJob = async () => {
-  if (activeJobId || jobQueue.length === 0) return;
-  const nextId = jobQueue.shift();
-  if (!nextId) return;
-  const job = getJobById(nextId);
-  if (!job) return;
-
-  activeJobId = job.id;
+const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
   job.status = 'processing';
   job.progress = 0;
   job.startedAt = new Date().toISOString();
@@ -417,6 +529,10 @@ const processNextJob = async () => {
     const downloadAudioTask = job.tasks.find(task => task.type === 'download_audio');
     const downloadMergeTask = job.tasks.find(task => task.type === 'download_merge');
     if (downloadSubsTask || downloadVideoTask || downloadAudioTask || downloadMergeTask) {
+      const rawDownloadMode = (job as any).__downloadMode as string | undefined;
+      const downloadMode = rawDownloadMode === 'subs' || rawDownloadMode === 'media' || rawDownloadMode === 'all'
+        ? rawDownloadMode
+        : 'all';
       if (downloadSubsTask) {
         downloadSubsTask.status = 'active';
         downloadSubsTask.progress = 0;
@@ -432,6 +548,26 @@ const processNextJob = async () => {
       if (downloadMergeTask) {
         downloadMergeTask.status = 'pending';
         downloadMergeTask.progress = 0;
+      }
+      if (downloadMode === 'subs') {
+        if (downloadVideoTask) {
+          downloadVideoTask.status = 'done';
+          downloadVideoTask.progress = 100;
+        }
+        if (downloadAudioTask) {
+          downloadAudioTask.status = 'done';
+          downloadAudioTask.progress = 100;
+        }
+        if (downloadMergeTask) {
+          downloadMergeTask.status = 'done';
+          downloadMergeTask.progress = 100;
+        }
+      }
+      if (downloadMode === 'media') {
+        if (downloadSubsTask) {
+          downloadSubsTask.status = 'done';
+          downloadSubsTask.progress = 100;
+        }
       }
       const downloadTasks = [downloadSubsTask, downloadVideoTask, downloadAudioTask, downloadMergeTask].filter(Boolean) as JobTask[];
       const updateJobProgress = () => {
@@ -512,6 +648,7 @@ const processNextJob = async () => {
         cookiesFile ?? undefined,
         noPlaylist ?? true,
         subLangs,
+        downloadMode,
         (chunk) => {
           appendJobLog(job, chunk);
           const lines = chunk.split(/\r?\n/);
@@ -616,8 +753,12 @@ const processNextJob = async () => {
         ...downloadResult.mediaFiles.map(name => path.join(sourceDir, name))
       ];
       const outputs = newPaths.map(pathname => path.relative(MEDIA_VAULT_ROOT, pathname));
+      const projectRelativePath = (job as any).__projectRelativePath as string | undefined;
       if (outputs.length) {
         appendJobLog(job, `Outputs:\n${outputs.map(item => `- ${item}`).join('\n')}\n`);
+      }
+      if (projectRelativePath) {
+        appendJobLog(job, `Project:\n- ${projectRelativePath}\n`);
       }
       const subsCandidates = downloadResult.subsFiles.map(name => path.join(sourceDir, name)).filter(pathname => isSubtitleFile(pathname));
       const mediaCandidates = downloadResult.mediaFiles.map(name => path.join(sourceDir, name)).filter(pathname => isVideoFile(pathname) || isAudioFile(pathname));
@@ -626,6 +767,8 @@ const processNextJob = async () => {
       const hasMuxedVideo = hasVideoFile;
       const hasVideo = hasVideoFile;
       const hasAudio = hasAudioFile || hasMuxedVideo;
+      const wantsSubs = downloadMode !== 'media';
+      const wantsMedia = downloadMode !== 'subs';
       if (mediaCandidates.length) {
         let selectedPath = mediaCandidates[0];
         let selectedSize = 0;
@@ -644,40 +787,62 @@ const processNextJob = async () => {
         const stats = await fs.stat(selectedPath);
         job.fileName = path.basename(selectedPath);
         job.fileSize = formatBytes(stats.size);
-        (job as any).__inputPath = selectedPath;
-        (job as any).__inputRelativePath = path.relative(MEDIA_VAULT_ROOT, selectedPath);
+        (job as any).__downloadSelectedPath = selectedPath;
+        const projectRoot = (job as any).__projectRoot as string | undefined;
+        const projectRelativePath = (job as any).__projectRelativePath as string | undefined;
+        if (projectRoot) {
+          (job as any).__inputPath = projectRoot;
+          (job as any).__inputRelativePath = projectRelativePath ?? path.relative(MEDIA_VAULT_ROOT, projectRoot);
+        } else {
+          (job as any).__inputPath = selectedPath;
+          (job as any).__inputRelativePath = path.relative(MEDIA_VAULT_ROOT, selectedPath);
+        }
           scheduleJobPersist(job);
         }
       }
+      const projectRoot = (job as any).__projectRoot as string | undefined;
+      if (projectRoot && !(job as any).__inputPath) {
+        (job as any).__inputPath = projectRoot;
+        (job as any).__inputRelativePath = (job as any).__projectRelativePath ?? path.relative(MEDIA_VAULT_ROOT, projectRoot);
+        scheduleJobPersist(job);
+      }
       if (downloadSubsTask) {
-        if (subsCandidates.length) {
+        if (!wantsSubs) {
+          markDone(downloadSubsTask);
+        } else if (subsCandidates.length) {
           markDone(downloadSubsTask);
         } else {
           markError(downloadSubsTask);
         }
       }
       if (downloadVideoTask) {
-        if (hasVideo) {
+        if (!wantsMedia) {
+          markDone(downloadVideoTask);
+        } else if (hasVideo) {
           markDone(downloadVideoTask);
         } else {
           markError(downloadVideoTask);
         }
       }
       if (downloadAudioTask) {
-        if (hasAudio) {
+        if (!wantsMedia) {
+          markDone(downloadAudioTask);
+        } else if (hasAudio) {
           markDone(downloadAudioTask);
         } else {
           markError(downloadAudioTask);
         }
       }
       if (downloadMergeTask) {
-        if (hasVideo && hasAudio) {
+        if (!wantsMedia) {
+          markDone(downloadMergeTask);
+        } else if (hasVideo && hasAudio) {
           markDone(downloadMergeTask);
         } else {
           markError(downloadMergeTask);
         }
       }
-      if (!hasVideo || !hasAudio) {
+      if (wantsMedia && (!hasVideo || !hasAudio)) {
         throw new Error('Download did not produce required media outputs');
       }
       job.progress = Math.round((job.tasks.filter(task => task.status === 'done').length / job.tasks.length) * 100);
@@ -685,22 +850,41 @@ const processNextJob = async () => {
     }
     const uvrTask = job.tasks.find(task => task.type === 'uvr');
     if (uvrTask) {
-      if (!(job as any).__inputPath) {
+      const downloadSelectedPath = (job as any).__downloadSelectedPath as string | undefined;
+      const uvrInputPath = downloadSelectedPath ?? (job as any).__inputPath;
+      if (!uvrInputPath) {
         throw new Error('Missing input after download');
       }
       uvrTask.status = 'active';
+      uvrTask.progress = 0;
+      const updateUvrJobProgress = () => {
+        const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+        job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+        scheduleJobPersist(job);
+      };
+      updateUvrJobProgress();
       const abortController = new AbortController();
       (job as any).__abortController = abortController;
       const outputDir = (job as any).__outputDir as string;
       const before = new Set<string>((await fs.readdir(outputDir)).map(name => path.join(outputDir, name)));
       const uvrLog = await runUvrTask(
-        (job as any).__inputPath,
+        uvrInputPath,
         outputDir,
         (job as any).__model,
         (job as any).__outputFormat,
         (job as any).__backend ?? 'vr',
         (chunk) => {
           appendJobLog(job, chunk);
+          const lines = chunk.split(/\r?\n/);
+          for (const line of lines) {
+            const match = line.match(/^\s*(\d{1,3})%\|/);
+            if (!match) continue;
+            const percent = Math.min(100, Math.max(0, Number(match[1])));
+            if (!Number.isFinite(percent)) continue;
+            if (percent <= (uvrTask.progress ?? 0)) continue;
+            uvrTask.progress = percent;
+            updateUvrJobProgress();
+          }
         },
         { signal: abortController.signal, onStart: proc => ((job as any).__activeProcess = proc) }
       );
@@ -710,9 +894,10 @@ const processNextJob = async () => {
       const outputs = after
         .filter(pathname => !before.has(pathname))
         .map(pathname => path.relative(MEDIA_VAULT_ROOT, pathname));
-      if ((job as any).__inputRelativePath) {
+      const uvrInputRelativePath = path.relative(MEDIA_VAULT_ROOT, uvrInputPath);
+      if (uvrInputRelativePath) {
         upsertUvrMetadata({
-          relativePath: (job as any).__inputRelativePath,
+          relativePath: uvrInputRelativePath,
           processedAt: new Date().toISOString(),
           backend: (job as any).__backend ?? 'vr',
           model: (job as any).__model,
@@ -726,6 +911,63 @@ const processNextJob = async () => {
       }
       uvrTask.status = 'done';
       uvrTask.progress = 100;
+      const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+      job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+      scheduleJobPersist(job);
+    }
+    const ttsTask = job.tasks.find(task => task.type === 'tts');
+    if (ttsTask) {
+      const inputPath = (job as any).__inputPath as string | undefined;
+      if (!inputPath) {
+        throw new Error('Missing input for TTS task');
+      }
+      ttsTask.status = 'active';
+      ttsTask.progress = 0;
+      const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+      job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+      scheduleJobPersist(job);
+      const outputDir = (job as any).__outputDir as string;
+      const ttsResult = await runTtsTask(inputPath, outputDir, {
+        voice: (job as any).__ttsVoice as string | undefined,
+        rate: (job as any).__ttsRate as number | undefined,
+        pitch: (job as any).__ttsPitch as number | undefined,
+        volume: (job as any).__ttsVolume as number | undefined,
+        overlapMode: (job as any).__ttsOverlapMode as 'overlap' | 'truncate' | undefined,
+        removeLineBreaks: (job as any).__ttsRemoveLineBreaks as boolean | undefined,
+        onLog: chunk => appendJobLog(job, chunk),
+        onProgress: (completed, total) => {
+          const percent = Math.min(99, Math.round((completed / Math.max(1, total)) * 100));
+          if (percent <= (ttsTask.progress ?? 0)) return;
+          ttsTask.progress = percent;
+          const totalProgress = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+          job.progress = Math.max(0, Math.min(99, Math.round(totalProgress / job.tasks.length)));
+          scheduleJobPersist(job);
+        }
+      });
+      ttsTask.status = 'done';
+      ttsTask.progress = 100;
+      (job as any).__inputPath = ttsResult.outputPath;
+      (job as any).__inputRelativePath = ttsResult.outputRelativePath;
+      upsertTtsMetadata({
+        relativePath: path.relative(MEDIA_VAULT_ROOT, inputPath),
+        processedAt: new Date().toISOString(),
+        voice: ttsResult.voice,
+        rate: ttsResult.rate,
+        pitch: ttsResult.pitch,
+        volume: ttsResult.volume,
+        overlapSeconds: ttsResult.overlapSeconds,
+        overlapMode: ttsResult.overlapMode,
+        removeLineBreaks: (job as any).__ttsRemoveLineBreaks as boolean | undefined,
+        outputs: [ttsResult.outputRelativePath]
+      });
+      if (!job.log || job.log.trim().length === 0) {
+        job.log = `TTS completed at ${new Date().toISOString()}`;
+      }
+      appendJobLog(job, `Total overlap: ${ttsResult.overlapSeconds.toFixed(2)}s\n`);
+      appendJobLog(job, `Output:\n- ${ttsResult.outputRelativePath}\n`);
+      const totalAfter = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+      job.progress = Math.max(0, Math.min(99, Math.round(totalAfter / job.tasks.length)));
+      scheduleJobPersist(job);
     }
     job.status = 'completed';
     job.progress = 100;
@@ -753,9 +995,34 @@ const processNextJob = async () => {
     });
     scheduleJobPersist(job);
   } finally {
-    activeJobId = null;
-    setImmediate(processNextJob);
+    if (mode === 'normal') {
+      activeJobId = null;
+      setImmediate(processNextJob);
+    } else {
+      activeDownloadCount = Math.max(0, activeDownloadCount - 1);
+      setImmediate(processNextDownload);
+    }
   }
+};
+
+const processNextJob = async () => {
+  if (activeJobId || jobQueue.length === 0) return;
+  const nextId = jobQueue.shift();
+  if (!nextId) return;
+  const job = getJobById(nextId);
+  if (!job) return;
+  activeJobId = job.id;
+  runJob(job, 'normal');
+};
+
+const processNextDownload = async () => {
+  if (activeDownloadCount >= MAX_ACTIVE_DOWNLOADS || downloadQueue.length === 0) return;
+  const nextId = downloadQueue.shift();
+  if (!nextId) return;
+  const job = getJobById(nextId);
+  if (!job) return;
+  activeDownloadCount += 1;
+  runJob(job, 'download');
 };
 const durationCache = new Map<string, { mtimeMs: number; duration: number }>();
 
@@ -802,6 +1069,202 @@ const parseSubtitleDuration = (content: string) => {
   return lastEnd ? parseTimeToSeconds(lastEnd) : 0;
 };
 
+const computeOverlapSecondsFromSegments = (segments: Array<{ start: number; end: number }>) => {
+  if (!segments.length) return 0;
+  const events: Array<{ t: number; d: number }> = [];
+  segments.forEach(seg => {
+    events.push({ t: seg.start, d: 1 });
+    events.push({ t: seg.end, d: -1 });
+  });
+  events.sort((a, b) => (a.t === b.t ? a.d - b.d : a.t - b.t));
+  let active = 0;
+  let overlap = 0;
+  let prevTime = events[0].t;
+  for (const event of events) {
+    const dt = event.t - prevTime;
+    if (active >= 2 && dt > 0) {
+      overlap += dt;
+    }
+    active += event.d;
+    prevTime = event.t;
+  }
+  return Math.max(0, overlap);
+};
+
+type SubtitleCue = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+const sanitizeCueText = (value: string, removeLineBreaks: boolean) => {
+  let cleaned = value
+    .replace(/\{[^}]*\}/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\\[Nn]/g, removeLineBreaks ? ' ' : '\n');
+  if (removeLineBreaks) {
+    cleaned = cleaned.replace(/\s+/g, ' ');
+  } else {
+    cleaned = cleaned
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{2,}/g, '\n');
+  }
+  return cleaned.trim();
+};
+
+const parseSrtTimestamp = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(':');
+  if (parts.length < 2 || parts.length > 3) return null;
+  const secondsPart = parts[parts.length - 1];
+  const minutePart = parts[parts.length - 2];
+  const hourPart = parts.length === 3 ? parts[0] : '0';
+  const secMatch = secondsPart.match(/^(\d{1,2})(?:[.,](\d{1,3}))?$/);
+  if (!secMatch) return null;
+  const hours = Number(hourPart);
+  const minutes = Number(minutePart);
+  const seconds = Number(secMatch[1]);
+  const millis = secMatch[2] ? Number(secMatch[2].padEnd(3, '0')) : 0;
+  if ([hours, minutes, seconds, millis].some(part => Number.isNaN(part))) return null;
+  return hours * 3600 + minutes * 60 + seconds + millis / 1000;
+};
+
+const parseAssTimestamp = (value: string) => {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d+):(\d{2}):(\d{2})[.](\d{1,2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  const centis = Number(match[4].padEnd(2, '0'));
+  if ([hours, minutes, seconds, centis].some(part => Number.isNaN(part))) return null;
+  return hours * 3600 + minutes * 60 + seconds + centis / 100;
+};
+
+const parseSrtVttCues = (content: string, removeLineBreaks: boolean) => {
+  const lines = content.split(/\r?\n/);
+  const cues: SubtitleCue[] = [];
+  let currentStart: number | null = null;
+  let currentEnd: number | null = null;
+  let textLines: string[] = [];
+
+  const flush = () => {
+    if (currentStart === null || currentEnd === null) return;
+    const text = sanitizeCueText(textLines.join(removeLineBreaks ? ' ' : '\n'), removeLineBreaks);
+    if (text) {
+      cues.push({ start: currentStart, end: currentEnd, text });
+    }
+    currentStart = null;
+    currentEnd = null;
+    textLines = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith('WEBVTT')) continue;
+    if (line.startsWith('NOTE')) continue;
+    if (/^\d+$/.test(line)) continue;
+    if (line.includes('-->')) {
+      flush();
+      const [rawStart, rawEnd] = line.split('-->').map(part => part.trim().split(/\s+/)[0]);
+      const start = parseSrtTimestamp(rawStart);
+      const end = parseSrtTimestamp(rawEnd);
+      if (start === null || end === null) {
+        currentStart = null;
+        currentEnd = null;
+        textLines = [];
+        continue;
+      }
+      if (end <= start) {
+        currentStart = end;
+        currentEnd = start;
+      } else {
+        currentStart = start;
+        currentEnd = end;
+      }
+      continue;
+    }
+    if (currentStart !== null && currentEnd !== null) {
+      textLines.push(line);
+    }
+  }
+
+  flush();
+  return cues;
+};
+
+const splitWithMax = (value: string, maxParts: number) => {
+  if (maxParts <= 1) return [value];
+  const parts: string[] = [];
+  let rest = value;
+  for (let i = 0; i < maxParts - 1; i += 1) {
+    const index = rest.indexOf(',');
+    if (index === -1) break;
+    parts.push(rest.slice(0, index));
+    rest = rest.slice(index + 1);
+  }
+  parts.push(rest);
+  return parts;
+};
+
+const parseAssCues = (content: string, removeLineBreaks: boolean) => {
+  const lines = content.split(/\r?\n/);
+  let format: string[] | null = null;
+  const cues: SubtitleCue[] = [];
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith('Format:')) {
+      format = trimmed
+        .slice('Format:'.length)
+        .split(',')
+        .map(part => part.trim().toLowerCase());
+      return;
+    }
+    if (!trimmed.startsWith('Dialogue:')) return;
+    const payload = trimmed.slice('Dialogue:'.length).trim();
+    const fields = splitWithMax(payload, format?.length ?? 10);
+    const startIndex = format ? format.indexOf('start') : 1;
+    const endIndex = format ? format.indexOf('end') : 2;
+    const textIndex = format ? format.indexOf('text') : 9;
+    if (startIndex < 0 || endIndex < 0 || textIndex < 0) return;
+    const start = parseAssTimestamp(fields[startIndex] ?? '');
+    const end = parseAssTimestamp(fields[endIndex] ?? '');
+    if (start === null || end === null || end <= start) return;
+    const text = sanitizeCueText(fields.slice(textIndex).join(','), removeLineBreaks);
+    if (!text) return;
+    cues.push({ start, end, text });
+  });
+  return cues;
+};
+
+const formatTtsRate = (value?: number) => {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  if (value === 1) return undefined;
+  const percent = Math.round((value - 1) * 100);
+  return `${percent >= 0 ? '+' : ''}${percent}%`;
+};
+
+const formatTtsVolume = (value?: number) => {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  const percent = Math.round((value - 1) * 100);
+  return `${percent >= 0 ? '+' : ''}${percent}%`;
+};
+
+const formatTtsPitch = (value?: number) => {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isFinite(value)) return undefined;
+  if (value === 0) return undefined;
+  const ratio = Math.pow(2, value / 12);
+  const deltaHz = Math.round(TTS_PITCH_BASE_HZ * (ratio - 1));
+  const signed = deltaHz >= 0 ? `+${deltaHz}` : `${deltaHz}`;
+  return `${signed}Hz`;
+};
+
 const runFfprobeWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
   const args = [
     '-v', 'error',
@@ -824,6 +1287,149 @@ const runFfprobeWithBin = (bin: string, input: string) => new Promise<number>((r
     resolve(Number.isFinite(value) ? value : 0);
   });
 });
+
+const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
+  voice?: string;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  overlapMode?: 'overlap' | 'truncate';
+  removeLineBreaks?: boolean;
+  onProgress?: (completed: number, total: number) => void;
+  onLog?: (chunk: string) => void;
+}) => {
+  const ext = path.extname(inputFullPath).toLowerCase();
+  if (!SUB_EXT.has(ext)) {
+    throw new Error('TTS input must be a subtitle file');
+  }
+  const raw = await fs.readFile(inputFullPath, 'utf-8');
+  const removeLineBreaks = options?.removeLineBreaks !== false;
+  const cues = ext === '.ass' || ext === '.ssa'
+    ? parseAssCues(raw, removeLineBreaks)
+    : parseSrtVttCues(raw, removeLineBreaks);
+  if (!cues.length) {
+    throw new Error('Subtitle file has no usable cues');
+  }
+  const cueDurations = cues.map(cue => Math.max(0, cue.end - cue.start));
+  const audioDurations: number[] = [];
+  await fs.mkdir(outputDir, { recursive: true });
+  const baseName = path.basename(inputFullPath, ext);
+  const outputName = `${baseName}.tts.${DEFAULT_TTS_OUTPUT_EXT}`;
+  const outputPath = path.join(outputDir, outputName);
+  const voice = options?.voice || DEFAULT_TTS_VOICE;
+  const rate = formatTtsRate(options?.rate);
+  const pitch = formatTtsPitch(options?.pitch);
+  const volume = formatTtsVolume(options?.volume);
+  const overlapMode = options?.overlapMode === 'overlap' ? 'overlap' : 'truncate';
+  const withFlagValue = (flag: string, value?: string) => {
+    if (!value) return [];
+    return [`${flag}=${value}`];
+  };
+  const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tts-cues-'));
+  const cuePaths: string[] = [];
+  try {
+    for (let i = 0; i < cues.length; i += 1) {
+      const cue = cues[i];
+      const cuePath = path.join(tmpDir, `cue-${String(i).padStart(4, '0')}.${DEFAULT_TTS_OUTPUT_EXT}`);
+      const args = [
+        '--text',
+        cue.text,
+        '--voice',
+        voice,
+        '--write-media',
+        cuePath,
+        ...withFlagValue('--rate', rate),
+        ...withFlagValue('--pitch', pitch),
+        ...withFlagValue('--volume', volume)
+      ];
+      const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
+      options?.onLog?.(`COMMAND (tts cue ${i + 1}/${cues.length}): ${commandLine}\n`);
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(EDGE_TTS_CMD, args);
+        let errorOutput = '';
+        let stdOutput = '';
+        proc.stdout.on('data', data => {
+          stdOutput += data.toString();
+        });
+        proc.stderr.on('data', data => {
+          errorOutput += data.toString();
+        });
+        proc.on('error', reject);
+        proc.on('close', code => {
+          if (code !== 0) {
+            const details = [errorOutput, stdOutput].filter(Boolean).join('\n');
+            reject(new Error(details || `edge-tts exited with code ${code}`));
+            return;
+          }
+          resolve();
+        });
+      });
+      cuePaths.push(cuePath);
+      const duration = await runFfprobe(cuePath).catch(() => 0);
+      audioDurations.push(duration);
+      options?.onProgress?.(i + 1, cues.length);
+    }
+
+    const ffmpegPath = await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
+    const inputArgs = cuePaths.flatMap(cuePath => ['-i', cuePath]);
+    const filterChains: string[] = [];
+    const mixInputs: string[] = [];
+    cues.forEach((cue, index) => {
+      const delayMs = Math.max(0, Math.round(cue.start * 1000));
+      const duration = Math.max(0, cue.end - cue.start);
+      const trim = overlapMode === 'truncate' ? `atrim=0:${duration},` : '';
+      filterChains.push(`[${index}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${index}]`);
+      mixInputs.push(`[a${index}]`);
+    });
+    const filter = `${filterChains.join(';')};${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest,loudnorm=I=-16:TP=-1.5:LRA=11[out]`;
+    const ffmpegArgs = [
+      '-y',
+      ...inputArgs,
+      '-filter_complex',
+      filter,
+      '-map',
+      '[out]',
+      '-c:a',
+      'libmp3lame',
+      '-q:a',
+      '4',
+      outputPath
+    ];
+    const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
+    options?.onLog?.(`COMMAND (ffmpeg mix): ${ffmpegCommand}\n`);
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      proc.stderr.on('data', data => {
+        stderr += data.toString();
+      });
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+      });
+    });
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
+  }
+  const segments = cues.map((cue, index) => {
+    const duration = audioDurations[index] ?? 0;
+    const cap = overlapMode === 'truncate' ? Math.min(duration, cueDurations[index] ?? duration) : duration;
+    return { start: cue.start, end: cue.start + Math.max(0, cap) };
+  }).filter(seg => seg.end > seg.start);
+  const overlapSeconds = computeOverlapSecondsFromSegments(segments);
+  return {
+    outputPath,
+    outputRelativePath: path.relative(MEDIA_VAULT_ROOT, outputPath),
+    voice,
+    rate: options?.rate,
+    pitch: options?.pitch,
+    volume: options?.volume,
+    overlapSeconds,
+    overlapMode
+  };
+};
 
 const runFfprobe = async (input: string) => {
   try {
@@ -864,7 +1470,8 @@ const readFilesFromDir = async (
   dirPath: string,
   basePath: string,
   includeSubdir = false,
-  uvrMeta?: Map<string, VaultFileDTO['uvr']>
+  uvrMeta?: Map<string, VaultFileDTO['uvr']>,
+  ttsMeta?: Map<string, VaultFileDTO['tts']>
 ) => {
   const entries = await fs.readdir(dirPath, { withFileTypes: true });
   const files: VaultFileDTO[] = [];
@@ -886,17 +1493,68 @@ const readFilesFromDir = async (
         : type,
       extension: path.extname(entry.name).toLowerCase(),
       durationSeconds,
-      uvr: uvrMeta?.get(relativePath)
+      uvr: uvrMeta?.get(relativePath),
+      tts: ttsMeta?.get(relativePath),
+      linkedTo: ttsMeta?.get(relativePath)?.sourceRelativePath ?? uvrMeta?.get(relativePath)?.sourceRelativePath
     });
   }
 
   return files;
 };
 
+const buildUvrOutputMap = (uvrMeta: Map<string, VaultFileDTO['uvr']>) => {
+  const outputMap = new Map<string, VaultFileDTO['uvr']>();
+  for (const [sourceRelativePath, meta] of uvrMeta.entries()) {
+    if (!meta?.outputs?.length) continue;
+    meta.outputs.forEach(outputPath => {
+      outputMap.set(outputPath, { ...meta, role: 'output', sourceRelativePath });
+    });
+  }
+  return outputMap;
+};
+
+const buildTtsOutputMap = (ttsMeta: Map<string, VaultFileDTO['tts']>) => {
+  const outputMap = new Map<string, VaultFileDTO['tts']>();
+  for (const [sourceRelativePath, meta] of ttsMeta.entries()) {
+    if (!meta?.outputs?.length) continue;
+    meta.outputs.forEach(outputPath => {
+      outputMap.set(outputPath, { ...meta, role: 'output', sourceRelativePath });
+    });
+  }
+  return outputMap;
+};
+
+const readProjectTtsMeta = async (projectRoot: string) => {
+  const metaFile = path.join(projectRoot, '.mediaforge', 'tts.json');
+  try {
+    const raw = await fs.readFile(metaFile, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed) {
+      return parsed as Record<string, VaultFileDTO['tts']>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
+};
+
+const readProjectUvrMeta = async (projectRoot: string) => {
+  const metaFile = path.join(projectRoot, '.mediaforge', 'uvr.json');
+  try {
+    const raw = await fs.readFile(metaFile, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed) {
+      return parsed as Record<string, VaultFileDTO['uvr']>;
+    }
+  } catch {
+    return {};
+  }
+  return {};
+};
+
 const readVault = async (): Promise<VaultFolderDTO[]> => {
   const rootEntries = await fs.readdir(MEDIA_VAULT_ROOT, { withFileTypes: true });
   const folders: VaultFolderDTO[] = [];
-  const uvrMeta = loadUvrMetadataMap();
 
   for (const entry of rootEntries) {
     if (!entry.isDirectory()) continue;
@@ -908,7 +1566,19 @@ const readVault = async (): Promise<VaultFolderDTO[]> => {
     }
 
     const sourcePath = path.join(folderPath, sourceDir.name);
-    const folderFiles = await readFilesFromDir(sourcePath, MEDIA_VAULT_ROOT, false, uvrMeta);
+    const projectUvrMeta = await readProjectUvrMeta(folderPath);
+    const uvrMetaMap = new Map<string, VaultFileDTO['uvr']>(Object.entries(projectUvrMeta));
+    const uvrOutputMeta = buildUvrOutputMap(uvrMetaMap);
+    const projectTtsMeta = await readProjectTtsMeta(folderPath);
+    const ttsMetaMap = new Map<string, VaultFileDTO['tts']>(Object.entries(projectTtsMeta));
+    const ttsOutputMeta = buildTtsOutputMap(ttsMetaMap);
+    const folderFiles = await readFilesFromDir(sourcePath, MEDIA_VAULT_ROOT, false, uvrMetaMap, ttsMetaMap);
+    const outputDirEntry = subEntries.find(item => item.isDirectory() && OUTPUT_DIR_NAMES.has(item.name.toLowerCase()));
+    if (outputDirEntry) {
+      const outputPath = path.join(folderPath, outputDirEntry.name);
+      const outputFiles = await readFilesFromDir(outputPath, MEDIA_VAULT_ROOT, true, uvrOutputMeta, ttsOutputMeta);
+      folderFiles.push(...outputFiles);
+    }
 
     folders.push({
       name: entry.name,
@@ -938,7 +1608,7 @@ app.delete('/api/vault/project', async (req, res) => {
   }
   const safeProjectName = sanitizeProjectName(projectNameRaw);
   if (!safeProjectName || safeProjectName !== projectNameRaw) {
-    res.status(400).json({ error: 'Invalid projectName' });
+    res.status(400).json({ error: 'Invalid project name' });
     return;
   }
   const rootPath = path.resolve(MEDIA_VAULT_ROOT);
@@ -1075,6 +1745,165 @@ app.get('/api/jobs', async (_req, res) => {
   res.json({ jobs });
 });
 
+app.get('/api/param-presets', async (_req, res) => {
+  try {
+    const result = db.exec('SELECT id, task_type, params_json, label, updated_at FROM param_presets ORDER BY updated_at DESC');
+    const rows = result[0]?.values ?? [];
+    const presets = rows.map((row: any[]) => {
+      const [id, taskType, paramsJson, label, updatedAt] = row;
+      let params: Record<string, any> = {};
+      try {
+        params = JSON.parse(String(paramsJson));
+      } catch {
+        params = {};
+      }
+      return {
+        id,
+        taskType: String(taskType),
+        params,
+        label: label ? String(label) : '',
+        updatedAt
+      };
+    });
+    res.json({ presets });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load presets';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post('/api/param-presets', async (req, res) => {
+  const taskType = typeof req.body?.taskType === 'string' ? req.body.taskType.trim() : '';
+  const params = typeof req.body?.params === 'object' && req.body.params ? req.body.params : null;
+  const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
+  const id = Number.isFinite(Number(req.body?.id)) ? Number(req.body.id) : null;
+  if (!taskType || !params) {
+    res.status(400).json({ error: 'Missing taskType or params' });
+    return;
+  }
+  try {
+    if (id) {
+      db.run(
+        `UPDATE param_presets
+         SET task_type = ?, params_json = ?, label = ?, updated_at = ?
+         WHERE id = ?`,
+        [taskType, JSON.stringify(params), label || null, new Date().toISOString(), id]
+      );
+      await persistDb();
+      res.json({ id });
+      return;
+    }
+    db.run(
+      `INSERT INTO param_presets (task_type, params_json, label, updated_at)
+       VALUES (?, ?, ?, ?)`,
+      [taskType, JSON.stringify(params), label || null, new Date().toISOString()]
+    );
+    await persistDb();
+    const idRow = db.exec('SELECT last_insert_rowid() as id');
+    const nextId = idRow[0]?.values?.[0]?.[0] ?? null;
+    res.json({ id: nextId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to save presets';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.delete('/api/param-presets/:id', async (req, res) => {
+  const id = Number(req.params?.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: 'Missing id' });
+    return;
+  }
+  try {
+    db.run('DELETE FROM param_presets WHERE id = ?', [id]);
+    await persistDb();
+    res.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to delete presets';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post('/api/vault/import', express.raw({ type: 'multipart/form-data', limit: '2gb' }), async (req, res) => {
+  try {
+    const contentType = String(req.headers['content-type'] || '');
+    const boundaryMatch = contentType.match(/boundary=(.+)$/);
+    if (!boundaryMatch) {
+      res.status(400).json({ error: 'Missing multipart boundary' });
+      return;
+    }
+    const boundary = boundaryMatch[1];
+    const buffer = req.body as Buffer;
+    const delimiter = Buffer.from(`--${boundary}`);
+    const parts: Buffer[] = [];
+    let start = buffer.indexOf(delimiter);
+    while (start !== -1) {
+      start += delimiter.length;
+      const end = buffer.indexOf(delimiter, start);
+      if (end === -1) break;
+      parts.push(buffer.slice(start, end));
+      start = end;
+    }
+
+    const files: Array<{ filename: string; data: Buffer }> = [];
+    let projectNameRaw = '';
+    for (const part of parts) {
+      const trimmed = part.slice(0, 2).equals(Buffer.from('\r\n')) ? part.slice(2) : part;
+      const headerEnd = trimmed.indexOf(Buffer.from('\r\n\r\n'));
+      if (headerEnd === -1) continue;
+      const headerText = trimmed.slice(0, headerEnd).toString('utf-8');
+      const content = trimmed.slice(headerEnd + 4, trimmed.length - 2); // drop trailing CRLF
+      const disposition = headerText.match(/Content-Disposition:[^\n]+/i)?.[0] ?? '';
+      const nameMatch = disposition.match(/name=\"([^\"]+)\"/i);
+      const filenameMatch = disposition.match(/filename=\"([^\"]*)\"/i);
+      const fieldName = nameMatch?.[1] ?? '';
+      if (filenameMatch && filenameMatch[1]) {
+        files.push({ filename: filenameMatch[1], data: content });
+      } else if (fieldName === 'projectName') {
+        projectNameRaw = content.toString('utf-8').trim();
+      }
+    }
+
+    const safeProjectName = sanitizeProjectName(projectNameRaw);
+    if (!safeProjectName) {
+      res.status(400).json({ error: 'Missing projectName' });
+      return;
+    }
+    if (files.length === 0) {
+      res.status(400).json({ error: 'No files uploaded' });
+      return;
+    }
+
+    const projectRoot = path.join(MEDIA_VAULT_ROOT, safeProjectName);
+    const sourceDir = path.join(projectRoot, 'source');
+    await fs.mkdir(sourceDir, { recursive: true });
+
+    const uniqueName = async (dir: string, baseName: string) => {
+      const parsed = path.parse(baseName);
+      let name = sanitizeFileName(baseName);
+      let counter = 1;
+      while (true) {
+        const candidate = path.join(dir, name);
+        const exists = await fs.stat(candidate).then(stat => stat.isFile()).catch(() => false);
+        if (!exists) return name;
+        name = `${parsed.name} (${counter})${parsed.ext}`;
+        counter += 1;
+      }
+    };
+
+    for (const file of files) {
+      const safeName = await uniqueName(sourceDir, file.filename);
+      const dest = path.join(sourceDir, safeName);
+      await fs.writeFile(dest, file.data);
+    }
+
+    res.json({ ok: true, projectName: safeProjectName, count: files.length });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Import failed';
+    res.status(500).json({ error: message });
+  }
+});
+
 app.delete('/api/jobs/:id', async (req, res) => {
   const job = getJobById(req.params.id);
   if (!job) {
@@ -1106,6 +1935,8 @@ app.post('/api/jobs/:id/cancel', async (req, res) => {
   if (job.status === 'queued') {
     const index = jobQueue.indexOf(job.id);
     if (index >= 0) jobQueue.splice(index, 1);
+    const downloadIndex = downloadQueue.indexOf(job.id);
+    if (downloadIndex >= 0) downloadQueue.splice(downloadIndex, 1);
     job.status = 'cancelled';
     job.progress = 0;
     job.finishedAt = new Date().toISOString();
@@ -1141,9 +1972,20 @@ app.post('/api/jobs/run', async (req, res) => {
   const downloadCookiesFileName = typeof req.body?.cookiesFileName === 'string' ? req.body.cookiesFileName.trim() : '';
   const downloadNoPlaylist = typeof req.body?.noPlaylist === 'boolean' ? req.body.noPlaylist : true;
   const downloadSubLangs = typeof req.body?.subLangs === 'string' ? req.body.subLangs.trim() : '';
+  const downloadModeRaw = typeof req.body?.downloadMode === 'string' ? req.body.downloadMode.trim() : 'all';
+  const downloadMode = (downloadModeRaw === 'subs' || downloadModeRaw === 'media' || downloadModeRaw === 'all')
+    ? downloadModeRaw
+    : 'all';
   const model = typeof req.body?.model === 'string' ? req.body.model : 'MGM_MAIN_v4.pth';
   const backend = typeof req.body?.backend === 'string' ? req.body.backend : 'vr';
   const outputFormat = typeof req.body?.outputFormat === 'string' ? req.body.outputFormat : 'Mp3';
+  const ttsOverlapMode = req.body?.overlapMode === 'overlap' ? 'overlap' : 'truncate';
+  const ttsRemoveLineBreaks = req.body?.removeLineBreaks !== false;
+  const overwrite = req.body?.overwrite === true;
+  const ttsVoice = typeof req.body?.voice === 'string' ? req.body.voice.trim() : '';
+  const ttsRate = typeof req.body?.rate === 'number' ? req.body.rate : undefined;
+  const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
+  const ttsVolume = typeof req.body?.volume === 'number' ? req.body.volume : undefined;
 
   try {
     let pipelineName = inlineName || 'Ad-hoc Pipeline';
@@ -1183,6 +2025,10 @@ app.post('/api/jobs/run', async (req, res) => {
         res.status(400).json({ error: 'Missing projectName' });
         return;
       }
+      if (downloadProjectNameRaw.trim() !== safeProjectName) {
+        res.status(400).json({ error: 'Invalid project name' });
+        return;
+      }
       const projectRoot = path.join(MEDIA_VAULT_ROOT, safeProjectName);
       const sourceDir = path.join(projectRoot, 'source');
       const workingDir = path.join(projectRoot, 'working');
@@ -1198,8 +2044,8 @@ app.post('/api/jobs/run', async (req, res) => {
           }
         };
         const alreadyHasOutputs = await hasFiles(sourceDir) || await hasFiles(outputDir);
-        if (alreadyHasOutputs) {
-          res.json({ ok: true, skipped: true, message: 'Project already exists. Skipping download.' });
+        if (alreadyHasOutputs && !overwrite) {
+          res.status(409).json({ error: 'Project outputs already exist.', kind: 'download' });
           return;
         }
       }
@@ -1238,7 +2084,32 @@ app.post('/api/jobs/run', async (req, res) => {
         status: 'queued',
         progress: 0,
         tasks,
-        createdAt
+        createdAt,
+        params: {
+          pipelineId,
+          pipelineName,
+          projectName: safeProjectName,
+          download: {
+            url: downloadUrl,
+            mode: downloadMode,
+            noPlaylist: downloadNoPlaylist,
+            subLangs: downloadSubLangs,
+            overwrite
+          },
+          uvr: {
+            backend,
+            model,
+            outputFormat
+          },
+          tts: {
+            voice: ttsVoice || undefined,
+            rate: ttsRate,
+            pitch: ttsPitch,
+            volume: ttsVolume,
+            overlapMode: ttsOverlapMode,
+            removeLineBreaks: ttsRemoveLineBreaks
+          }
+        }
       };
 
       (job as any).__downloadUrl = downloadUrl;
@@ -1246,10 +2117,19 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__downloadCookiesFile = cookiesFile;
       (job as any).__downloadNoPlaylist = downloadNoPlaylist;
       (job as any).__downloadSubLangs = downloadSubLangs;
+      (job as any).__downloadMode = downloadMode;
+      (job as any).__projectRoot = projectRoot;
+      (job as any).__projectRelativePath = path.relative(MEDIA_VAULT_ROOT, projectRoot);
       (job as any).__outputDir = outputDir;
       (job as any).__model = model;
       (job as any).__outputFormat = outputFormat;
       (job as any).__backend = backend;
+      (job as any).__ttsOverlapMode = ttsOverlapMode;
+      (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
+      if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
+      if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
+      if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
+      if (ttsVolume !== undefined) (job as any).__ttsVolume = ttsVolume;
     } else {
       if (!inputPath) {
         res.status(400).json({ error: 'Missing inputPath' });
@@ -1269,6 +2149,29 @@ app.post('/api/jobs/run', async (req, res) => {
       const outputDir = path.join(projectRoot, UVR_OUTPUT_DIRNAME);
       await fs.mkdir(outputDir, { recursive: true });
 
+      if (!overwrite) {
+        const existing = await fs.readdir(outputDir).catch(() => []);
+        const baseName = path.parse(fullPath).name.toLowerCase();
+        const hasUvr = tasks.some(task => task.type === 'uvr');
+        const hasTts = tasks.some(task => task.type === 'tts');
+        if (hasTts) {
+          const ttsName = `${path.parse(fullPath).name}.tts.${DEFAULT_TTS_OUTPUT_EXT}`;
+          const ttsPath = path.join(outputDir, ttsName);
+          const ttsExists = await fs.stat(ttsPath).then(stat => stat.isFile()).catch(() => false);
+          if (ttsExists) {
+            res.status(409).json({ error: 'TTS output already exists.', kind: 'tts', path: path.relative(MEDIA_VAULT_ROOT, ttsPath) });
+            return;
+          }
+        }
+        if (hasUvr) {
+          const hasMatch = existing.some(name => name.toLowerCase().includes(baseName));
+          if (hasMatch) {
+            res.status(409).json({ error: 'UVR outputs already exist.', kind: 'uvr' });
+            return;
+          }
+        }
+      }
+
       job = {
         id: jobId,
         name: pipelineName,
@@ -1278,7 +2181,26 @@ app.post('/api/jobs/run', async (req, res) => {
         status: 'queued',
         progress: 0,
         tasks,
-        createdAt
+        createdAt,
+        params: {
+          pipelineId,
+          pipelineName,
+          projectName,
+          inputRelativePath: inputPath,
+          uvr: {
+            backend,
+            model,
+            outputFormat
+          },
+          tts: {
+            voice: ttsVoice || undefined,
+            rate: ttsRate,
+            pitch: ttsPitch,
+            volume: ttsVolume,
+            overlapMode: ttsOverlapMode,
+            removeLineBreaks: ttsRemoveLineBreaks
+          }
+        }
       };
 
       (job as any).__inputPath = fullPath;
@@ -1287,12 +2209,27 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__model = model;
       (job as any).__outputFormat = outputFormat;
       (job as any).__backend = backend;
+      (job as any).__ttsOverlapMode = ttsOverlapMode;
+      (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
+      if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
+      if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
+      if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
+      if (ttsVolume !== undefined) (job as any).__ttsVolume = ttsVolume;
     }
 
     jobs.unshift(job);
-    jobQueue.push(jobId);
     scheduleJobPersist(job);
-    processNextJob();
+    if (hasDownload) {
+      if (activeDownloadCount < MAX_ACTIVE_DOWNLOADS) {
+        activeDownloadCount += 1;
+        runJob(job, 'download');
+      } else {
+        downloadQueue.push(jobId);
+      }
+    } else {
+      jobQueue.push(jobId);
+      processNextJob();
+    }
 
     res.json({ id: jobId });
   } catch (error) {
@@ -1369,6 +2306,7 @@ const runYtDlpTask = async (
   cookiesFile?: string,
   noPlaylist = true,
   subLangs?: string,
+  downloadMode: 'all' | 'subs' | 'media' = 'all',
   onData?: (chunk: string) => void,
   options?: { signal?: AbortSignal; onStart?: (proc: ReturnType<typeof spawn>) => void }
 ) => {
@@ -1377,6 +2315,7 @@ const runYtDlpTask = async (
   const baseArgs = [
     ...(noPlaylist ? ['--no-playlist'] : []),
     '--no-warnings',
+    '--newline',
     ...(cookiesFile ? ['--cookies', cookiesFile] : []),
     '-o', path.join(outputDir, '%(title).200s.%(ext)s'),
     url
@@ -1445,14 +2384,24 @@ const runYtDlpTask = async (
   };
 
   const beforeSubs = new Set<string>(await listFiles());
-  const subsLog = await runWithArgs(subsArgs, 'subs-only');
-  const afterSubs = await listFiles();
-  const subsFiles = afterSubs.filter(name => !beforeSubs.has(name));
+  let subsLog = '';
+  let afterSubs = await listFiles();
+  let subsFiles: string[] = [];
+  if (downloadMode !== 'media') {
+    subsLog = await runWithArgs(subsArgs, 'subs-only');
+    afterSubs = await listFiles();
+    subsFiles = afterSubs.filter(name => !beforeSubs.has(name));
+  }
 
   const beforeMedia = new Set<string>(afterSubs);
-  const mediaLog = await runWithArgs(mediaArgs, 'media');
-  const afterMedia = await listFiles();
-  const mediaFiles = afterMedia.filter(name => !beforeMedia.has(name));
+  let mediaLog = '';
+  let afterMedia = await listFiles();
+  let mediaFiles: string[] = [];
+  if (downloadMode !== 'subs') {
+    mediaLog = await runWithArgs(mediaArgs, 'media');
+    afterMedia = await listFiles();
+    mediaFiles = afterMedia.filter(name => !beforeMedia.has(name));
+  }
 
   const combinedLog = [subsLog, mediaLog].filter(Boolean).join('\n');
   return { log: combinedLog, subsFiles, mediaFiles };
@@ -1718,6 +2667,7 @@ const getContentType = (ext: string) => {
 
 app.get('/api/vault/stream', async (req, res) => {
   const relPath = typeof req.query.path === 'string' ? req.query.path : '';
+  const preview = req.query.preview === '1';
   if (!relPath) {
     res.status(400).json({ error: 'Missing path' });
     return;
@@ -1735,6 +2685,21 @@ app.get('/api/vault/stream', async (req, res) => {
     const ext = path.extname(fullPath);
     const contentType = getContentType(ext);
     const range = req.headers.range;
+    let previewEnd = fileSize - 1;
+    if (preview && isAudioFile(fullPath) && fileSize > PREVIEW_MAX_BYTES) {
+      let durationSeconds = 0;
+      try {
+        durationSeconds = await runFfprobe(fullPath);
+      } catch {
+        durationSeconds = 0;
+      }
+      if (durationSeconds > 0) {
+        const ratio = Math.min(1, PREVIEW_MAX_SECONDS / durationSeconds);
+        previewEnd = Math.min(fileSize - 1, Math.max(0, Math.ceil(fileSize * ratio) - 1));
+      } else {
+        previewEnd = Math.min(fileSize - 1, PREVIEW_MAX_BYTES - 1);
+      }
+    }
 
     if (range) {
       const match = range.match(/bytes=(\d+)-(\d*)/);
@@ -1743,11 +2708,19 @@ app.get('/api/vault/stream', async (req, res) => {
         return;
       }
       const start = Number(match[1]);
-      const end = match[2] ? Number(match[2]) : fileSize - 1;
+      let end = match[2] ? Number(match[2]) : fileSize - 1;
+      if (preview) {
+        if (start > previewEnd) {
+          res.status(416).end();
+          return;
+        }
+        end = Math.min(end, previewEnd);
+      }
       const chunkSize = end - start + 1;
+      const totalSize = preview ? previewEnd + 1 : fileSize;
 
       res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Content-Range': `bytes ${start}-${end}/${totalSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': contentType
@@ -1757,8 +2730,19 @@ app.get('/api/vault/stream', async (req, res) => {
       return;
     }
 
+    if (preview && previewEnd < fileSize - 1) {
+      res.writeHead(200, {
+        'Content-Length': previewEnd + 1,
+        'Accept-Ranges': 'bytes',
+        'Content-Type': contentType
+      });
+      createReadStream(fullPath, { start: 0, end: previewEnd }).pipe(res);
+      return;
+    }
+
     res.writeHead(200, {
       'Content-Length': fileSize,
+      'Accept-Ranges': 'bytes',
       'Content-Type': contentType
     });
     createReadStream(fullPath).pipe(res);
@@ -1794,9 +2778,42 @@ const isVideoFile = (filePath: string) => VIDEO_EXT.has(path.extname(filePath).t
 const isAudioFile = (filePath: string) => AUDIO_EXT.has(path.extname(filePath).toLowerCase());
 const isSubtitleFile = (filePath: string) => SUB_EXT.has(path.extname(filePath).toLowerCase());
 
-const runFfmpeg = (input: string, output: string) => new Promise<void>((resolve, reject) => {
+const getFfmpegPath = async () => {
+  return await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
+};
+
+const runFfmpeg = async (input: string, output: string) => new Promise<void>(async (resolve, reject) => {
+  const ffmpegPath = await getFfmpegPath();
   const args = ['-y', '-ss', '00:00:01', '-i', input, '-frames:v', '1', '-q:v', '3', '-vf', 'scale=360:-1', output];
-  const proc = spawn('ffmpeg', args, { stdio: 'ignore' });
+  const proc = spawn(ffmpegPath, args, { stdio: 'ignore' });
+  proc.on('error', reject);
+  proc.on('close', code => {
+    if (code === 0) resolve();
+    else reject(new Error(`ffmpeg exited with code ${code}`));
+  });
+});
+
+const escapeFilterPath = (value: string) => value.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+
+const runFfmpegFrameAt = async (input: string, output: string, seconds: number, subtitlePath?: string) => new Promise<void>(async (resolve, reject) => {
+  const ffmpegPath = await getFfmpegPath();
+  const safeSeconds = Math.max(0, seconds);
+  const filters: string[] = [];
+  if (subtitlePath) {
+    const escaped = escapeFilterPath(subtitlePath);
+    filters.push(`subtitles='${escaped}':charenc=UTF-8`);
+  }
+  filters.push('scale=720:-1');
+  const args = [
+    '-y',
+    '-ss', safeSeconds.toFixed(3),
+    '-i', input,
+    '-frames:v', '1',
+    '-q:v', '3',
+    '-vf', filters.join(','),
+    output
+  ];
+  const proc = spawn(ffmpegPath, args, { stdio: 'ignore' });
   proc.on('error', reject);
   proc.on('close', code => {
     if (code === 0) resolve();
@@ -1837,6 +2854,46 @@ app.get('/api/vault/thumb', async (req, res) => {
   }
 });
 
+app.get('/api/render-preview', async (req, res) => {
+  const videoRel = typeof req.query.videoPath === 'string' ? req.query.videoPath : '';
+  const subtitleRel = typeof req.query.subtitlePath === 'string' ? req.query.subtitlePath : '';
+  const at = typeof req.query.at === 'string' ? Number(req.query.at) : 0;
+  if (!videoRel) {
+    res.status(400).json({ error: 'Missing videoPath' });
+    return;
+  }
+
+  const videoPath = resolveSafePath(videoRel);
+  if (!videoPath || !isVideoFile(videoPath)) {
+    res.status(400).json({ error: 'Invalid video path' });
+    return;
+  }
+
+  let subtitlePath: string | undefined;
+  if (subtitleRel) {
+    const resolved = resolveSafePath(subtitleRel);
+    if (!resolved || !isSubtitleFile(resolved)) {
+      res.status(400).json({ error: 'Invalid subtitle path' });
+      return;
+    }
+    subtitlePath = resolved;
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-preview-'));
+  const outputPath = path.join(tmpDir, 'frame.jpg');
+  try {
+    await runFfmpegFrameAt(videoPath, outputPath, Number.isFinite(at) ? at : 0, subtitlePath);
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    createReadStream(outputPath).pipe(res);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to render preview';
+    res.status(500).json({ error: message });
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`Media Vault backend running on http://localhost:${PORT}`);
+  console.log(`Media backend running on http://localhost:${PORT}`);
 });

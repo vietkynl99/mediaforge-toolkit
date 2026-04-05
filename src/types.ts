@@ -28,7 +28,7 @@ export type JobStatus = 'queued' | 'processing' | 'awaiting_input' | 'completed'
 
 export interface ProcessingTask {
   id: string;
-  type: 'download' | 'download_subs' | 'download_video' | 'download_audio' | 'download_merge' | 'uvr' | 'tts' | 'stt' | 'translate' | 'edit' | 'burn';
+  type: 'download' | 'download_subs' | 'download_video' | 'download_audio' | 'download_merge' | 'uvr' | 'tts' | 'stt' | 'translate' | 'edit' | 'burn' | 'render';
   name: string;
   status: 'pending' | 'active' | 'done' | 'error';
   progress: number;
@@ -52,6 +52,32 @@ export interface MediaJob {
   gpuUsage?: number;
   log?: string;
   error?: string;
+  params?: {
+    pipelineId?: number;
+    pipelineName?: string;
+    projectName?: string;
+    inputRelativePath?: string;
+    download?: {
+      url?: string;
+      mode?: 'all' | 'subs' | 'media';
+      noPlaylist?: boolean;
+      subLangs?: string;
+    };
+    uvr?: {
+      backend?: string;
+      model?: string;
+      outputFormat?: string;
+    };
+    tts?: {
+      voice?: string;
+      rate?: number;
+      pitch?: number;
+      volume?: number;
+      overlapSeconds?: number;
+      overlapMode?: 'overlap' | 'truncate';
+      removeLineBreaks?: boolean;
+    };
+  };
 }
 
 export const MOCK_JOBS: MediaJob[] = [];
@@ -67,5 +93,6 @@ export const TASK_ICONS = {
   stt: Type,
   translate: Languages,
   edit: Scissors,
-  burn: FileVideo
+  burn: FileVideo,
+  render: FileVideo
 };
