@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileAudio, FileVideo, Menu, MousePointer2, Save, Type } from 'lucide-react';
+import { FileAudio, FileVideo, Menu, MousePointer2, Save, Type, Image } from 'lucide-react';
 
 type RenderStudioPageProps = Record<string, any>;
 
@@ -28,6 +28,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     setRenderStudioFocus,
     renderStudioItemType,
     setRenderStudioItemType,
+    renderInputFileIds,
     renderVideoId,
     setRenderVideoId,
     renderAudioId,
@@ -37,6 +38,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     renderVideoFile,
     renderAudioFile,
     renderSubtitleFile,
+    renderImageFiles,
+    renderImageDurationEntries,
+    renderImageDurations,
+    setRenderImageDurations,
+    renderImageOrderIds,
+    setRenderImageOrderIds,
+    renderImageTransforms,
+    setRenderImageTransforms,
     formatDuration,
     formatDurationFine,
     renderTimelineDuration,
@@ -47,6 +56,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     renderSubtitleCues,
     renderTimelineViewDuration,
     showRenderTimelineSubtitleTrack,
+    showRenderTimelineImageTrack,
     showRenderTimelineEffectTracks,
     renderParams,
     showRenderTimelineVideoTrack,
@@ -75,7 +85,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     commitRenderParamDraftValue,
     commitRenderParamDraftOnEnter,
     updateRenderParam,
-    renderStudioInspectorOpen,
     setRenderStudioInspectorOpen,
     removeRenderEffect,
     addBlurRegionEffect,
@@ -103,6 +112,36 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   } = props;
 
   const RENDER_RESOLUTION_PRESETS = props.RENDER_RESOLUTION_PRESETS ?? DEFAULT_RENDER_RESOLUTION_PRESETS;
+  const [selectedTrackKey, setSelectedTrackKey] = React.useState<string | null>(null);
+  const timelineScrollContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const activeInspectorSection = selectedTrackKey
+    ? (selectedTrackKey.startsWith('effects:') ? 'effects'
+      : selectedTrackKey.startsWith('image:') ? 'image'
+        : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle'))
+    : 'timeline';
+
+  const openInspectorSection = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'effects' | 'image') => {
+    setRenderStudioInspectorOpen({
+      timeline: false,
+      video: false,
+      audio: false,
+      subtitle: false,
+      effects: false,
+      image: false,
+      [section]: true
+    });
+  };
+
+  const selectTrack = (type: 'video' | 'audio' | 'subtitle' | 'image') => {
+    setRenderStudioItemType(type);
+    openInspectorSection(type);
+  };
+
+  const resetTrackSelection = () => {
+    setSelectedTrackKey(null);
+    setRenderStudioItemType('timeline');
+    openInspectorSection('timeline');
+  };
 
   return (
             <div className="fixed inset-0 z-[60] bg-zinc-950">
@@ -202,21 +241,26 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           const isVideo = file.type === 'video';
                           const isAudio = file.type === 'audio';
                           const isSubtitle = file.type === 'subtitle';
-                        const isSelected = renderStudioFocus === 'item'
-                          ? isVideo
-                            ? renderStudioItemType === 'video' && renderVideoId === file.id
-                            : isAudio
-                              ? renderStudioItemType === 'audio' && renderAudioId === file.id
-                              : isSubtitle
-                                ? renderStudioItemType === 'subtitle' && renderSubtitleId === file.id
-                                : false
-                          : false;
-                          const icon = isVideo ? FileVideo : isAudio ? FileAudio : Type;
+                          const isImage = file.type === 'image';
+                          const isSelected = renderStudioFocus === 'item'
+                            ? isVideo
+                              ? renderStudioItemType === 'video' && renderVideoId === file.id
+                              : isAudio
+                                ? renderStudioItemType === 'audio' && renderAudioId === file.id
+                                : isSubtitle
+                                  ? renderStudioItemType === 'subtitle' && renderSubtitleId === file.id
+                                  : isImage
+                                    ? renderStudioItemType === 'image' && renderInputFileIds?.includes?.(file.id)
+                                    : false
+                            : false;
+                          const icon = isVideo ? FileVideo : isAudio ? FileAudio : isSubtitle ? Type : Image;
                           const iconClass = isVideo
                             ? 'bg-lime-500/15 text-lime-300'
                             : isAudio
                               ? 'bg-amber-500/15 text-amber-300'
-                              : 'bg-blue-500/15 text-blue-300';
+                              : isImage
+                                ? 'bg-sky-500/15 text-sky-300'
+                                : 'bg-blue-500/15 text-blue-300';
                         const selectedClass = 'border-lime-500/50 bg-lime-500/10 text-zinc-100';
                         const onClick = isVideo
                           ? () => {
@@ -236,7 +280,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 setRenderStudioFocus('item');
                                 setRenderStudioItemType('subtitle');
                               }
-                              : undefined;
+                              : isImage
+                                ? () => {
+                                  setRenderStudioFocus('item');
+                                  setRenderStudioItemType('image');
+                                }
+                                : undefined;
                           return (
                             <button
                               key={file.id}
@@ -389,19 +438,27 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                       {renderStudioFocus === 'timeline' && (
                         <div className="w-full shrink-0 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3 flex flex-col gap-3">
                         <div className="flex-shrink-0 flex items-center justify-between gap-3 flex-wrap">
-                          <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Timeline</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Timeline</div>
+                            <button
+                              type="button"
+                              onClick={addBlurRegionEffect}
+                              disabled={!renderVideoFile}
+                              className="px-2 py-1 text-[10px] font-semibold border border-zinc-800 rounded-md text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              + Effect
+                            </button>
+                          </div>
                           <div className="flex items-center gap-3 text-[11px] text-zinc-500 flex-wrap justify-end min-w-0">
                             <div
                               className="flex items-baseline gap-1.5 tabular-nums shrink-0"
-                              title="Playhead / timeline duration"
+                              title="Playhead position"
                             >
                               <span className="text-xs font-medium text-lime-300">
                                 {renderTimelineDuration > 0
                                   ? formatDurationFine(renderPlayheadSeconds)
                                   : '—'}
                               </span>
-                              <span className="text-zinc-600">/</span>
-                              <span>{formatDuration(renderTimelineDuration) ?? '00:00'}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px]">Zoom</span>
@@ -416,10 +473,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               />
                               <span className="text-[10px]">{renderTimelineScale.toFixed(2)}x</span>
                             </div>
-                            <div className="flex items-center gap-1 text-[10px] text-zinc-500" title="Ctrl + scroll to zoom">
-                              <MousePointer2 size={12} />
-                              <span>Ctrl + scroll</span>
-                            </div>
+                            <span className="h-5" />
                           </div>
                         </div>
                         <div className="max-h-[min(45vh,28rem)] overflow-y-auto pr-1">
@@ -439,36 +493,49 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               ? renderParams.effects.map((effect, idx) => (
                                   <span
                                     key={`fx-label-${idx}`}
-                                    className="text-zinc-500 h-2 flex items-center text-[10px] leading-none truncate"
+                                    className="text-zinc-500 h-3 flex items-center text-[10px] leading-none truncate"
                                     title={`Blur ${idx + 1} · σ${effect.sigma.toFixed(1)} · áp lên video bên dưới`}
                                   >
                                     Blur {idx + 1}
                                   </span>
                                 ))
                               : null}
+                            {showRenderTimelineImageTrack
+                              ? renderImageFiles.map((file, idx) => (
+                                  <span
+                                    key={`img-label-${file.id}`}
+                                    className="text-zinc-500 h-3 flex items-center text-[10px] leading-none truncate"
+                                    title={file.name}
+                                  >
+                                    Image {idx + 1}
+                                  </span>
+                                ))
+                              : null}
                             {showRenderTimelineVideoTrack ? (
-                              <span className="text-zinc-500 h-2 flex items-center" title="Nguồn hình">
+                              <span className="text-zinc-500 h-3 flex items-center" title="Nguồn hình">
                                 Video
                               </span>
                             ) : null}
                             {showRenderTimelineAudioTrack ? (
-                              <span className="text-zinc-500 h-2 flex items-center" title="Layer dưới cùng (chỉ âm thanh)">
+                              <span className="text-zinc-500 h-3 flex items-center" title="Layer dưới cùng (chỉ âm thanh)">
                                 Audio
                               </span>
                             ) : null}
                           </div>
                           <div
-                            ref={renderTimelineScrollRef}
-                            onMouseDown={onRenderTimelineMouseDown}
+                            ref={node => {
+                              renderTimelineScrollRef.current = node;
+                              timelineScrollContainerRef.current = node;
+                            }}
                             onMouseMove={onRenderTimelineMouseMove}
                             onMouseUp={onRenderTimelineMouseUp}
                             onMouseLeave={onRenderTimelineMouseUp}
-                            onClick={onRenderTimelineClick}
-                            className="flex-1 overflow-x-auto render-timeline-scroll cursor-grab active:cursor-grabbing"
+                            className="flex-1 overflow-x-auto render-timeline-scroll cursor-default"
                           >
                             <div
                               className="relative flex flex-col gap-2 pb-3"
                               style={{ width: renderTimelineWidth }}
+                              onClick={resetTrackSelection}
                             >
                               {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && (
                                 <div
@@ -481,7 +548,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-lime-400/90 rounded-sm rotate-45" />
                                 </div>
                               )}
-                              <div className="relative h-5">
+                              <div
+                                className="relative h-5 cursor-grab active:cursor-grabbing"
+                                onMouseDown={onRenderTimelineMouseDown}
+                                onClick={event => {
+                                  onRenderTimelineClick(event);
+                                  resetTrackSelection();
+                                }}
+                              >
                                 {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && (
                                   <div className="absolute inset-0">
                                     {Array.from({ length: renderTimelineTickCount + 1 }).map((_, idx) => {
@@ -509,10 +583,43 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               </div>
                               {showRenderTimelineSubtitleTrack ? (
                                 <div
-                                  className="rounded-md bg-zinc-800/60 relative overflow-hidden"
+                                  className="rounded-md bg-zinc-800/60 relative overflow-hidden cursor-pointer"
                                   style={{ height: renderSubtitleTrackHeight }}
-                                  title="Layer trên cùng (phủ lên preview)"
+                                  title={renderSubtitleFile ? renderSubtitleFile.name : 'Subtitle track'}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={event => {
+                                    event.stopPropagation();
+                                    setSelectedTrackKey('subtitle');
+                                    if (renderSubtitleFile) {
+                                      selectTrack('subtitle');
+                                      setRenderSubtitleId(renderSubtitleFile.id);
+                                    } else {
+                                      openInspectorSection('subtitle');
+                                    }
+                                  }}
+                                  onKeyDown={event => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      setSelectedTrackKey('subtitle');
+                                      if (renderSubtitleFile) {
+                                        selectTrack('subtitle');
+                                        setRenderSubtitleId(renderSubtitleFile.id);
+                                      } else {
+                                        openInspectorSection('subtitle');
+                                      }
+                                    }
+                                  }}
                                 >
+                                  {selectedTrackKey === 'subtitle' && renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && renderSubtitleDuration ? (
+                                    <div
+                                      className="absolute inset-y-0 left-0 rounded-md outline outline-2 outline-lime-400/80 pointer-events-none"
+                                      style={{
+                                        width: `${Math.min(100, (renderSubtitleDuration / renderTimelineViewDuration) * 100)}%`
+                                      }}
+                                    />
+                                  ) : null}
                                   {renderTimelineDuration > 0 && renderSubtitleCues.length > 0 ? (
                                     renderSubtitleLanes.map((lane, laneIndex) => (
                                       lane.map((cue, idx) => {
@@ -556,12 +663,29 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 ? renderParams.effects.map((effect, idx) => (
                                     <div
                                       key={`fx-track-${idx}`}
-                                      className="h-2 rounded-full bg-zinc-800 relative shrink-0"
-                                      title={`Blur ${idx + 1} · σ${effect.sigma.toFixed(1)} · full timeline · áp lên video bên dưới`}
+                                      className="h-3 rounded-full bg-zinc-800 relative shrink-0 cursor-pointer"
+                                      title={`Blur ${idx + 1}`}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={event => {
+                                        event.stopPropagation();
+                                        setSelectedTrackKey(`effects:${idx}`);
+                                        openInspectorSection('effects');
+                                      }}
+                                      onKeyDown={event => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          setSelectedTrackKey(`effects:${idx}`);
+                                          openInspectorSection('effects');
+                                        }
+                                      }}
                                     >
                                       {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 ? (
                                         <div
-                                          className={`h-full rounded-full ${idx % 2 === 0 ? 'bg-violet-500/55' : 'bg-fuchsia-500/45'}`}
+                                          className={`h-full rounded-full ${idx % 2 === 0 ? 'bg-violet-500/55' : 'bg-fuchsia-500/45'} ${
+                                            selectedTrackKey === `effects:${idx}` ? 'outline outline-2 outline-lime-400/80' : ''
+                                          }`}
                                           style={{
                                             width: `${Math.min(100, (renderTimelineDuration / renderTimelineViewDuration) * 100)}%`
                                           }}
@@ -570,11 +694,76 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     </div>
                                   ))
                                 : null}
+                              {showRenderTimelineImageTrack
+                                ? renderImageDurationEntries.map((entry, idx) => (
+                                    <div
+                                      key={`img-track-${entry.id}`}
+                                      className="h-3 rounded-full bg-zinc-800 relative shrink-0 cursor-pointer"
+                                      title={`${renderImageFiles[idx]?.name ?? `Image ${idx + 1}`}`}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={event => {
+                                        event.stopPropagation();
+                                        setSelectedTrackKey(`image:${entry.id}`);
+                                        selectTrack('image');
+                                      }}
+                                      onKeyDown={event => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          setSelectedTrackKey(`image:${entry.id}`);
+                                          selectTrack('image');
+                                        }
+                                      }}
+                                    >
+                                      {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 ? (
+                                        <div
+                                          className={`h-full rounded-full bg-sky-500/45 ${
+                                            selectedTrackKey === `image:${entry.id}` ? 'outline outline-2 outline-lime-400/80' : ''
+                                          }`}
+                                          style={{
+                                            width: `${Math.min(100, (entry.duration / renderTimelineViewDuration) * 100)}%`
+                                          }}
+                                        />
+                                      ) : null}
+                                    </div>
+                                  ))
+                                : null}
                               {showRenderTimelineVideoTrack ? (
-                                <div className="h-2 rounded-full bg-zinc-800 relative">
+                                <div
+                                  className="h-3 rounded-full bg-zinc-800 relative cursor-pointer"
+                                  role="button"
+                                  tabIndex={0}
+                                  title={renderVideoFile ? renderVideoFile.name : 'Video track'}
+                                  onClick={event => {
+                                    event.stopPropagation();
+                                    setSelectedTrackKey('video');
+                                    if (renderVideoFile) {
+                                      selectTrack('video');
+                                      setRenderVideoId(renderVideoFile.id);
+                                    } else {
+                                      openInspectorSection('video');
+                                    }
+                                  }}
+                                  onKeyDown={event => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      setSelectedTrackKey('video');
+                                      if (renderVideoFile) {
+                                        selectTrack('video');
+                                        setRenderVideoId(renderVideoFile.id);
+                                      } else {
+                                        openInspectorSection('video');
+                                      }
+                                    }
+                                  }}
+                                >
                                   {renderVideoDuration && renderTimelineDuration > 0 ? (
                                     <div
-                                      className="h-full rounded-full bg-lime-500/50"
+                                      className={`h-full rounded-full bg-lime-500/50 ${
+                                        selectedTrackKey === 'video' ? 'outline outline-2 outline-lime-400/80' : ''
+                                      }`}
                                       style={{
                                         width: `${Math.min(100, (renderVideoDuration / renderTimelineViewDuration) * 100)}%`
                                       }}
@@ -583,10 +772,40 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 </div>
                               ) : null}
                               {showRenderTimelineAudioTrack ? (
-                                <div className="h-2 rounded-full bg-zinc-800 relative">
+                                <div
+                                  className="h-3 rounded-full bg-zinc-800 relative cursor-pointer"
+                                  role="button"
+                                  tabIndex={0}
+                                  title={renderAudioFile ? renderAudioFile.name : 'Audio track'}
+                                  onClick={event => {
+                                    event.stopPropagation();
+                                    setSelectedTrackKey('audio');
+                                    if (renderAudioFile) {
+                                      selectTrack('audio');
+                                      setRenderAudioId(renderAudioFile.id);
+                                    } else {
+                                      openInspectorSection('audio');
+                                    }
+                                  }}
+                                  onKeyDown={event => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      setSelectedTrackKey('audio');
+                                      if (renderAudioFile) {
+                                        selectTrack('audio');
+                                        setRenderAudioId(renderAudioFile.id);
+                                      } else {
+                                        openInspectorSection('audio');
+                                      }
+                                    }
+                                  }}
+                                >
                                   {renderAudioDuration && renderTimelineDuration > 0 ? (
                                     <div
-                                      className="h-full rounded-full bg-amber-500/50"
+                                      className={`h-full rounded-full bg-amber-500/50 ${
+                                        selectedTrackKey === 'audio' ? 'outline outline-2 outline-lime-400/80' : ''
+                                      }`}
                                       style={{
                                         width: `${Math.min(100, (renderAudioDuration / renderTimelineViewDuration) * 100)}%`
                                       }}
@@ -607,18 +826,25 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               ? renderParams.effects.map((effect, idx) => (
                                   <span
                                     key={`fx-dur-${idx}`}
-                                    className="h-2 flex items-center tabular-nums"
+                                    className="h-3 flex items-center tabular-nums"
                                     title={`σ${effect.sigma < 10 ? effect.sigma.toFixed(1) : Math.round(effect.sigma)} · same as timeline`}
                                   >
                                     {formatDuration(renderTimelineDuration) ?? '--'}
                                   </span>
                                 ))
                               : null}
+                            {showRenderTimelineImageTrack
+                              ? renderImageDurationEntries.map(entry => (
+                                  <span key={`img-dur-${entry.id}`} className="h-3 flex items-center">
+                                    {formatDuration(entry.duration) ?? '--'}
+                                  </span>
+                                ))
+                              : null}
                             {showRenderTimelineVideoTrack ? (
-                              <span className="h-2 flex items-center">{formatDuration(renderVideoDuration) ?? '--'}</span>
+                              <span className="h-3 flex items-center">{formatDuration(renderVideoDuration) ?? '--'}</span>
                             ) : null}
                             {showRenderTimelineAudioTrack ? (
-                              <span className="h-2 flex items-center">{formatDuration(renderAudioDuration) ?? '--'}</span>
+                              <span className="h-3 flex items-center">{formatDuration(renderAudioDuration) ?? '--'}</span>
                             ) : null}
                           </div>
                         </div>
@@ -712,16 +938,17 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                     </div>
                     {renderStudioFocus === 'timeline' ? (
                       <div className="flex flex-col gap-3 text-xs text-zinc-300 min-h-0 overflow-y-auto pr-1">
+                        {activeInspectorSection === 'timeline' && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                           <div
                             role="button"
                             tabIndex={0}
-                            aria-expanded={renderStudioInspectorOpen.timeline}
-                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }))}
+                            aria-expanded={activeInspectorSection === 'timeline'}
+                            onClick={() => openInspectorSection('timeline')}
                             onKeyDown={event => {
                               if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }));
+                                openInspectorSection('timeline');
                               }
                             }}
                             className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
@@ -730,14 +957,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             <button
                               onClick={event => {
                                 event.stopPropagation();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, timeline: !prev.timeline }));
+                                openInspectorSection('timeline');
                               }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
                             </button>
                           </div>
-                          {renderStudioInspectorOpen.timeline && (
+                          {activeInspectorSection === 'timeline' && (
                             <div className="p-3 flex flex-col gap-3">
                               <div className="flex items-center justify-between text-[11px] text-zinc-500">
                                 <span>Timeline</span>
@@ -785,17 +1012,19 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                           )}
                         </div>
+                        )}
 
+                        {activeInspectorSection === 'video' && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                           <div
                             role="button"
                             tabIndex={0}
-                            aria-expanded={renderStudioInspectorOpen.video}
-                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }))}
+                            aria-expanded={activeInspectorSection === 'video'}
+                            onClick={() => openInspectorSection('video')}
                             onKeyDown={event => {
                               if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }));
+                                openInspectorSection('video');
                               }
                             }}
                             className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
@@ -804,14 +1033,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             <button
                               onClick={event => {
                                 event.stopPropagation();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, video: !prev.video }));
+                                openInspectorSection('video');
                               }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
                             </button>
                           </div>
-                          {renderStudioInspectorOpen.video && (
+                          {activeInspectorSection === 'video' && (
                             <div className="p-3 flex flex-col gap-2">
                               {renderVideoFile ? (
                                 <>
@@ -1062,17 +1291,19 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                           )}
                         </div>
+                        )}
 
+                        {activeInspectorSection === 'audio' && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                           <div
                             role="button"
                             tabIndex={0}
-                            aria-expanded={renderStudioInspectorOpen.audio}
-                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }))}
+                            aria-expanded={activeInspectorSection === 'audio'}
+                            onClick={() => openInspectorSection('audio')}
                             onKeyDown={event => {
                               if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }));
+                                openInspectorSection('audio');
                               }
                             }}
                             className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
@@ -1081,14 +1312,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             <button
                               onClick={event => {
                                 event.stopPropagation();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, audio: !prev.audio }));
+                                openInspectorSection('audio');
                               }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
                             </button>
                           </div>
-                          {renderStudioInspectorOpen.audio && (
+                          {activeInspectorSection === 'audio' && (
                             <div className="p-3 flex flex-col gap-2">
                               {renderAudioFile ? (
                                 <>
@@ -1166,17 +1397,19 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                           )}
                         </div>
+                        )}
 
+                        {activeInspectorSection === 'subtitle' && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                           <div
                             role="button"
                             tabIndex={0}
-                            aria-expanded={renderStudioInspectorOpen.subtitle}
-                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }))}
+                            aria-expanded={activeInspectorSection === 'subtitle'}
+                            onClick={() => openInspectorSection('subtitle')}
                             onKeyDown={event => {
                               if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }));
+                                openInspectorSection('subtitle');
                               }
                             }}
                             className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
@@ -1185,14 +1418,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             <button
                               onClick={event => {
                                 event.stopPropagation();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, subtitle: !prev.subtitle }));
+                                openInspectorSection('subtitle');
                               }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
                             </button>
                           </div>
-                          {renderStudioInspectorOpen.subtitle && (
+                          {activeInspectorSection === 'subtitle' && (
                             <div className="p-3 flex flex-col gap-2">
                               {renderSubtitleFile ? (
                                 <>
@@ -1455,17 +1688,19 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                           )}
                         </div>
+                        )}
 
+                        {activeInspectorSection === 'effects' && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                           <div
                             role="button"
                             tabIndex={0}
-                            aria-expanded={renderStudioInspectorOpen.effects}
-                            onClick={() => setRenderStudioInspectorOpen(prev => ({ ...prev, effects: !prev.effects }))}
+                            aria-expanded={activeInspectorSection === 'effects'}
+                            onClick={() => openInspectorSection('effects')}
                             onKeyDown={event => {
                               if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, effects: !prev.effects }));
+                                openInspectorSection('effects');
                               }
                             }}
                             className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
@@ -1475,14 +1710,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               type="button"
                               onClick={event => {
                                 event.stopPropagation();
-                                setRenderStudioInspectorOpen(prev => ({ ...prev, effects: !prev.effects }));
+                                openInspectorSection('effects');
                               }}
                               className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
                             >
                               <Menu size={12} />
                             </button>
                           </div>
-                          {renderStudioInspectorOpen.effects && (
+                          {activeInspectorSection === 'effects' && (
                             <div className="p-3 flex flex-col gap-3">
                               <button
                                 type="button"
@@ -1653,6 +1888,241 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                           )}
                         </div>
+                        )}
+
+                        {activeInspectorSection === 'image' && (
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={activeInspectorSection === 'image'}
+                            onClick={() => openInspectorSection('image')}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                openInspectorSection('image');
+                              }
+                            }}
+                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
+                          >
+                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Images</span>
+                            <button
+                              onClick={event => {
+                                event.stopPropagation();
+                                openInspectorSection('image');
+                              }}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                          {activeInspectorSection === 'image' && (
+                            <div className="p-3 flex flex-col gap-2">
+                              {renderImageFiles.length === 0 ? (
+                                <div className="text-[11px] text-zinc-500">No images selected.</div>
+                              ) : (
+                                <div className="flex flex-col gap-2">
+                                  {renderImageFiles.map((file, index) => {
+                                    const durationValue = renderImageDurations[file.id] ?? '';
+                                    const transform = renderImageTransforms?.[file.id] ?? {};
+                                    return (
+                                      <div
+                                        key={file.id}
+                                        className="flex items-center gap-2 border border-zinc-800 rounded-lg px-2 py-1.5 bg-zinc-900/60"
+                                        draggable
+                                        onDragStart={event => {
+                                          event.dataTransfer.setData('text/plain', file.id);
+                                          event.dataTransfer.effectAllowed = 'move';
+                                        }}
+                                        onDragOver={event => {
+                                          event.preventDefault();
+                                          event.dataTransfer.dropEffect = 'move';
+                                        }}
+                                        onDrop={event => {
+                                          event.preventDefault();
+                                          const draggedId = event.dataTransfer.getData('text/plain');
+                                          if (!draggedId || draggedId === file.id) return;
+                                          setRenderImageOrderIds(prev => {
+                                            const next = prev.filter(id => id !== draggedId);
+                                            const targetIndex = next.indexOf(file.id);
+                                            next.splice(Math.max(0, targetIndex), 0, draggedId);
+                                            return [...next];
+                                          });
+                                        }}
+                                      >
+                                        <div className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center text-zinc-500 cursor-grab">
+                                          <Image size={12} />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <div className="text-xs text-zinc-200 truncate">{file.name}</div>
+                                          <div className="text-[10px] text-zinc-500">Layer {index + 1}</div>
+                                        </div>
+                                        <input
+                                          type="number"
+                                          min="0.1"
+                                          step="0.1"
+                                          value={durationValue}
+                                          onChange={e => {
+                                            const value = e.target.value;
+                                            setRenderImageDurations(prev => ({ ...prev, [file.id]: value }));
+                                          }}
+                                          className="w-20 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                          placeholder="Duration"
+                                        />
+                                        <span className="text-[10px] text-zinc-500">s</span>
+                                      </div>
+                                    );
+                                  })}
+                                  {renderImageFiles.map(file => {
+                                    const transform = renderImageTransforms?.[file.id] ?? {};
+                                    return (
+                                      <div key={`tx-${file.id}`} className="border border-zinc-800 rounded-lg p-2 bg-zinc-900/50">
+                                        <div className="text-[11px] text-zinc-400 mb-2 truncate">{file.name}</div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos X (%)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.x ?? '50'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], x: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos Y (%)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.y ?? '50'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], y: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale</label>
+                                            <input
+                                              type="number"
+                                              step="0.01"
+                                              value={transform.scale ?? '1'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], scale: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Opacity (%)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.opacity ?? '100'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], opacity: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Rotation (deg)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.rotation ?? '0'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], rotation: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fit</label>
+                                            <select
+                                              value={transform.fit ?? 'contain'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], fit: e.target.value as 'contain' | 'cover' | 'stretch' }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            >
+                                              <option value="contain">contain</option>
+                                              <option value="cover">cover</option>
+                                              <option value="stretch">stretch</option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                        <div className="grid grid-cols-4 gap-2 mt-2">
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop X (%)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.cropX ?? '0'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], cropX: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop Y (%)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.cropY ?? '0'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], cropY: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop W (%)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.cropW ?? '100'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], cropW: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div className="flex flex-col gap-1">
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop H (%)</label>
+                                            <input
+                                              type="number"
+                                              step="1"
+                                              value={transform.cropH ?? '100'}
+                                              onChange={e => setRenderImageTransforms(prev => ({
+                                                ...prev,
+                                                [file.id]: { ...prev[file.id], cropH: e.target.value }
+                                              }))}
+                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                            />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        )}
                       </div>
                     ) : renderSelectedItem ? (
                       <div className="text-xs text-zinc-300 flex flex-col gap-2">

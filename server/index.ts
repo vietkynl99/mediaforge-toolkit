@@ -50,6 +50,51 @@ type VaultFolderDTO = {
   files: VaultFileDTO[];
 };
 
+type RenderConfigV2 = {
+  version: '2';
+  timeline: {
+    resolution: string;
+    framerate: number;
+    duration?: number;
+    backgroundColor?: string;
+  };
+  inputsMap: Record<string, string>;
+  items: RenderItemV2[];
+  effects?: RenderEffectV2[];
+};
+
+type RenderItemV2 = {
+  id: string;
+  type: 'video' | 'audio' | 'image' | 'subtitle';
+  source: { ref?: string; path?: string };
+  timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
+  layer?: number;
+  transform?: {
+    x?: number;
+    y?: number;
+    scale?: number;
+    rotation?: number;
+    opacity?: number;
+    fit?: 'contain' | 'cover' | 'stretch';
+    crop?: { x: number; y: number; w: number; h: number };
+  };
+  audioMix?: {
+    gainDb?: number;
+    mute?: boolean;
+    fadeIn?: number;
+    fadeOut?: number;
+    delay?: number;
+    group?: string;
+  };
+  subtitleStyle?: Record<string, unknown>;
+  effects?: RenderEffectV2[];
+};
+
+type RenderEffectV2 = {
+  type: string;
+  params?: Record<string, unknown>;
+};
+
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
 const AUDIO_EXT = new Set(['.wav', '.mp3', '.aac', '.flac', '.ogg', '.m4a']);
 const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
@@ -201,6 +246,24 @@ try {
 } catch {
   // ignore
 }
+
+const resetParamPresetsTable = () => {
+  db.run('DROP TABLE IF EXISTS param_presets');
+  db.run(
+    `CREATE TABLE IF NOT EXISTS param_presets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_type TEXT NOT NULL,
+      params_json TEXT NOT NULL,
+      label TEXT,
+      updated_at TEXT NOT NULL
+    )`
+  );
+  try {
+    db.run('CREATE INDEX IF NOT EXISTS idx_param_presets_task_type ON param_presets (task_type)');
+  } catch {
+    // ignore
+  }
+};
 
 db.run('DROP TABLE IF EXISTS file_uvr');
 
@@ -501,7 +564,8 @@ const taskNameMap: Record<string, string> = {
   stt: 'Speech-to-Text',
   translate: 'Translation',
   edit: 'Subtitle Edit',
-  burn: 'Subtitle Burn'
+  burn: 'Subtitle Burn',
+  render: 'Render'
 };
 
 const sanitizeProjectName = (value: string) =>
@@ -511,6 +575,24 @@ const sanitizeFileName = (value: string) => {
   const base = path.basename(value || 'cookies.txt');
   const cleaned = base.replace(/[^\w.\-() ]+/g, '_').trim();
   return cleaned || 'cookies.txt';
+};
+
+const parseResolution = (value: string | undefined | null, fallback = { w: 1920, h: 1080 }) => {
+  if (!value) return fallback;
+  const match = String(value).trim().match(/(\d+)\s*[x×]\s*(\d+)/i);
+  if (!match) return fallback;
+  const w = Number(match[1]);
+  const h = Number(match[2]);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return fallback;
+  return { w: Math.round(w), h: Math.round(h) };
+};
+
+const resolveRenderInputPath = (ref: string | undefined, inputsMap: Record<string, string>) => {
+  if (!ref) return null;
+  const cleaned = ref.replace(/^\s*\{\{/, '').replace(/\}\}\s*$/, '').trim();
+  const rel = inputsMap[cleaned] ?? inputsMap[ref] ?? '';
+  if (!rel) return null;
+  return resolveSafePath(rel);
 };
 
 const resolveCookiesPath = (value: string) => {
@@ -554,6 +636,297 @@ const buildTasksFromGraph = (graph: any): JobTask[] => {
 };
 
 const getJobById = (id: string) => jobs.find(job => job.id === id);
+
+const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const cfg = raw as RenderConfigV2;
+  if (cfg.version !== '2' || !cfg.timeline || !Array.isArray(cfg.items) || !cfg.inputsMap) return null;
+  return cfg;
+};
+
+const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
+
+const normalizeFfmpegColor = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('#') && /^#[0-9a-fA-F]{6,8}$/.test(trimmed)) {
+    return `0x${trimmed.slice(1)}`;
+  }
+  return trimmed;
+};
+
+const buildRenderV2FilterGraph = async (
+  config: RenderConfigV2,
+  tmpDir: string,
+  options?: { includeAudio?: boolean }
+) => {
+  const includeAudio = options?.includeAudio !== false;
+  const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
+  const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
+  const background = normalizeFfmpegColor(config.timeline.backgroundColor || '#000000');
+
+  const visualItems = config.items.filter(item => item.type === 'video' || item.type === 'image');
+  const audioItems = config.items.filter(item => item.type === 'audio');
+  const subtitleItems = config.items.filter(item => item.type === 'subtitle');
+
+  const inputs: Array<{ path: string; type: RenderItemV2['type']; item: RenderItemV2; duration?: number }> = [];
+  for (const item of [...visualItems, ...audioItems, ...subtitleItems]) {
+    const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
+    const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path) : null);
+    if (!sourcePath) continue;
+    let duration: number | undefined;
+    if (item.type === 'video' || item.type === 'audio' || item.type === 'subtitle') {
+      const stats = await fs.stat(sourcePath);
+      duration = await getDurationSeconds(sourcePath, item.type, stats);
+    }
+    inputs.push({ path: sourcePath, type: item.type, item, duration });
+  }
+
+  const defaultDuration = 5;
+  const itemTiming = inputs.map(entry => {
+    const start = Math.max(0, entry.item.timeline?.start ?? 0);
+    const trimStart = Math.max(0, entry.item.timeline?.trimStart ?? 0);
+    const trimEnd = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
+    const baseDuration = entry.duration && entry.duration > 0
+      ? Math.max(0.1, entry.duration - trimStart - trimEnd)
+      : defaultDuration;
+    const duration = Number.isFinite(entry.item.timeline?.duration)
+      ? Math.max(0.1, Number(entry.item.timeline?.duration))
+      : baseDuration;
+    return { entry, start, duration, trimStart };
+  });
+  const outputDurationFromItems = itemTiming.reduce((max, t) => Math.max(max, t.start + t.duration), 0);
+  const outputDuration = Number.isFinite(config.timeline.duration)
+    ? Math.max(0.1, Number(config.timeline.duration))
+    : Math.max(defaultDuration, outputDurationFromItems);
+
+  const inputArgs: string[] = [];
+  inputs.forEach(entry => {
+    if (entry.type === 'image') {
+      const timing = itemTiming.find(t => t.entry === entry);
+      const duration = timing?.duration ?? outputDuration;
+      inputArgs.push('-loop', '1', '-t', String(duration));
+    }
+    inputArgs.push('-i', entry.path);
+  });
+
+  const filters: string[] = [];
+  filters.push(`color=c=${background}:s=${outW}x${outH}:d=${outputDuration}[base]`);
+
+  let currentVideo = '[base]';
+  let visualIndex = 0;
+  const sortedVisual = [...visualItems].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+  for (const item of sortedVisual) {
+    const inputIndex = inputs.findIndex(entry => entry.item === item);
+    if (inputIndex < 0) continue;
+    const label = `[v${visualIndex}]`;
+    const timing = itemTiming.find(t => t.entry.item === item);
+    const start = timing?.start ?? 0;
+    const duration = timing?.duration ?? outputDuration;
+    const end = Math.max(start + 0.01, start + duration);
+    const scale = item.transform?.scale ?? 1;
+    const rotation = item.transform?.rotation ?? 0;
+    const opacity = Math.max(0, Math.min(100, item.transform?.opacity ?? 100)) / 100;
+    const posX = item.transform?.x ?? 50;
+    const posY = item.transform?.y ?? 50;
+    const fit = item.transform?.fit ?? 'contain';
+    const crop = item.transform?.crop;
+    const xExpr = `(main_w-overlay_w)*${posX}/100`;
+    const yExpr = `(main_h-overlay_h)*${posY}/100`;
+
+    let chain = `[${inputIndex}:v]`;
+    const addFilter = (filter: string) => {
+      chain += chain.endsWith(']') ? filter : `,${filter}`;
+    };
+    const trimStart = timing?.trimStart ?? 0;
+    const trimEndValue = trimStart + duration;
+    if (trimStart > 0 || duration > 0.1) {
+      addFilter(`trim=start=${trimStart}:end=${trimEndValue}`);
+    }
+    addFilter('setpts=PTS-STARTPTS');
+    if (crop) {
+      const cw = Math.max(0.1, Math.min(100, crop.w));
+      const ch = Math.max(0.1, Math.min(100, crop.h));
+      const cx = Math.max(0, Math.min(100, crop.x));
+      const cy = Math.max(0, Math.min(100, crop.y));
+      addFilter(
+        `crop=iw*${(cw / 100).toFixed(4)}:ih*${(ch / 100).toFixed(4)}:iw*${(cx / 100).toFixed(4)}:ih*${(cy / 100).toFixed(4)}`
+      );
+    }
+    if (fit === 'stretch') {
+      addFilter(`scale=${outW}:${outH}`);
+    } else if (fit === 'cover') {
+      addFilter(`scale=${outW}:${outH}:force_original_aspect_ratio=increase`);
+    } else {
+      addFilter(`scale=${outW}:${outH}:force_original_aspect_ratio=decrease`);
+    }
+    if (scale !== 1) {
+      addFilter(`scale=iw*${scale}:ih*${scale}`);
+    }
+    if (rotation !== 0) {
+      const radians = (rotation * Math.PI) / 180;
+      addFilter(`rotate=${radians}:fillcolor=none`);
+    }
+    addFilter('format=rgba');
+    if (opacity < 1) {
+      addFilter(`colorchannelmixer=aa=${opacity.toFixed(3)}`);
+    }
+    filters.push(`${chain}${label}`);
+    filters.push(`${currentVideo}${label}overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'[v${visualIndex}o]`);
+    currentVideo = `[v${visualIndex}o]`;
+    visualIndex += 1;
+  }
+
+  for (let idx = 0; idx < subtitleItems.length; idx += 1) {
+    const subtitleItem = subtitleItems[idx];
+    const subPath = resolveRenderInputPath(subtitleItem.source?.ref, config.inputsMap)
+      ?? (subtitleItem.source?.path ? resolveSafePath(subtitleItem.source.path) : null);
+    if (!subPath) continue;
+    const timing = itemTiming.find(t => t.entry.item === subtitleItem);
+    const start = timing?.start ?? 0;
+    const duration = timing?.duration ?? outputDuration;
+    const end = Math.max(start + 0.01, start + duration);
+    const stylePayload = {
+      ...(subtitleItem.subtitleStyle ?? {}),
+      playResX: outW,
+      playResY: outH
+    };
+    const style = parseAssRenderStyle(stylePayload);
+    const assOut = path.join(tmpDir, `render-v2-${idx}.ass`);
+    try {
+      await writeStyledAssFile(subPath, style, assOut);
+      const subFilter = buildSubtitlesVideoFilter(assOut, { w: style.playResX, h: style.playResY });
+      const label = `[vsub${idx}]`;
+      // Note: subtitles filter already honors subtitle timestamps; avoid enable=... for wider ffmpeg compatibility.
+      filters.push(`${currentVideo}${subFilter}${label}`);
+      currentVideo = label;
+    } catch {
+      // ignore subtitle parsing errors
+    }
+  }
+
+  const audioFilters: string[] = [];
+  let audioIndex = 0;
+  for (const item of audioItems) {
+    if (!includeAudio) break;
+    const inputIndex = inputs.findIndex(entry => entry.item === item);
+    if (inputIndex < 0) continue;
+    if (item.audioMix?.mute) continue;
+    const label = `[a${audioIndex}]`;
+    let chain = `[${inputIndex}:a]`;
+    const addFilter = (filter: string) => {
+      chain += chain.endsWith(']') ? filter : `,${filter}`;
+    };
+    const timing = itemTiming.find(t => t.entry.item === item);
+    const trimStart = timing?.trimStart ?? 0;
+    const duration = timing?.duration ?? outputDuration;
+    const endValue = trimStart + duration;
+    if (trimStart > 0 || duration > 0.1) {
+      addFilter(`atrim=start=${trimStart}:end=${endValue}`);
+    }
+    addFilter('asetpts=PTS-STARTPTS');
+    const gainDb = item.audioMix?.gainDb ?? 0;
+    if (gainDb !== 0) {
+      const factor = Math.pow(10, gainDb / 20);
+      addFilter(`volume=${factor.toFixed(4)}`);
+    }
+    const start = timing?.start ?? 0;
+    if (start > 0) {
+      const ms = Math.round(start * 1000);
+      addFilter(`adelay=${ms}|${ms}`);
+    }
+    const fadeIn = Math.max(0, item.audioMix?.fadeIn ?? 0);
+    if (fadeIn > 0) {
+      addFilter(`afade=t=in:st=${start}:d=${fadeIn}`);
+    }
+    const fadeOut = Math.max(0, item.audioMix?.fadeOut ?? 0);
+    if (fadeOut > 0) {
+      const end = Math.max(start + 0.01, start + duration);
+      const fadeOutStart = Math.max(start, end - fadeOut);
+      addFilter(`afade=t=out:st=${fadeOutStart}:d=${fadeOut}`);
+    }
+    audioFilters.push(`${chain}${label}`);
+    audioIndex += 1;
+  }
+
+  let audioMap: string[] = [];
+  if (includeAudio && audioFilters.length > 0) {
+    const mixInputs = audioFilters.map((_, idx) => `[a${idx}]`).join('');
+    filters.push(...audioFilters);
+    filters.push(`${mixInputs}amix=inputs=${audioFilters.length}:duration=longest[aout]`);
+    audioMap = ['-map', '[aout]'];
+  }
+
+  const filterComplex = filters.filter(f => f && f.trim().length > 0).join(';');
+
+  return {
+    inputArgs,
+    filterComplex,
+    videoLabel: currentVideo,
+    audioMap,
+    outputDuration,
+    framerate
+  };
+};
+
+const buildRenderV2FfmpegArgs = async (
+  config: RenderConfigV2,
+  outputPath: string,
+  tmpDir: string
+) => {
+  const graph = await buildRenderV2FilterGraph(config, tmpDir);
+  const args = [
+    '-y',
+    ...graph.inputArgs,
+    '-filter_complex',
+    graph.filterComplex,
+    '-map',
+    graph.videoLabel,
+    ...graph.audioMap,
+    '-r',
+    String(graph.framerate),
+    '-t',
+    String(graph.outputDuration),
+    '-pix_fmt',
+    'yuv420p',
+    outputPath
+  ];
+
+  return { args, outputDuration: graph.outputDuration };
+};
+
+const runRenderV2Task = async (
+  config: RenderConfigV2,
+  projectRoot: string,
+  onLog?: (chunk: string) => void
+) => {
+  const outputDir = path.join(projectRoot, 'output');
+  await fs.mkdir(outputDir, { recursive: true });
+  const outputName = `render-${Date.now()}.mp4`;
+  const outputPath = path.join(outputDir, outputName);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-v2-'));
+  try {
+    const { args } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir);
+    const ffmpegPath = await getFfmpegPath();
+    const commandLine = [ffmpegPath, ...args].map(formatArg).join(' ');
+    onLog?.(`COMMAND (render v2): ${commandLine}\n`);
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      proc.stdout.on('data', data => onLog?.(data.toString()));
+      proc.stderr.on('data', data => onLog?.(data.toString()));
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited with code ${code}`));
+      });
+    });
+    return {
+      outputPath,
+      outputRelativePath: path.relative(MEDIA_VAULT_ROOT, outputPath)
+    };
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
+  }
+};
 
 const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
   job.status = 'processing';
@@ -1003,6 +1376,31 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       }
       appendJobLog(job, `Total overlap: ${ttsResult.overlapSeconds.toFixed(2)}s\n`);
       appendJobLog(job, `Output:\n- ${ttsResult.outputRelativePath}\n`);
+      const totalAfter = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+      job.progress = Math.max(0, Math.min(99, Math.round(totalAfter / job.tasks.length)));
+      scheduleJobPersist(job);
+    }
+    const renderTask = job.tasks.find(task => task.type === 'render');
+    if (renderTask) {
+      const rawConfig = (job as any).__renderConfigV2 ?? (job.params as any)?.render?.configV2;
+      const config = resolveRenderConfigV2(rawConfig);
+      if (!config) {
+        throw new Error('Missing renderConfigV2');
+      }
+      renderTask.status = 'active';
+      renderTask.progress = 0;
+      const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+      job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+      scheduleJobPersist(job);
+
+      const projectRoot = (job as any).__projectRoot as string | undefined;
+      if (!projectRoot) {
+        throw new Error('Missing project root for render');
+      }
+      const result = await runRenderV2Task(config, projectRoot, chunk => appendJobLog(job, chunk));
+      appendJobLog(job, `Render output:\n- ${result.outputRelativePath}\n`);
+      renderTask.status = 'done';
+      renderTask.progress = 100;
       const totalAfter = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
       job.progress = Math.max(0, Math.min(99, Math.round(totalAfter / job.tasks.length)));
       scheduleJobPersist(job);
@@ -1539,6 +1937,7 @@ const readFilesFromDir = async (
       sizeBytes: stats.size,
       modifiedAt: stats.mtime.toISOString(),
       type: includeSubdir && type !== 'subtitle' && type !== 'video' && type !== 'audio'
+        && type !== 'image'
         ? 'output'
         : type,
       extension: path.extname(entry.name).toLowerCase(),
@@ -1890,6 +2289,17 @@ app.delete('/api/param-presets/:id', async (req, res) => {
   }
 });
 
+app.post('/api/param-presets/reset', async (_req, res) => {
+  try {
+    resetParamPresetsTable();
+    await persistDb();
+    res.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to reset presets';
+    res.status(500).json({ error: message });
+  }
+});
+
 app.post('/api/vault/import', express.raw({ type: 'multipart/form-data', limit: '2gb' }), async (req, res) => {
   try {
     const contentType = String(req.headers['content-type'] || '');
@@ -2052,6 +2462,7 @@ app.post('/api/jobs/run', async (req, res) => {
   const ttsRate = typeof req.body?.rate === 'number' ? req.body.rate : undefined;
   const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
   const ttsVolume = typeof req.body?.volume === 'number' ? req.body.volume : undefined;
+  const renderConfigV2 = req.body?.renderConfigV2 as RenderConfigV2 | undefined;
 
   try {
     let pipelineName = inlineName || 'Ad-hoc Pipeline';
@@ -2174,7 +2585,8 @@ app.post('/api/jobs/run', async (req, res) => {
             volume: ttsVolume,
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
-          }
+          },
+          render: renderConfigV2 ? { configV2: renderConfigV2 } : undefined
         }
       };
 
@@ -2192,6 +2604,7 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__backend = backend;
       (job as any).__ttsOverlapMode = ttsOverlapMode;
       (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
+      if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
@@ -2265,18 +2678,21 @@ app.post('/api/jobs/run', async (req, res) => {
             volume: ttsVolume,
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
-          }
+          },
+          render: renderConfigV2 ? { configV2: renderConfigV2 } : undefined
         }
       };
 
       (job as any).__inputPath = fullPath;
       (job as any).__inputRelativePath = inputPath;
+      (job as any).__projectRoot = projectRoot;
       (job as any).__outputDir = outputDir;
       (job as any).__model = model;
       (job as any).__outputFormat = outputFormat;
       (job as any).__backend = backend;
       (job as any).__ttsOverlapMode = ttsOverlapMode;
       (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
+      if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
@@ -2723,6 +3139,14 @@ const getContentType = (ext: string) => {
     '.flac': 'audio/flac',
     '.m4a': 'audio/mp4',
     '.ogg': 'audio/ogg',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.bmp': 'image/bmp',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
     '.srt': 'text/plain; charset=utf-8',
     '.vtt': 'text/vtt; charset=utf-8',
     '.ass': 'text/plain; charset=utf-8',
@@ -3155,6 +3579,7 @@ app.get('/api/render-preview', async (req, res) => {
   const outputPath = path.join(tmpDir, 'frame.jpg');
   const subtitleStyleJson = typeof req.query.subtitleStyle === 'string' ? req.query.subtitleStyle : '';
   let previewBuf: Buffer = RENDER_PREVIEW_BLACK_JPEG;
+  let previewError: string | null = null;
   try {
     let atSeconds = Number.isFinite(at) ? Math.max(0, at) : 0;
     /** Timeline có thể dài hơn video (audio/sub dài hơn); seek quá cuối file → ffmpeg không tạo frame. */
@@ -3198,7 +3623,10 @@ app.get('/api/render-preview', async (req, res) => {
 
     await runFfmpegFrameAt(videoPath, outputPath, atSeconds, effectiveSubtitlePath, parsedEffects, assOriginalSize);
     previewBuf = await fs.readFile(outputPath);
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Render preview failed';
+    console.error('render-preview: failed', message);
+    previewError = message;
     previewBuf = RENDER_PREVIEW_BLACK_JPEG;
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
@@ -3206,6 +3634,74 @@ app.get('/api/render-preview', async (req, res) => {
 
   res.setHeader('Content-Type', 'image/jpeg');
   res.setHeader('Cache-Control', 'no-store');
+  if (previewError) {
+    const safe = previewError.replace(/[\r\n]/g, ' ').slice(0, 500);
+    res.setHeader('X-Render-Preview-Error', safe);
+  }
+  res.send(previewBuf);
+});
+
+app.post('/api/render-preview-v2', async (req, res) => {
+  const config = req.body?.config as RenderConfigV2 | undefined;
+  const at = typeof req.body?.at === 'number' ? req.body.at : 0;
+  if (!config || config.version !== '2') {
+    res.status(400).json({ error: 'Missing render config v2' });
+    return;
+  }
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-preview-v2-'));
+  const outputPath = path.join(tmpDir, 'frame.jpg');
+  let previewBuf: Buffer = RENDER_PREVIEW_BLACK_JPEG;
+  let previewError: string | null = null;
+  try {
+    const graph = await buildRenderV2FilterGraph(config, tmpDir, { includeAudio: false });
+    let atSeconds = Number.isFinite(at) ? Math.max(0, at) : 0;
+    if (graph.outputDuration > 0) {
+      atSeconds = Math.min(atSeconds, Math.max(0, graph.outputDuration - 0.05));
+    }
+    const ffmpegPath = await getFfmpegPath();
+    const args = [
+      '-y',
+      ...graph.inputArgs,
+      '-filter_complex',
+      graph.filterComplex,
+      '-map',
+      graph.videoLabel,
+      '-ss',
+      String(atSeconds),
+      '-frames:v',
+      '1',
+      '-q:v',
+      '3',
+      outputPath
+    ];
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      proc.stderr.on('data', chunk => {
+        stderr += chunk.toString();
+      });
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
+      });
+    });
+    previewBuf = await fs.readFile(outputPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Render preview v2 failed';
+    console.error('render-preview-v2: failed', message);
+    previewError = message;
+    previewBuf = RENDER_PREVIEW_BLACK_JPEG;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
+  }
+
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'no-store');
+  if (previewError) {
+    const safe = previewError.replace(/[\r\n]/g, ' ').slice(0, 500);
+    res.setHeader('X-Render-Preview-Error', safe);
+  }
   res.send(previewBuf);
 });
 

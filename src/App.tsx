@@ -128,6 +128,59 @@ type RenderSubtitleAssState = {
   wrapStyle: string;
 };
 
+type RenderConfigV2 = {
+  version: '2';
+  timeline: {
+    resolution: string;
+    framerate: number;
+    duration?: number;
+    backgroundColor?: string;
+  };
+  inputsMap: Record<string, string>;
+  items: Array<{
+    id: string;
+    type: 'video' | 'audio' | 'image' | 'subtitle';
+    source: { ref?: string; path?: string };
+    timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
+    layer?: number;
+    transform?: {
+      x?: number;
+      y?: number;
+      scale?: number;
+      rotation?: number;
+      opacity?: number;
+      fit?: 'contain' | 'cover' | 'stretch';
+      crop?: { x: number; y: number; w: number; h: number };
+    };
+    audioMix?: {
+      gainDb?: number;
+      mute?: boolean;
+      fadeIn?: number;
+      fadeOut?: number;
+      delay?: number;
+      group?: string;
+    };
+    subtitleStyle?: Record<string, unknown>;
+    effects?: Array<{ type: string; params?: Record<string, unknown> }>;
+  }>;
+  effects?: Array<{ type: string; params?: Record<string, unknown> }>;
+};
+
+type RenderTemplate = {
+  id: string;
+  name: string;
+  updatedAt: string;
+  config: RenderConfigV2;
+};
+
+type TaskTemplate = {
+  id: string;
+  name: string;
+  taskType: string;
+  updatedAt: string;
+  params: Record<string, any>;
+};
+
 /** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
 const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
   fontName: 'Arial',
@@ -245,6 +298,9 @@ const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
     }
   }
 ];
+
+const SHOW_PARAM_PRESETS = false;
+const TASK_TEMPLATES_KEY = 'mediaforge.taskTemplates.v1';
 
 const VIET_SUBTITLE_FONTS = [
   'Be Vietnam Pro',
@@ -1015,13 +1071,14 @@ export default function App() {
   const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(false);
   const [renderStudioProjectOpen, setRenderStudioProjectOpen] = useState(false);
   const [renderStudioInspectorOpen, setRenderStudioInspectorOpen] = useState<
-    Record<'timeline' | 'video' | 'audio' | 'subtitle' | 'effects', boolean>
+    Record<'timeline' | 'video' | 'audio' | 'subtitle' | 'effects' | 'image', boolean>
   >({
     timeline: false,
     video: false,
     audio: false,
     subtitle: false,
-    effects: false
+    effects: false,
+    image: false
   });
   const [showPipelinePreview, setShowPipelinePreview] = useState(false);
   const [isEditingPipelineName, setIsEditingPipelineName] = useState(false);
@@ -1053,6 +1110,39 @@ export default function App() {
   const [renderAudioId, setRenderAudioId] = useState<string | null>(null);
   const [renderSubtitleId, setRenderSubtitleId] = useState<string | null>(null);
   const [renderInputFileIds, setRenderInputFileIds] = useState<string[]>([]);
+  const [renderImageOrderIds, setRenderImageOrderIds] = useState<string[]>([]);
+  const [renderImageDurations, setRenderImageDurations] = useState<Record<string, string>>({});
+  const [renderImageTransforms, setRenderImageTransforms] = useState<Record<string, {
+    x?: string;
+    y?: string;
+    scale?: string;
+    rotation?: string;
+    opacity?: string;
+    fit?: 'contain' | 'cover' | 'stretch';
+    cropX?: string;
+    cropY?: string;
+    cropW?: string;
+    cropH?: string;
+  }>>({});
+  const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
+  const [renderTemplates, setRenderTemplates] = useState<RenderTemplate[]>([]);
+  const [renderTemplateModalOpen, setRenderTemplateModalOpen] = useState(false);
+  const [renderTemplateEditorOpen, setRenderTemplateEditorOpen] = useState(false);
+  const [renderTemplateNameDraft, setRenderTemplateNameDraft] = useState('');
+  const [renderTemplateJsonDraft, setRenderTemplateJsonDraft] = useState('');
+  const [renderTemplateEditingId, setRenderTemplateEditingId] = useState<string | null>(null);
+  const [renderTemplateApplyOpen, setRenderTemplateApplyOpen] = useState(false);
+  const [renderTemplateApplyTarget, setRenderTemplateApplyTarget] = useState<RenderTemplate | null>(null);
+  const [renderTemplateApplyMap, setRenderTemplateApplyMap] = useState<Record<string, string>>({});
+  const [runPipelineRenderTemplateId, setRunPipelineRenderTemplateId] = useState('custom');
+  const [templateSaveOpen, setTemplateSaveOpen] = useState(false);
+  const [templateSaveTaskType, setTemplateSaveTaskType] = useState<'render' | 'download' | 'uvr' | 'tts'>('render');
+  const [templateSaveName, setTemplateSaveName] = useState('');
+  const [templateSaveParams, setTemplateSaveParams] = useState<Record<string, any> | null>(null);
+  const [templateSaveRenderConfig, setTemplateSaveRenderConfig] = useState<RenderConfigV2 | null>(null);
+  const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
+  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
+  const [runPipelineTaskTemplate, setRunPipelineTaskTemplate] = useState<Record<string, string>>({});
   const [renderTimelineScale, setRenderTimelineScale] = useState(1);
   const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
   const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
@@ -1061,7 +1151,7 @@ export default function App() {
   const [saveRenderPresetLoading, setSaveRenderPresetLoading] = useState(false);
   const [renderSubtitleCues, setRenderSubtitleCues] = useState<Array<{ start: number; end: number; text: string }>>([]);
   const [renderStudioFocus, setRenderStudioFocus] = useState<'timeline' | 'item'>('timeline');
-  const [renderStudioItemType, setRenderStudioItemType] = useState<'video' | 'audio' | 'subtitle' | null>(null);
+  const [renderStudioItemType, setRenderStudioItemType] = useState<'video' | 'audio' | 'subtitle' | 'image' | null>(null);
   const [renderTimelineViewportWidth, setRenderTimelineViewportWidth] = useState(0);
   const renderTimelineScrollRef = useRef<HTMLDivElement | null>(null);
   const prevShowRenderStudioForZoomRef = useRef(false);
@@ -1156,6 +1246,7 @@ export default function App() {
 
   const TASK_PIPELINE_PREFIX = 'task:';
   const RUN_PIPELINE_PREFS_KEY = 'mediaforge.runPipelinePrefs.v1';
+  const RENDER_TEMPLATES_KEY = 'mediaforge.renderTemplates.v1';
 
   const selectedFolder = vaultFolders.find(folder => folder.id === vaultFolderId) ?? null;
   const selectedFile = selectedFolder?.files.find(file => file.id === vaultFileId) ?? null;
@@ -1171,7 +1262,21 @@ export default function App() {
   const runPipelineHasRender = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
     ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'render'
     : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'render'));
-  const renderReady = Boolean(renderVideoId);
+  const renderSelectedInputs = runPipelineProject?.files.filter(file => renderInputFileIds.includes(file.id)) ?? [];
+  const renderReady = (() => {
+    if (renderConfigV2Override && runPipelineProject) {
+      const mapped = Object.values(renderConfigV2Override.inputsMap).filter(Boolean);
+      if (!mapped.length) return false;
+      return mapped.some(path => {
+        const file = runPipelineProject.files.find(f => f.relativePath === path);
+        return file?.type === 'video' || file?.type === 'image';
+      });
+    }
+    return renderSelectedInputs.some(file => file.type === 'video' || file.type === 'image');
+  })();
+  const renderImageFiles = renderImageOrderIds
+    .map(id => renderSelectedInputs.find(file => file.id === id))
+    .filter((file): file is NonNullable<typeof file> => Boolean(file));
   const renderVideoFile = runPipelineProject?.files.find(file => file.id === renderVideoId) ?? null;
   const renderAudioFile = runPipelineProject?.files.find(file => file.id === renderAudioId) ?? null;
   const renderSubtitleFile = runPipelineProject?.files.find(file => file.id === renderSubtitleId) ?? null;
@@ -1271,8 +1376,14 @@ export default function App() {
     renderAudioDuration ?? 0,
     renderSubtitleDuration ?? 0
   );
+  const renderImageDurationFallback = renderTimelineMax > 0 ? renderTimelineMax : 5;
+  const renderImageDurationEntries = renderImageFiles.map(file => ({
+    id: file.id,
+    duration: coerceNumber(renderImageDurations[file.id], renderImageDurationFallback) ?? renderImageDurationFallback
+  }));
+  const renderImageTimelineMax = renderImageDurationEntries.reduce((max, entry) => Math.max(max, entry.duration), 0);
   /** Thời lượng thật = track dài nhất (hiển thị, preview, export). */
-  const renderTimelineDuration = renderTimelineMax > 0 ? renderTimelineMax : 0;
+  const renderTimelineDuration = Math.max(renderTimelineMax, renderImageTimelineMax);
   /** Chỉ UI: strip timeline rộng thêm một phần sau điểm cuối nội dung (scroll / click map theo giá trị này, thời gian clamp về duration thật). */
   const renderTimelineViewDuration =
     renderTimelineDuration > 0 ? renderTimelineDuration * (1 + RENDER_TIMELINE_VIEW_PAD) : 0;
@@ -1301,6 +1412,7 @@ export default function App() {
   const renderSubtitleLaneHeight = 24;
   const renderSubtitleTrackHeight = Math.max(1, renderSubtitleLanes.length) * renderSubtitleLaneHeight;
   const showRenderTimelineSubtitleTrack = Boolean(renderSubtitleFile);
+  const showRenderTimelineImageTrack = renderImageFiles.length > 0;
   const showRenderTimelineVideoTrack = Boolean(renderVideoFile);
   const showRenderTimelineAudioTrack = Boolean(renderAudioFile);
   const showRenderTimelineEffectTracks = renderParams.effects.length > 0;
@@ -1310,8 +1422,14 @@ export default function App() {
     if (renderStudioItemType === 'video') return files.find(file => file.id === renderVideoId) ?? null;
     if (renderStudioItemType === 'audio') return files.find(file => file.id === renderAudioId) ?? null;
     if (renderStudioItemType === 'subtitle') return files.find(file => file.id === renderSubtitleId) ?? null;
+    if (renderStudioItemType === 'image') {
+      return files.find(file => file.id === renderInputFileIds.find(id => {
+        const f = files.find(item => item.id === id);
+        return f?.type === 'image';
+      })) ?? null;
+    }
     return null;
-  }, [renderStudioFocus, renderStudioItemType, runPipelineProject?.files, renderVideoId, renderAudioId, renderSubtitleId]);
+  }, [renderStudioFocus, renderStudioItemType, runPipelineProject?.files, renderVideoId, renderAudioId, renderSubtitleId, renderInputFileIds]);
   const renderTimelineMinScale = renderTimelineViewDuration > 0 && renderTimelineViewportWidth > 0
     ? Math.min(1, Math.max(0.1, renderTimelineViewportWidth / (renderTimelineViewDuration * 24)))
     : 0.1;
@@ -1606,6 +1724,162 @@ export default function App() {
     }
   };
 
+  const getTaskTemplatesForType = (taskType: string) => taskTemplates.filter(template => template.taskType === taskType);
+
+  const applyTaskTemplateParams = (taskType: string, params: Record<string, any>) => {
+    if (!params || typeof params !== 'object') return;
+    if (taskType === 'uvr') {
+      if (params.backend !== undefined) setRunPipelineBackend(String(params.backend));
+      if (params.model !== undefined) setVrModel(String(params.model));
+      if (params.outputFormat !== undefined) {
+        setVrOutputType(String(params.outputFormat) as 'Mp3' | 'Wav' | 'Flac');
+      }
+      return;
+    }
+    if (taskType === 'tts') {
+      if (params.voice !== undefined) setRunPipelineTtsVoice(String(params.voice));
+      if (params.rate !== undefined) setRunPipelineTtsRate(String(params.rate));
+      if (params.pitch !== undefined) setRunPipelineTtsPitch(String(params.pitch));
+      if (params.overlapMode !== undefined) {
+        const mode = String(params.overlapMode);
+        if (mode === 'overlap' || mode === 'truncate') {
+          setRunPipelineTtsOverlapMode(mode);
+        }
+      }
+      if (params.removeLineBreaks !== undefined) {
+        setRunPipelineTtsRemoveLineBreaks(Boolean(params.removeLineBreaks));
+      }
+      return;
+    }
+    if (taskType === 'download') {
+      if (params.downloadMode !== undefined) {
+        const mode = String(params.downloadMode);
+        if (mode === 'all' || mode === 'subs' || mode === 'media') {
+          setDownloadMode(mode);
+        }
+      }
+      if (params.subLangs !== undefined) setDownloadSubtitleLang(String(params.subLangs));
+      if (params.noPlaylist !== undefined) setDownloadNoPlaylist(Boolean(params.noPlaylist));
+    }
+  };
+
+  const handleTaskTemplateChange = (taskType: string, value: string) => {
+    setRunPipelineTaskTemplate(prev => ({ ...prev, [taskType]: value }));
+    if (value === 'custom') return;
+    const template = taskTemplates.find(t => t.id === value && t.taskType === taskType);
+    if (template) applyTaskTemplateParams(taskType, template.params);
+  };
+
+  const buildTaskTemplateParams = (taskType: string): Record<string, any> => {
+    if (taskType === 'download') {
+      return {
+        downloadMode,
+        subLangs: downloadSubtitleLang,
+        noPlaylist: downloadNoPlaylist
+      };
+    }
+    if (taskType === 'uvr') {
+      return {
+        backend: runPipelineBackend,
+        model: vrModel,
+        outputFormat: vrOutputType
+      };
+    }
+    if (taskType === 'tts') {
+      return {
+        voice: runPipelineTtsVoice,
+        rate: runPipelineTtsRate,
+        pitch: runPipelineTtsPitch,
+        overlapMode: runPipelineTtsOverlapMode,
+        removeLineBreaks: runPipelineTtsRemoveLineBreaks
+      };
+    }
+    return {};
+  };
+
+  const openTemplateSaveModal = (
+    taskType: 'render' | 'download' | 'uvr' | 'tts',
+    defaultName: string,
+    errorMessage?: string | null
+  ) => {
+    setTemplateSaveTaskType(taskType);
+    setTemplateSaveName(defaultName);
+    setTemplateSaveError(errorMessage ?? null);
+    setTemplateSaveOpen(true);
+  };
+
+  const saveTaskTemplate = (taskType: 'download' | 'uvr' | 'tts') => {
+    const templatesForType = getTaskTemplatesForType(taskType);
+    const baseLabel = availableTasks.find(task => task.type === taskType)?.label ?? taskType;
+    const defaultName = `${baseLabel} template ${templatesForType.length + 1}`;
+    setTemplateSaveParams(buildTaskTemplateParams(taskType));
+    setTemplateSaveRenderConfig(null);
+    openTemplateSaveModal(taskType, defaultName);
+  };
+
+  const saveRenderTemplateQuick = () => {
+    const config = buildRenderConfigV2();
+    const defaultName = `Render template ${renderTemplates.length + 1}`;
+    if (!config || !Array.isArray(config.items) || config.items.length === 0) {
+      setTemplateSaveRenderConfig(null);
+      setTemplateSaveParams(null);
+      openTemplateSaveModal('render', defaultName, 'Select at least 1 file to build template.');
+      return;
+    }
+    setTemplateSaveRenderConfig(config);
+    setTemplateSaveParams(null);
+    openTemplateSaveModal('render', defaultName);
+  };
+
+  const confirmSaveTemplate = () => {
+    const label = templateSaveName.trim();
+    if (templateSaveError) {
+      showToast(templateSaveError, 'warning');
+      return;
+    }
+    if (!label) {
+      showToast('Nhập tên template.', 'warning');
+      return;
+    }
+    const now = new Date().toISOString();
+    if (templateSaveTaskType === 'render') {
+      if (!templateSaveRenderConfig) return;
+      const templateConfig = buildTemplateFromConfig(templateSaveRenderConfig);
+      setRenderTemplates(prev => ([
+        { id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`, name: label, config: templateConfig, updatedAt: now },
+        ...prev
+      ]));
+      showToast('Saved render template.', 'success');
+    } else {
+      if (!templateSaveParams) return;
+      setTaskTemplates(prev => ([
+        {
+          id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          name: label,
+          taskType: templateSaveTaskType,
+          updatedAt: now,
+          params: templateSaveParams
+        },
+        ...prev
+      ]));
+      showToast('Saved template.', 'success');
+    }
+    setTemplateSaveOpen(false);
+  };
+
+  const handleRenderTemplateChange = (value: string) => {
+    setRunPipelineRenderTemplateId(value);
+    if (value === 'custom') {
+      setRenderConfigV2Override(null);
+      return;
+    }
+    const template = renderTemplates.find(t => t.id === value);
+    if (!template) return;
+    setRenderTemplateApplyTarget(template);
+    setRenderTemplateApplyMap({});
+    setRenderTemplateApplyOpen(true);
+  };
+
   const applySubtitleStylePreset = (preset: SubtitleStylePreset) => {
     setRenderParams(prev => ({
       ...prev,
@@ -1738,7 +2012,25 @@ export default function App() {
     setRenderPlayheadSeconds(prev => Math.min(prev, renderTimelineDuration));
   }, [renderTimelineDuration]);
 
-  const renderPreviewParamsKey = JSON.stringify(renderParams);
+  const renderConfigPreview = useMemo(() => {
+    return buildRenderConfigV2();
+  }, [
+    renderConfigV2Override,
+    runPipelineProject?.id,
+    renderInputFileIds,
+    renderImageOrderIds,
+    renderImageDurations,
+    renderImageTransforms,
+    renderParams.timeline,
+    renderParams.video,
+    renderParams.audio,
+    renderParams.subtitle
+  ]);
+
+  const renderPreviewParamsKey = JSON.stringify({
+    renderParams,
+    renderConfigPreview
+  });
 
   useEffect(() => {
     if (!showRenderStudio) return;
@@ -1758,33 +2050,48 @@ export default function App() {
       try {
         setRenderPreviewLoading(true);
         setRenderPreviewError(null);
-        const previewRes = parseResolution(renderParams.timeline.resolution);
-        const params = new URLSearchParams({
-          videoPath: renderVideoFile.relativePath,
-          at: String(
-            Math.max(
-              0,
-              renderTimelineDuration > 0
-                ? Math.min(renderPlayheadSeconds, renderTimelineDuration)
-                : renderPlayheadSeconds
-            )
-          )
-        });
-        if (renderSubtitleFile?.relativePath) {
-          params.set('subtitlePath', renderSubtitleFile.relativePath);
-          params.set(
-            'subtitleStyle',
-            JSON.stringify({
-              ...renderParams.subtitle,
-              playResX: previewRes.w,
-              playResY: previewRes.h
-            })
-          );
+        const previewAt = Math.max(
+          0,
+          renderTimelineDuration > 0
+            ? Math.min(renderPlayheadSeconds, renderTimelineDuration)
+            : renderPlayheadSeconds
+        );
+        let response: Response;
+        if (renderConfigPreview) {
+          response = await fetch('/api/render-preview-v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: renderConfigPreview, at: previewAt }),
+            signal: controller.signal
+          });
+        } else {
+          if (!renderVideoFile?.relativePath) {
+            setRenderPreviewUrl(null);
+            setRenderPreviewError(null);
+            setRenderPreviewLoading(false);
+            return;
+          }
+          const previewRes = parseResolution(renderParams.timeline.resolution);
+          const params = new URLSearchParams({
+            videoPath: renderVideoFile.relativePath,
+            at: String(previewAt)
+          });
+          if (renderSubtitleFile?.relativePath) {
+            params.set('subtitlePath', renderSubtitleFile.relativePath);
+            params.set(
+              'subtitleStyle',
+              JSON.stringify({
+                ...renderParams.subtitle,
+                playResX: previewRes.w,
+                playResY: previewRes.h
+              })
+            );
+          }
+          if (renderParams.effects.length > 0) {
+            params.set('effects', JSON.stringify(renderParams.effects));
+          }
+          response = await fetch(`/api/render-preview?${params.toString()}`, { signal: controller.signal });
         }
-        if (renderParams.effects.length > 0) {
-          params.set('effects', JSON.stringify(renderParams.effects));
-        }
-        const response = await fetch(`/api/render-preview?${params.toString()}`, { signal: controller.signal });
         const useBlackPreview = () => {
           setRenderPreviewUrl(prev => {
             if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
@@ -1794,11 +2101,16 @@ export default function App() {
         };
 
         if (!response.ok) {
+          console.error('Render preview failed', response.status, response.statusText);
+          setRenderPreviewError(`${response.status} ${response.statusText}`);
           useBlackPreview();
           return;
         }
+        const previewErrorHeader = response.headers.get('X-Render-Preview-Error');
         const blob = await response.blob();
         if (!blob.type.startsWith('image/')) {
+          console.error('Render preview invalid content', blob.type);
+          setRenderPreviewError(`Invalid preview content: ${blob.type}`);
           useBlackPreview();
           return;
         }
@@ -1807,14 +2119,16 @@ export default function App() {
           if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
           return url;
         });
-        setRenderPreviewError(null);
+        setRenderPreviewError(previewErrorHeader || null);
       } catch (error) {
         if (controller.signal.aborted) return;
+        console.error('Render preview error', error);
         setRenderPreviewUrl(prev => {
           if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
           return RENDER_PREVIEW_BLACK_DATA_URL;
         });
-        setRenderPreviewError(null);
+        const message = error instanceof Error ? error.message : 'Render preview failed';
+        setRenderPreviewError(message);
       } finally {
         if (!controller.signal.aborted) setRenderPreviewLoading(false);
       }
@@ -2050,6 +2364,185 @@ export default function App() {
     return out;
   };
 
+  function buildRenderConfigV2(): RenderConfigV2 {
+    if (renderConfigV2Override) return renderConfigV2Override;
+    if (!runPipelineProject) return null;
+    const selected = runPipelineProject.files.filter(file => renderInputFileIds.includes(file.id));
+    if (!selected.length) return null;
+
+    const counts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
+    const inputsMap: Record<string, string> = {};
+    const items: Array<Record<string, any>> = [];
+
+    const timelineResolution = renderParams.timeline.resolution || '1920x1080';
+    const timelineFramerate = coerceNumber(renderParams.timeline.framerate, 30) ?? 30;
+
+    selected.forEach((file, idx) => {
+      if (!file.relativePath) return;
+      if (file.type !== 'video' && file.type !== 'audio' && file.type !== 'subtitle' && file.type !== 'image') return;
+      counts[file.type] += 1;
+      const key = counts[file.type] === 1 ? file.type : `${file.type}${counts[file.type]}`;
+      inputsMap[key] = file.relativePath;
+      const baseItem: Record<string, any> = {
+        id: `${file.type}-${counts[file.type]}`,
+        type: file.type,
+        source: { ref: key },
+        timeline: { start: 0 },
+        layer: file.type === 'audio' || file.type === 'subtitle' ? 0 : 10 + idx
+      };
+
+      if (file.type === 'video' || file.type === 'image') {
+        if (file.type === 'image') {
+          const imageOrder = renderImageOrderIds.indexOf(file.id);
+          baseItem.layer = imageOrder >= 0 ? 20 + imageOrder : baseItem.layer;
+          const duration = coerceNumber(renderImageDurations[file.id], renderImageDurationFallback) ?? renderImageDurationFallback;
+          baseItem.timeline = { start: 0, duration };
+          const t = renderImageTransforms[file.id];
+          if (t) {
+            baseItem.transform = {
+              x: coerceNumber(t.x, 50),
+              y: coerceNumber(t.y, 50),
+              scale: coerceNumber(t.scale, 1),
+              rotation: coerceNumber(t.rotation, 0),
+              opacity: coerceNumber(t.opacity, 100),
+              fit: t.fit ?? 'contain',
+              crop: {
+                x: coerceNumber(t.cropX, 0),
+                y: coerceNumber(t.cropY, 0),
+                w: coerceNumber(t.cropW, 100),
+                h: coerceNumber(t.cropH, 100)
+              }
+            };
+          }
+        }
+        if (!baseItem.transform) {
+          baseItem.transform = {
+            x: coerceNumber(renderParams.video.positionX, 50),
+            y: coerceNumber(renderParams.video.positionY, 50),
+            scale: coerceNumber(renderParams.video.scale, 1),
+            rotation: coerceNumber(renderParams.video.rotation, 0),
+            opacity: coerceNumber(renderParams.video.opacity, 100),
+            fit: renderParams.video.fit,
+            crop: {
+              x: coerceNumber(renderParams.video.cropX, 0),
+              y: coerceNumber(renderParams.video.cropY, 0),
+              w: coerceNumber(renderParams.video.cropW, 100),
+              h: coerceNumber(renderParams.video.cropH, 100)
+            }
+          };
+        }
+      }
+
+      if (file.type === 'audio') {
+        baseItem.audioMix = {
+          gainDb: coerceNumber(renderParams.audio.gainDb, 0),
+          mute: Boolean(renderParams.audio.mute),
+          fadeIn: coerceNumber(renderParams.audio.fadeIn, 0),
+          fadeOut: coerceNumber(renderParams.audio.fadeOut, 0)
+        };
+      }
+
+      if (file.type === 'subtitle') {
+        baseItem.subtitleStyle = {
+          fontName: renderParams.subtitle.fontName || 'Arial',
+          fontSize: coerceNumber(renderParams.subtitle.fontSize, 48),
+          primaryColor: renderParams.subtitle.primaryColor,
+          outlineColor: renderParams.subtitle.outlineColor,
+          bold: renderParams.subtitle.bold === '1',
+          italic: renderParams.subtitle.italic === '1',
+          spacing: coerceNumber(renderParams.subtitle.spacing, 0),
+          outline: coerceNumber(renderParams.subtitle.outline, 2),
+          shadow: coerceNumber(renderParams.subtitle.shadow, 2),
+          alignment: coerceNumber(renderParams.subtitle.alignment, 2),
+          marginL: coerceNumber(renderParams.subtitle.marginL, 30),
+          marginR: coerceNumber(renderParams.subtitle.marginR, 30),
+          marginV: coerceNumber(renderParams.subtitle.marginV, 36),
+          wrapStyle: coerceNumber(renderParams.subtitle.wrapStyle, 0)
+        };
+      }
+
+      items.push(baseItem);
+    });
+
+    return {
+      version: '2',
+      timeline: {
+        resolution: timelineResolution,
+        framerate: timelineFramerate
+      },
+      inputsMap,
+      items
+    };
+  }
+
+  const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 => {
+    return {
+      ...config,
+      inputsMap: Object.keys(config.inputsMap).reduce((acc, key) => {
+        acc[key] = '';
+        return acc;
+      }, {} as Record<string, string>)
+    };
+  };
+
+  const openRenderTemplateEditor = (config: RenderConfigV2, name = '') => {
+    setRenderTemplateNameDraft(name);
+    setRenderTemplateJsonDraft(JSON.stringify(buildTemplateFromConfig(config), null, 2));
+    setRenderTemplateEditorOpen(true);
+  };
+
+  const saveRenderTemplateDraft = () => {
+    let parsed: RenderConfigV2 | null = null;
+    try {
+      parsed = JSON.parse(renderTemplateJsonDraft) as RenderConfigV2;
+    } catch {
+      showToast('Template JSON không hợp lệ.', 'error');
+      return;
+    }
+    if (!parsed || parsed.version !== '2' || !parsed.timeline || !Array.isArray(parsed.items) || !parsed.inputsMap) {
+      showToast('Template thiếu cấu trúc Render V2.', 'error');
+      return;
+    }
+    const name = renderTemplateNameDraft.trim() || `Render template ${renderTemplates.length + 1}`;
+    const now = new Date().toISOString();
+    if (renderTemplateEditingId) {
+      setRenderTemplates(prev => prev.map(t => (
+        t.id === renderTemplateEditingId ? { ...t, name, config: parsed!, updatedAt: now } : t
+      )));
+    } else {
+      setRenderTemplates(prev => ([
+        { id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`, name, config: parsed!, updatedAt: now },
+        ...prev
+      ]));
+    }
+    setRenderTemplateEditingId(null);
+    setRenderTemplateEditorOpen(false);
+  };
+
+  const applyRenderTemplate = (template: RenderTemplate, mapping: Record<string, string>) => {
+    const inputsMap: Record<string, string> = {};
+    Object.entries(template.config.inputsMap).forEach(([key]) => {
+      const fileId = mapping[key];
+      const file = runPipelineProject?.files.find(f => f.id === fileId);
+      if (file?.relativePath) inputsMap[key] = file.relativePath;
+    });
+    const nextConfig: RenderConfigV2 = {
+      ...template.config,
+      inputsMap
+    };
+    setRenderConfigV2Override(nextConfig);
+    const selectedIds = Object.values(mapping).filter(Boolean);
+    setRenderInputFileIds(selectedIds);
+    const selectedFiles = runPipelineProject?.files.filter(file => selectedIds.includes(file.id)) ?? [];
+    const firstVideo = selectedFiles.find(file => file.type === 'video');
+    const firstImage = selectedFiles.find(file => file.type === 'image');
+    const firstAudio = selectedFiles.find(file => file.type === 'audio');
+    const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
+    setRenderVideoId(firstVideo?.id ?? firstImage?.id ?? null);
+    setRenderAudioId(firstAudio?.id ?? null);
+    setRenderSubtitleId(firstSubtitle?.id ?? null);
+  };
+
   const saveRenderStudioParamPreset = async (mode: 'save' | 'saveAs') => {
     const defaultName = getDefaultParamPresetName('Render', 'render');
     const selectedId = getSelectedParamPresetId('render');
@@ -2096,6 +2589,37 @@ export default function App() {
     } finally {
       setSaveRenderPresetLoading(false);
     }
+  };
+
+  const migrateRenderPresetToTemplate = () => {
+    const config = buildRenderConfigV2();
+    if (!config || !Array.isArray(config.items) || config.items.length === 0) {
+      showToast('Select at least 1 file to build template.', 'warning');
+      return;
+    }
+    setRenderTemplateEditingId(null);
+    openRenderTemplateEditor(config, '');
+  };
+
+  const resetParamPresetsDb = () => {
+    openConfirm(
+      {
+        title: 'Reset Param Presets?',
+        description: 'This will delete all saved param presets and create a fresh empty presets database.',
+        confirmLabel: 'Reset',
+        variant: 'danger'
+      },
+      async () => {
+        try {
+          const response = await fetch('/api/param-presets/reset', { method: 'POST' });
+          if (!response.ok) throw new Error('reset failed');
+          await loadParamPresets();
+          showToast('Param presets database reset.', 'success');
+        } catch {
+          showToast('Không thể reset param presets.', 'error');
+        }
+      }
+    );
   };
 
   const openParamPresetEditor = (taskType?: string, mode: 'create' | 'edit' = 'create') => {
@@ -2339,6 +2863,23 @@ export default function App() {
     paramPresets,
     runPipelineParamPreset
   ]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(TASK_TEMPLATES_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setTaskTemplates(parsed as TaskTemplate[]);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(TASK_TEMPLATES_KEY, JSON.stringify(taskTemplates));
+  }, [taskTemplates]);
 
   useEffect(() => {
     if (!showRunPipeline) return;
@@ -3033,6 +3574,29 @@ export default function App() {
   }, [selectedFolder?.id, runPipelineHasTts]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(RENDER_TEMPLATES_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setRenderTemplates(parsed as RenderTemplate[]);
+      }
+    } catch {
+      /* ignore bad storage */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(RENDER_TEMPLATES_KEY, JSON.stringify(renderTemplates));
+    } catch {
+      /* ignore storage errors */
+    }
+  }, [renderTemplates]);
+
+  useEffect(() => {
     if (!runPipelineProject) return;
     const firstInput = runPipelineHasTts
       ? runPipelineProject.files.find(file => file.type === 'subtitle')
@@ -3045,12 +3609,14 @@ export default function App() {
     const firstVideo = runPipelineProject.files.find(file => file.type === 'video');
     const firstAudio = runPipelineProject.files.find(file => file.type === 'audio');
     const firstSubtitle = runPipelineProject.files.find(file => file.type === 'subtitle');
+    const imageIds = runPipelineProject.files.filter(file => file.type === 'image').map(file => file.id);
     setRenderVideoId(firstVideo?.id ?? null);
     setRenderAudioId(firstAudio?.id ?? null);
     setRenderSubtitleId(firstSubtitle?.id ?? null);
     setRenderInputFileIds(
       [firstVideo?.id, firstAudio?.id, firstSubtitle?.id].filter(Boolean) as string[]
     );
+    setRenderImageOrderIds(imageIds);
   }, [runPipelineProject?.id, runPipelineHasRender]);
 
   useEffect(() => {
@@ -3063,6 +3629,38 @@ export default function App() {
       return Array.from(next);
     });
   }, [renderVideoId, renderAudioId, renderSubtitleId, runPipelineProject?.id]);
+
+  useEffect(() => {
+    if (!runPipelineProject) return;
+    const selectedImages = renderInputFileIds
+      .map(id => runPipelineProject.files.find(file => file.id === id))
+      .filter((file): file is NonNullable<typeof file> => Boolean(file))
+      .filter(file => file.type === 'image')
+      .map(file => file.id);
+    setRenderImageOrderIds(prev => {
+      const keep = prev.filter(id => selectedImages.includes(id));
+      const add = selectedImages.filter(id => !keep.includes(id));
+      return [...keep, ...add];
+    });
+    setRenderImageTransforms(prev => {
+      const next: Record<string, any> = {};
+      selectedImages.forEach(id => {
+        next[id] = prev[id] ?? {
+          x: '50',
+          y: '50',
+          scale: '1',
+          rotation: '0',
+          opacity: '100',
+          fit: 'contain',
+          cropX: '0',
+          cropY: '0',
+          cropW: '100',
+          cropH: '100'
+        };
+      });
+      return next;
+    });
+  }, [renderInputFileIds, runPipelineProject?.id]);
 
   const savePipeline = async (nameOverride?: string) => {
     if (!graphNodes.length) {
@@ -3502,6 +4100,8 @@ export default function App() {
             })
             .filter((e): e is NonNullable<typeof e> => e !== null)
         };
+        const renderConfigV2 = buildRenderConfigV2();
+        if (renderConfigV2) pipelinePayload.renderConfigV2 = renderConfigV2;
       }
       if (overwrite) {
         pipelinePayload.overwrite = true;
@@ -3680,6 +4280,7 @@ export default function App() {
     setRenderStudioFocus,
     renderStudioItemType,
     setRenderStudioItemType,
+    renderInputFileIds,
     renderVideoId,
     setRenderVideoId,
     renderAudioId,
@@ -3689,6 +4290,14 @@ export default function App() {
     renderVideoFile,
     renderAudioFile,
     renderSubtitleFile,
+    renderImageFiles,
+    renderImageDurationEntries,
+    renderImageDurations,
+    setRenderImageDurations,
+    renderImageOrderIds,
+    setRenderImageOrderIds,
+    renderImageTransforms,
+    setRenderImageTransforms,
     formatDuration,
     formatDurationFine,
     renderTimelineDuration,
@@ -3699,6 +4308,7 @@ export default function App() {
     renderSubtitleCues,
     renderTimelineViewDuration,
     showRenderTimelineSubtitleTrack,
+    showRenderTimelineImageTrack,
     showRenderTimelineEffectTracks,
     renderParams,
     showRenderTimelineVideoTrack,
@@ -4092,65 +4702,73 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Param Presets</h3>
-                      <div className="flex items-center gap-2">
-                        <div className="text-[10px] text-zinc-500">{paramPresetCards.length} presets</div>
-                        <button
-                          onClick={() => openParamPresetEditor(undefined, 'create')}
-                          className="px-3 py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded-md hover:bg-lime-400 transition-colors"
-                        >
-                          + New
-                        </button>
-                      </div>
-                    </div>
-                    {paramPresetCards.length === 0 ? (
-                      <div className="text-sm text-zinc-500">No param presets yet. Click Add to create one.</div>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-4">
-                        {paramPresetCards.map(node => {
-                        const NodeIcon = node.icon ?? Settings;
-                        return (
-                          <div
-                            key={node.id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => openParamPresetEditorForEdit(node.id)}
-                            onContextMenu={event => {
-                              event.preventDefault();
-                              setParamPresetContextMenu({
-                                open: true,
-                                x: event.clientX,
-                                y: event.clientY,
-                                presetId: node.id
-                              });
-                            }}
-                            onKeyDown={event => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault();
-                                openParamPresetEditorForEdit(node.id);
-                              }
-                            }}
-                            className="group text-left p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
+                  {SHOW_PARAM_PRESETS && (
+                    <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Param Presets</h3>
+                        <div className="flex items-center gap-2">
+                          <div className="text-[10px] text-zinc-500">{paramPresetCards.length} presets</div>
+                          <button
+                            onClick={resetParamPresetsDb}
+                            className="px-3 py-1 text-[10px] font-semibold border border-red-500/40 text-red-300 rounded-md hover:border-red-500/70"
                           >
-                            <div className="flex items-start gap-3">
-                              <div className="h-9 w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
-                                <NodeIcon size={18} className="text-zinc-200" />
-                              </div>
-                              <div>
-                                <div className="text-sm font-semibold text-zinc-100">{node.label}</div>
-                                <div className="mt-2 text-xs text-zinc-500">
-                                  {node.taskLabel} • {node.params.length} params
+                            Reset DB
+                          </button>
+                          <button
+                            onClick={() => openParamPresetEditor(undefined, 'create')}
+                            className="px-3 py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded-md hover:bg-lime-400 transition-colors"
+                          >
+                            + New
+                          </button>
+                        </div>
+                      </div>
+                      {paramPresetCards.length === 0 ? (
+                        <div className="text-sm text-zinc-500">No param presets yet. Click Add to create one.</div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-4">
+                          {paramPresetCards.map(node => {
+                          const NodeIcon = node.icon ?? Settings;
+                          return (
+                            <div
+                              key={node.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => openParamPresetEditorForEdit(node.id)}
+                              onContextMenu={event => {
+                                event.preventDefault();
+                                setParamPresetContextMenu({
+                                  open: true,
+                                  x: event.clientX,
+                                  y: event.clientY,
+                                  presetId: node.id
+                                });
+                              }}
+                              onKeyDown={event => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  openParamPresetEditorForEdit(node.id);
+                                }
+                              }}
+                              className="group text-left p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="h-9 w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
+                                  <NodeIcon size={18} className="text-zinc-200" />
+                                </div>
+                                <div>
+                                  <div className="text-sm font-semibold text-zinc-100">{node.label}</div>
+                                  <div className="mt-2 text-xs text-zinc-500">
+                                    {node.taskLabel} • {node.params.length} params
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                      </div>
-                    )}
-                  </div>
+                          );
+                        })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {showPipelineEditor && (
@@ -4349,7 +4967,7 @@ export default function App() {
                   </div>
                 )}
 
-                {showParamPresetEditor && (
+                {SHOW_PARAM_PRESETS && showParamPresetEditor && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
                     <div className="absolute inset-0" onClick={() => setShowParamPresetEditor(false)} />
                     <div className="relative w-[min(520px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl overflow-hidden">
@@ -4446,6 +5064,188 @@ export default function App() {
                           className="px-4 py-2 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           Save
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {renderTemplateModalOpen && (
+                  <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+                    <div className="absolute inset-0" onClick={() => setRenderTemplateModalOpen(false)} />
+                    <div className="relative w-[min(760px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-semibold text-zinc-100">Render Templates</div>
+                        <button
+                          onClick={() => setRenderTemplateModalOpen(false)}
+                          className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-zinc-500">Templates saved locally for Render V2.</div>
+                        <button
+                          onClick={() => {
+                            const config = buildRenderConfigV2();
+                            if (!config || !Array.isArray(config.items) || config.items.length === 0) {
+                              showToast('Select at least 1 file to build template.', 'warning');
+                              return;
+                            }
+                            setRenderTemplateEditingId(null);
+                            openRenderTemplateEditor(config, '');
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400"
+                        >
+                          New Template
+                        </button>
+                      </div>
+                      <div className="flex flex-col gap-2 overflow-y-auto pr-1">
+                        {renderTemplates.length === 0 ? (
+                          <div className="text-sm text-zinc-500">No templates yet.</div>
+                        ) : renderTemplates.map(template => (
+                          <div key={template.id} className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/60 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-zinc-100 truncate">{template.name}</div>
+                              <div className="text-[10px] text-zinc-500 mt-1">Updated {formatRelativeTime(template.updatedAt)}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setRenderTemplateApplyTarget(template);
+                                  setRenderTemplateApplyMap({});
+                                  setRenderTemplateApplyOpen(true);
+                                }}
+                                className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+                              >
+                                Apply
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRenderTemplateEditingId(template.id);
+                                  setRenderTemplateNameDraft(template.name);
+                                  setRenderTemplateJsonDraft(JSON.stringify(template.config, null, 2));
+                                  setRenderTemplateEditorOpen(true);
+                                }}
+                                className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRenderTemplates(prev => prev.filter(t => t.id !== template.id));
+                                }}
+                                className="px-2.5 py-1.5 text-xs font-semibold border border-red-500/40 text-red-300 rounded-lg hover:border-red-500/70"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {renderTemplateEditorOpen && (
+                  <div className="fixed inset-0 z-[75] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+                    <div className="absolute inset-0" onClick={() => setRenderTemplateEditorOpen(false)} />
+                    <div className="relative w-[min(900px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-semibold text-zinc-100">Template Editor</div>
+                        <button
+                          onClick={() => setRenderTemplateEditorOpen(false)}
+                          className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-xs text-zinc-500 uppercase tracking-widest">Template Name</label>
+                        <input
+                          value={renderTemplateNameDraft}
+                          onChange={e => setRenderTemplateNameDraft(e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
+                          placeholder="My render template"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-2 flex-1 min-h-0">
+                        <label className="text-xs text-zinc-500 uppercase tracking-widest">RenderConfigV2 JSON</label>
+                        <textarea
+                          value={renderTemplateJsonDraft}
+                          onChange={e => setRenderTemplateJsonDraft(e.target.value)}
+                          className="flex-1 min-h-[240px] bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-200 focus:outline-none font-mono"
+                        />
+                      </div>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setRenderTemplateEditorOpen(false)}
+                          className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={saveRenderTemplateDraft}
+                          className="px-3 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400"
+                        >
+                          Save Template
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {renderTemplateApplyOpen && renderTemplateApplyTarget && (
+                  <div className="fixed inset-0 z-[75] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+                    <div className="absolute inset-0" onClick={() => setRenderTemplateApplyOpen(false)} />
+                    <div className="relative w-[min(700px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl overflow-hidden">
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-semibold text-zinc-100">Apply Template</div>
+                        <button
+                          onClick={() => setRenderTemplateApplyOpen(false)}
+                          className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="text-xs text-zinc-500">Map placeholders to project files.</div>
+                      <div className="flex flex-col gap-3 max-h-[45vh] overflow-y-auto pr-1">
+                        {Object.keys(renderTemplateApplyTarget.config.inputsMap).map(key => (
+                          <div key={key} className="flex items-center gap-3">
+                            <div className="w-28 text-xs text-zinc-400 font-mono">{key}</div>
+                            <select
+                              value={renderTemplateApplyMap[key] ?? ''}
+                              onChange={e => setRenderTemplateApplyMap(prev => ({ ...prev, [key]: e.target.value }))}
+                              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                            >
+                              <option value="">Select file</option>
+                              {runPipelineProject?.files
+                                .filter(file => file.type === 'video' || file.type === 'audio' || file.type === 'subtitle' || file.type === 'image')
+                                .map(file => (
+                                  <option key={file.id} value={file.id}>
+                                    [{file.type}] {truncateLabel(file.name, 52)}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setRenderTemplateApplyOpen(false)}
+                          className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => {
+                            applyRenderTemplate(renderTemplateApplyTarget, renderTemplateApplyMap);
+                            setRenderTemplateApplyOpen(false);
+                            setRenderTemplateModalOpen(false);
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400"
+                        >
+                          Apply
                         </button>
                       </div>
                     </div>
@@ -5386,6 +6186,55 @@ export default function App() {
             </div>
           )}
 
+          {templateSaveOpen && (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+              <div className="absolute inset-0" onClick={() => setTemplateSaveOpen(false)} />
+              <div className="relative w-[min(520px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-zinc-100">Save Template</div>
+                  <button
+                    onClick={() => setTemplateSaveOpen(false)}
+                    className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="text-xs text-zinc-500">
+                  {templateSaveTaskType === 'render' ? 'Save Render template (inputs will be placeholders).' : 'Save task template.'}
+                </div>
+                {templateSaveError && (
+                  <div className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-lg px-2.5 py-2">
+                    {templateSaveError}
+                  </div>
+                )}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs text-zinc-500 uppercase tracking-widest">Template Name</label>
+                  <input
+                    value={templateSaveName}
+                    onChange={e => setTemplateSaveName(e.target.value)}
+                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none"
+                    placeholder="My template"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setTemplateSaveOpen(false)}
+                    className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmSaveTemplate}
+                    disabled={Boolean(templateSaveError)}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
             {showRunPipeline && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
                 <div className="absolute inset-0" onClick={() => {
@@ -5573,6 +6422,40 @@ export default function App() {
                           </div>
                         ) : runPipelineHasRender ? (
                           <div className="flex flex-col gap-2">
+                            {renderConfigV2Override && (
+                              <div className="rounded-lg border border-lime-500/30 bg-lime-500/10 px-2.5 py-1.5 text-[11px] text-lime-200 flex items-center justify-between">
+                                <span>Template mode active</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setRenderConfigV2Override(null)}
+                                  className="text-[10px] font-semibold uppercase tracking-widest text-lime-200 hover:text-lime-100"
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            )}
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={runPipelineRenderTemplateId}
+                                  onChange={e => handleRenderTemplateChange(e.target.value)}
+                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                >
+                                  <option value="custom">Custom</option>
+                                  {renderTemplates.map(template => (
+                                    <option key={template.id} value={template.id}>{template.name}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={saveRenderTemplateQuick}
+                                  className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
+                                >
+                                  Save Template
+                                </button>
+                              </div>
+                            </div>
                             <select
                               multiple
                               value={renderInputFileIds}
@@ -5638,51 +6521,74 @@ export default function App() {
                 {runPipelineHasDownload && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Download</div>
-                    {hasParamPresets('download') ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                          {runPipelineParamPreset.download !== 'custom' && null}
-                        </div>
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
+                      <div className="flex items-center gap-2">
                         <select
-                          value={runPipelineParamPreset.download ?? 'custom'}
-                          onChange={e => handleParamPresetChange('download', e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                          value={runPipelineTaskTemplate.download ?? 'custom'}
+                          onChange={e => handleTaskTemplateChange('download', e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                         >
-                          <option value="custom">Manual</option>
-                          {getParamPresetsForType('download').map(preset => (
-                            <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                          <option value="custom">Custom</option>
+                          {getTaskTemplatesForType('download').map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
                           ))}
                         </select>
-                        {runPipelineParamPreset.download !== 'custom' && (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => switchPresetToManual('download')}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                switchPresetToManual('download');
-                              }
-                            }}
-                            title="Switch to manual and load these params"
-                            className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                          >
-                            <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                              {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
-                                <div key={key} className="flex items-center justify-between gap-2">
-                                  <span className="font-mono text-zinc-500">{key}</span>
-                                  <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        <button
+                          onClick={() => saveTaskTemplate('download')}
+                          className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Save Template
+                        </button>
                       </div>
-                    ) : (
-                      <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
+                    </div>
+                    {SHOW_PARAM_PRESETS && (
+                      hasParamPresets('download') ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                            {runPipelineParamPreset.download !== 'custom' && null}
+                          </div>
+                          <select
+                            value={runPipelineParamPreset.download ?? 'custom'}
+                            onChange={e => handleParamPresetChange('download', e.target.value)}
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                          >
+                            <option value="custom">Manual</option>
+                            {getParamPresetsForType('download').map(preset => (
+                              <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                            ))}
+                          </select>
+                          {runPipelineParamPreset.download !== 'custom' && (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => switchPresetToManual('download')}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  switchPresetToManual('download');
+                                }
+                              }}
+                              title="Switch to manual and load these params"
+                              className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                            >
+                              <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                                {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
+                                  <div key={key} className="flex items-center justify-between gap-2">
+                                    <span className="font-mono text-zinc-500">{key}</span>
+                                    <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
+                      )
                     )}
-                    {runPipelineParamPreset.download === 'custom' && (
+                    {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <select
                           value={downloadMode}
@@ -5742,7 +6648,28 @@ export default function App() {
                 {runPipelineHasUvr && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: VR (UVR)</div>
-                    {hasParamPresets('uvr') && (
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={runPipelineTaskTemplate.uvr ?? 'custom'}
+                          onChange={e => handleTaskTemplateChange('uvr', e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                        >
+                          <option value="custom">Custom</option>
+                          {getTaskTemplatesForType('uvr').map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => saveTaskTemplate('uvr')}
+                          className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Save Template
+                        </button>
+                      </div>
+                    </div>
+                    {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
                       <div className="mb-3 flex flex-col gap-2">
                         <div className="flex items-center justify-between">
                           <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
@@ -5784,7 +6711,7 @@ export default function App() {
                         )}
                       </div>
                     )}
-                    {runPipelineParamPreset.uvr === 'custom' && (
+                    {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.uvr === 'custom') && (
                       <div className="grid gap-3 md:grid-cols-2">
                       <div className="flex flex-col gap-2">
                         <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
@@ -5804,7 +6731,7 @@ export default function App() {
                           }`}
                           placeholder="vr"
                         />
-                        {runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').backend !== undefined && (
+                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').backend !== undefined && (
                           <div className="text-[10px] text-zinc-500">
                             Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').backend)}
                           </div>
@@ -5846,7 +6773,7 @@ export default function App() {
                             placeholder="MGM_MAIN_v4.pth"
                           />
                         )}
-                        {runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').model !== undefined && (
+                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').model !== undefined && (
                           <div className="text-[10px] text-zinc-500">
                             Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').model)}
                           </div>
@@ -5860,7 +6787,28 @@ export default function App() {
                 {runPipelineHasTts && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: TTS</div>
-                    {hasParamPresets('tts') && (
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={runPipelineTaskTemplate.tts ?? 'custom'}
+                          onChange={e => handleTaskTemplateChange('tts', e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                        >
+                          <option value="custom">Custom</option>
+                          {getTaskTemplatesForType('tts').map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => saveTaskTemplate('tts')}
+                          className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
+                        >
+                          Save Template
+                        </button>
+                      </div>
+                    </div>
+                    {SHOW_PARAM_PRESETS && hasParamPresets('tts') && (
                       <div className="mb-3 flex flex-col gap-2">
                         <div className="flex items-center justify-between">
                           <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
@@ -5902,7 +6850,7 @@ export default function App() {
                         )}
                       </div>
                     )}
-                    {runPipelineParamPreset.tts === 'custom' && (
+                    {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.tts === 'custom') && (
                       <div className="grid gap-3 md:grid-cols-2">
                       <div className="flex flex-col gap-2">
                         <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
@@ -5926,7 +6874,7 @@ export default function App() {
                             </option>
                           ))}
                         </select>
-                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').voice !== undefined && (
+                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').voice !== undefined && (
                           <div className="text-[10px] text-zinc-500">
                             Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').voice)}
                           </div>
@@ -5951,7 +6899,7 @@ export default function App() {
                           <option value="overlap">Overlap voices</option>
                           <option value="truncate">Cut previous voice (truncate)</option>
                         </select>
-                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').overlapMode !== undefined && (
+                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').overlapMode !== undefined && (
                           <div className="text-[10px] text-zinc-500">
                             Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').overlapMode)}
                           </div>
@@ -5976,7 +6924,7 @@ export default function App() {
                             isParamOverridden('tts', 'rate', runPipelineTtsRate) ? 'border-amber-500/60' : 'border-zinc-800'
                           }`}
                         />
-                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').rate !== undefined && (
+                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').rate !== undefined && (
                           <div className="text-[10px] text-zinc-500">
                             Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').rate)}
                           </div>
@@ -6004,7 +6952,7 @@ export default function App() {
                           />
                           <span className="text-xs text-zinc-500">st</span>
                         </div>
-                        {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').pitch !== undefined && (
+                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').pitch !== undefined && (
                           <div className="text-[10px] text-zinc-500">
                             Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').pitch)}
                           </div>
@@ -6026,7 +6974,7 @@ export default function App() {
                           )}
                         </span>
                       </label>
-                      {runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').removeLineBreaks !== undefined && (
+                      {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').removeLineBreaks !== undefined && (
                         <div className="text-[10px] text-zinc-500">
                           Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').removeLineBreaks)}
                         </div>
@@ -6247,7 +7195,7 @@ export default function App() {
             </div>
           )}
 
-          {paramPresetContextMenu.open && paramPresetContextTarget && (
+          {SHOW_PARAM_PRESETS && paramPresetContextMenu.open && paramPresetContextTarget && (
             <div className="fixed inset-0 z-[55]" onClick={() => setParamPresetContextMenu(prev => ({ ...prev, open: false }))}>
               <div
                 className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
