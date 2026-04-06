@@ -9,7 +9,7 @@ import path from 'path';
 import initSqlJs from 'sql.js';
 import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR_CLI_PATH, UVR_OUTPUT_DIRNAME } from './constants.js';
 import { ttsRouter } from './tts.js';
-import { parseAssRenderStyle, writeStyledAssFile } from './subtitleAss.js';
+import { buildAssDocument, parseAssRenderStyle, writeStyledAssFile } from './subtitleAss.js';
 
 type VaultFileDTO = {
   name: string;
@@ -58,6 +58,13 @@ type RenderConfigV2 = {
     duration?: number;
     backgroundColor?: string;
   };
+  renderOptions?: {
+    codec?: 'h264' | 'h265';
+    preset?: string;
+    crf?: number;
+    gop?: number;
+    tune?: string;
+  };
   inputsMap: Record<string, string>;
   items: RenderItemV2[];
   effects?: RenderEffectV2[];
@@ -65,10 +72,12 @@ type RenderConfigV2 = {
 
 type RenderItemV2 = {
   id: string;
-  type: 'video' | 'audio' | 'image' | 'subtitle';
+  type: 'video' | 'audio' | 'image' | 'subtitle' | 'text';
   source: { ref?: string; path?: string };
   timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
   layer?: number;
+  mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
+  text?: { value: string; start?: number; end?: number };
   transform?: {
     x?: number;
     y?: number;
@@ -230,15 +239,24 @@ if (!hasParamPresetId) {
   db.run('DROP TABLE IF EXISTS pipeline_defaults');
   db.run('ALTER TABLE param_presets_new RENAME TO param_presets');
 } else {
-  db.run(
-    `CREATE TABLE IF NOT EXISTS param_presets (
+db.run(
+  `CREATE TABLE IF NOT EXISTS param_presets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_type TEXT NOT NULL,
       params_json TEXT NOT NULL,
       label TEXT,
       updated_at TEXT NOT NULL
     )`
-  );
+);
+
+db.run(
+  `CREATE TABLE IF NOT EXISTS render_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`
+);
 }
 
 try {
@@ -283,6 +301,7 @@ type JobRecord = {
   fileSize: string;
   status: JobStatus;
   progress: number;
+  eta?: string;
   tasks: JobTask[];
   createdAt: string;
   startedAt?: string;
@@ -553,6 +572,15 @@ const formatBytes = (bytes: number) => {
   return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 };
 
+const formatEtaSeconds = (seconds: number) => {
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+};
+
 const taskNameMap: Record<string, string> = {
   download: 'Download (yt-dlp)',
   download_subs: 'Download Subtitles',
@@ -667,6 +695,7 @@ const buildRenderV2FilterGraph = async (
   const visualItems = config.items.filter(item => item.type === 'video' || item.type === 'image');
   const audioItems = config.items.filter(item => item.type === 'audio');
   const subtitleItems = config.items.filter(item => item.type === 'subtitle');
+  const textItems = config.items.filter(item => item.type === 'text');
 
   const inputs: Array<{ path: string; type: RenderItemV2['type']; item: RenderItemV2; duration?: number }> = [];
   for (const item of [...visualItems, ...audioItems, ...subtitleItems]) {
@@ -767,10 +796,38 @@ const buildRenderV2FilterGraph = async (
       addFilter(`rotate=${radians}:fillcolor=none`);
     }
     addFilter('format=rgba');
-    if (opacity < 1) {
-      addFilter(`colorchannelmixer=aa=${opacity.toFixed(3)}`);
+    if (item.mask && (item.mask.type === 'rect' || item.mask.type === 'circle')) {
+      const mx = Math.max(0, Math.min(100, Number(item.mask.x ?? 0)));
+      const my = Math.max(0, Math.min(100, Number(item.mask.y ?? 0)));
+      const mw = Math.max(0.1, Math.min(100, Number(item.mask.w ?? 100)));
+      const mh = Math.max(0.1, Math.min(100, Number(item.mask.h ?? 100)));
+      const x1 = `(${mx / 100})*W`;
+      const y1 = `(${my / 100})*H`;
+      const x2 = `(${mx / 100 + mw / 100})*W`;
+      const y2 = `(${my / 100 + mh / 100})*H`;
+      const maskExpr = item.mask.type === 'circle'
+        ? `if(lte(((X-(${x1}+(${mw / 200})*W))*(X-(${x1}+(${mw / 200})*W)))/((${mw / 200})*W*((${mw / 200})*W)) + ((Y-(${y1}+(${mh / 200})*H))*(Y-(${y1}+(${mh / 200})*H)))/((${mh / 200})*H*((${mh / 200})*H)),1),255,0)`
+        : `if(between(X,${x1},${x2})*between(Y,${y1},${y2}),255,0)`;
+      const splitLabelA = `[vms${visualIndex}a]`;
+      const splitLabelB = `[vms${visualIndex}b]`;
+      const maskLabel = `[vmask${visualIndex}]`;
+      const outLabel = `[v${visualIndex}]`;
+      const splitChain = chain.endsWith(']')
+        ? `${chain}split=2${splitLabelA}${splitLabelB}`
+        : `${chain},split=2${splitLabelA}${splitLabelB}`;
+      filters.push(splitChain);
+      filters.push(`${splitLabelB}geq=lum='${maskExpr}'${maskLabel}`);
+      let mergeChain = `${splitLabelA}${maskLabel}alphamerge`;
+      if (opacity < 1) {
+        mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
+      }
+      filters.push(`${mergeChain}${outLabel}`);
+    } else {
+      if (opacity < 1) {
+        addFilter(`colorchannelmixer=aa=${opacity.toFixed(3)}`);
+      }
+      filters.push(`${chain}${label}`);
     }
-    filters.push(`${chain}${label}`);
     filters.push(`${currentVideo}${label}overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'[v${visualIndex}o]`);
     currentVideo = `[v${visualIndex}o]`;
     visualIndex += 1;
@@ -801,6 +858,41 @@ const buildRenderV2FilterGraph = async (
       currentVideo = label;
     } catch {
       // ignore subtitle parsing errors
+    }
+  }
+
+  for (let idx = 0; idx < textItems.length; idx += 1) {
+    const textItem = textItems[idx];
+    const rawText = typeof textItem.text?.value === 'string' ? textItem.text.value.trim() : '';
+    if (!rawText) continue;
+    const timing = {
+      start: Number.isFinite(textItem.text?.start)
+        ? Number(textItem.text?.start)
+        : (textItem.timeline?.start ?? 0),
+      duration: Number.isFinite(textItem.text?.end)
+        ? Math.max(0.01, Number(textItem.text?.end) - (Number(textItem.text?.start ?? textItem.timeline?.start ?? 0)))
+        : (Number.isFinite(textItem.timeline?.duration)
+          ? Math.max(0.01, Number(textItem.timeline?.duration))
+          : outputDuration)
+    };
+    const start = Math.max(0, timing.start);
+    const end = Math.max(start + 0.01, start + timing.duration);
+    const stylePayload = {
+      ...(textItem.subtitleStyle ?? {}),
+      playResX: outW,
+      playResY: outH
+    };
+    const style = parseAssRenderStyle(stylePayload);
+    const assOut = path.join(tmpDir, `render-text-${idx}.ass`);
+    try {
+      const doc = buildAssDocument([{ start, end, text: rawText }], style);
+      await fs.writeFile(assOut, doc, 'utf-8');
+      const subFilter = buildSubtitlesVideoFilter(assOut, { w: style.playResX, h: style.playResY });
+      const label = `[vtext${idx}]`;
+      filters.push(`${currentVideo}${subFilter}${label}`);
+      currentVideo = label;
+    } catch {
+      // ignore text rendering errors
     }
   }
 
@@ -874,6 +966,20 @@ const buildRenderV2FfmpegArgs = async (
   tmpDir: string
 ) => {
   const graph = await buildRenderV2FilterGraph(config, tmpDir);
+  const renderOptions = config.renderOptions ?? {};
+  const codec = renderOptions.codec === 'h265' ? 'libx265' : 'libx264';
+  const preset = typeof renderOptions.preset === 'string' && renderOptions.preset.trim()
+    ? renderOptions.preset.trim()
+    : 'fast';
+  const crf = Number.isFinite(renderOptions.crf) ? Number(renderOptions.crf) : 21;
+  const tune = typeof renderOptions.tune === 'string' && renderOptions.tune.trim()
+    ? renderOptions.tune.trim()
+    : '';
+  let gop = Number.isFinite(renderOptions.gop) ? Number(renderOptions.gop) : 0;
+  if (!Number.isFinite(gop) || gop <= 0) {
+    const fr = Number(graph.framerate);
+    if (Number.isFinite(fr) && fr > 0) gop = Math.round(fr * 2);
+  }
   const args = [
     '-y',
     ...graph.inputArgs,
@@ -882,6 +988,14 @@ const buildRenderV2FfmpegArgs = async (
     '-map',
     graph.videoLabel,
     ...graph.audioMap,
+    '-c:v',
+    codec,
+    '-preset',
+    preset,
+    '-crf',
+    String(crf),
+    ...(tune ? ['-tune', tune] : []),
+    ...(gop && gop > 0 ? ['-g', String(Math.round(gop))] : []),
     '-r',
     String(graph.framerate),
     '-t',
@@ -897,22 +1011,50 @@ const buildRenderV2FfmpegArgs = async (
 const runRenderV2Task = async (
   config: RenderConfigV2,
   projectRoot: string,
-  onLog?: (chunk: string) => void
+  onLog?: (chunk: string) => void,
+  onProgress?: (currentSeconds: number, totalSeconds: number) => void,
+  onSpawn?: (proc: ReturnType<typeof spawn>) => void
 ) => {
   const outputDir = path.join(projectRoot, 'output');
   await fs.mkdir(outputDir, { recursive: true });
-  const outputName = `render-${Date.now()}.mp4`;
+  const formatRenderTimestamp = (date: Date) => {
+    const yy = String(date.getFullYear()).slice(-2);
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const hh = String(date.getHours()).padStart(2, '0');
+    const min = String(date.getMinutes()).padStart(2, '0');
+    const ss = String(date.getSeconds()).padStart(2, '0');
+    return `${yy}${mm}${dd}-${hh}${min}${ss}`;
+  };
+  const outputName = `render-${formatRenderTimestamp(new Date())}.mp4`;
   const outputPath = path.join(outputDir, outputName);
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-v2-'));
   try {
-    const { args } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir);
+    const { args, outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir);
     const ffmpegPath = await getFfmpegPath();
     const commandLine = [ffmpegPath, ...args].map(formatArg).join(' ');
     onLog?.(`COMMAND (render v2): ${commandLine}\n`);
+    const totalSeconds = Number.isFinite(outputDuration) && outputDuration > 0 ? outputDuration : 0;
+    let lastProgressSeconds = 0;
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      onSpawn?.(proc);
       proc.stdout.on('data', data => onLog?.(data.toString()));
-      proc.stderr.on('data', data => onLog?.(data.toString()));
+      proc.stderr.on('data', data => {
+        const text = data.toString();
+        onLog?.(text);
+        if (!onProgress || totalSeconds <= 0) return;
+        const match = text.match(/time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+        if (!match) return;
+        const h = Number(match[1]);
+        const m = Number(match[2]);
+        const s = Number(match[3]);
+        if (!Number.isFinite(h) || !Number.isFinite(m) || !Number.isFinite(s)) return;
+        const seconds = h * 3600 + m * 60 + s;
+        if (seconds <= lastProgressSeconds) return;
+        lastProgressSeconds = seconds;
+        onProgress(seconds, totalSeconds);
+      });
       proc.on('error', reject);
       proc.on('close', code => {
         if (code === 0) resolve();
@@ -1387,8 +1529,13 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       if (!config) {
         throw new Error('Missing renderConfigV2');
       }
+      const previewSeconds = (job.params as any)?.render?.previewSeconds;
+      if (Number.isFinite(previewSeconds) && previewSeconds > 0) {
+        appendJobLog(job, `Render preview: first ${previewSeconds}s\n`);
+      }
       renderTask.status = 'active';
       renderTask.progress = 0;
+      job.eta = undefined;
       const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
       job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
       scheduleJobPersist(job);
@@ -1397,10 +1544,40 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       if (!projectRoot) {
         throw new Error('Missing project root for render');
       }
-      const result = await runRenderV2Task(config, projectRoot, chunk => appendJobLog(job, chunk));
+      const renderStartedAt = Date.now();
+      const result = await runRenderV2Task(
+        config,
+        projectRoot,
+        chunk => appendJobLog(job, chunk),
+        (currentSeconds, totalSeconds) => {
+          if (totalSeconds <= 0) return;
+          const percent = Math.min(99, Math.round((currentSeconds / totalSeconds) * 100));
+          if (percent <= (renderTask.progress ?? 0)) return;
+          renderTask.progress = percent;
+          if (currentSeconds > 0) {
+            const elapsed = (Date.now() - renderStartedAt) / 1000;
+            if (elapsed > 0.5) {
+              const speed = currentSeconds / elapsed;
+              if (speed > 0) {
+                const remaining = Math.max(0, totalSeconds - currentSeconds);
+                const etaSeconds = remaining / speed;
+                job.eta = formatEtaSeconds(etaSeconds);
+              }
+            }
+          }
+          const totalProgress = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+          job.progress = Math.max(0, Math.min(99, Math.round(totalProgress / job.tasks.length)));
+          scheduleJobPersist(job);
+        },
+        proc => {
+          (job as any).__activeProcess = proc;
+        }
+      );
       appendJobLog(job, `Render output:\n- ${result.outputRelativePath}\n`);
       renderTask.status = 'done';
       renderTask.progress = 100;
+      job.eta = undefined;
+      (job as any).__activeProcess = undefined;
       const totalAfter = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
       job.progress = Math.max(0, Math.min(99, Math.round(totalAfter / job.tasks.length)));
       scheduleJobPersist(job);
@@ -1415,10 +1592,14 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
     if ((job as any).__cancelRequested || message === CANCELLED_ERROR_MESSAGE) {
       job.status = 'cancelled';
       job.error = CANCELLED_ERROR_MESSAGE;
+      job.eta = undefined;
+      (job as any).__activeProcess = undefined;
       appendJobLog(job, CANCELLED_ERROR_MESSAGE);
     } else {
       job.status = 'failed';
       job.error = message;
+      job.eta = undefined;
+      (job as any).__activeProcess = undefined;
       job.log = [job.log, job.error].filter(Boolean).join('\n');
       if (job.log && job.log.length > MAX_JOB_LOG_CHARS) {
         job.log = job.log.slice(-MAX_JOB_LOG_CHARS);
@@ -2207,7 +2388,7 @@ app.post('/api/pipelines', async (req, res) => {
 });
 
 app.get('/api/jobs', async (_req, res) => {
-  res.json({ jobs });
+  res.json({ jobs, now: new Date().toISOString() });
 });
 
 app.get('/api/param-presets', async (_req, res) => {
@@ -2296,6 +2477,84 @@ app.post('/api/param-presets/reset', async (_req, res) => {
     res.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to reset presets';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.get('/api/render-templates', async (_req, res) => {
+  try {
+    const result = db.exec('SELECT id, name, config_json, updated_at FROM render_templates ORDER BY updated_at DESC');
+    const rows = result[0]?.values ?? [];
+    const templates = rows.map((row: any[]) => {
+      const [id, name, configJson, updatedAt] = row;
+      let config: any = null;
+      try {
+        config = JSON.parse(String(configJson));
+      } catch {
+        config = null;
+      }
+      return {
+        id: String(id),
+        name: String(name),
+        updatedAt,
+        config
+      };
+    }).filter((entry: any) => entry.config);
+    res.json({ templates });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load templates';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post('/api/render-templates', async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const config = typeof req.body?.config === 'object' && req.body.config ? req.body.config : null;
+  const id = Number.isFinite(Number(req.body?.id)) ? Number(req.body.id) : null;
+  if (!name || !config) {
+    res.status(400).json({ error: 'Missing name or config' });
+    return;
+  }
+  try {
+    const updatedAt = new Date().toISOString();
+    if (id) {
+      db.run(
+        `UPDATE render_templates
+         SET name = ?, config_json = ?, updated_at = ?
+         WHERE id = ?`,
+        [name, JSON.stringify(config), updatedAt, id]
+      );
+      await persistDb();
+      res.json({ template: { id: String(id), name, updatedAt, config } });
+      return;
+    }
+    db.run(
+      `INSERT INTO render_templates (name, config_json, updated_at)
+       VALUES (?, ?, ?)`,
+      [name, JSON.stringify(config), updatedAt]
+    );
+    await persistDb();
+    const idRow = db.exec('SELECT last_insert_rowid() as id');
+    const nextId = idRow[0]?.values?.[0]?.[0] ?? null;
+    res.json({ template: { id: String(nextId), name, updatedAt, config } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to save template';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.delete('/api/render-templates/:id', async (req, res) => {
+  const id = Number(req.params?.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: 'Missing id' });
+    return;
+  }
+  try {
+    db.run('DELETE FROM render_templates WHERE id = ?', [id]);
+    await persistDb();
+    res.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to delete template';
     res.status(500).json({ error: message });
   }
 });
@@ -2463,6 +2722,10 @@ app.post('/api/jobs/run', async (req, res) => {
   const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
   const ttsVolume = typeof req.body?.volume === 'number' ? req.body.volume : undefined;
   const renderConfigV2 = req.body?.renderConfigV2 as RenderConfigV2 | undefined;
+  const renderPreviewSecondsRaw = typeof req.body?.renderPreviewSeconds === 'number' ? req.body.renderPreviewSeconds : undefined;
+  const renderPreviewSeconds = renderPreviewSecondsRaw !== undefined && Number.isFinite(renderPreviewSecondsRaw) && renderPreviewSecondsRaw > 0
+    ? Math.min(3600, Math.round(renderPreviewSecondsRaw * 1000) / 1000)
+    : undefined;
 
   try {
     let pipelineName = inlineName || 'Ad-hoc Pipeline';
@@ -2480,6 +2743,10 @@ app.post('/api/jobs/run', async (req, res) => {
     } else if (!graph || typeof graph !== 'object') {
       res.status(400).json({ error: 'Invalid pipelineId or graph' });
       return;
+    }
+
+    if (renderPreviewSeconds) {
+      pipelineName = `${pipelineName} (Preview ${renderPreviewSeconds}s)`;
     }
 
     const tasks = buildTasksFromGraph(graph);
@@ -2589,6 +2856,9 @@ app.post('/api/jobs/run', async (req, res) => {
           render: renderConfigV2 ? { configV2: renderConfigV2 } : undefined
         }
       };
+      if (renderPreviewSeconds && job.params.render) {
+        job.params.render.previewSeconds = renderPreviewSeconds;
+      }
 
       (job as any).__downloadUrl = downloadUrl;
       (job as any).__downloadSourceDir = sourceDir;
@@ -2682,6 +2952,9 @@ app.post('/api/jobs/run', async (req, res) => {
           render: renderConfigV2 ? { configV2: renderConfigV2 } : undefined
         }
       };
+      if (renderPreviewSeconds && job.params.render) {
+        job.params.render.previewSeconds = renderPreviewSeconds;
+      }
 
       (job as any).__inputPath = fullPath;
       (job as any).__inputRelativePath = inputPath;
@@ -3466,8 +3739,8 @@ const runFfmpegFrameAt = async (
     const useComplex = blurEffects.length > 0;
 
     /**
-     * -ss before -i is fast (seek) but breaks subtitles= / libass: frame PTS no longer matches SRT/ASS times.
-     * With any subtitle burn, seek after -i so decoded timestamps align with cue times (slower on long files).
+     * Preview ưu tiên tốc độ, nhưng nếu có subtitle thì phải seek sau input
+     * để PTS khớp thời gian subtitle.
      */
     const burnSubs = Boolean(subtitlePath);
     const args: string[] = ['-y'];
@@ -3659,21 +3932,27 @@ app.post('/api/render-preview-v2', async (req, res) => {
       atSeconds = Math.min(atSeconds, Math.max(0, graph.outputDuration - 0.05));
     }
     const ffmpegPath = await getFfmpegPath();
-    const args = [
-      '-y',
-      ...graph.inputArgs,
+    const hasTimedText = config.items.some(item => item.type === 'subtitle' || item.type === 'text');
+    const args: string[] = ['-y'];
+    if (!hasTimedText) {
+      args.push('-ss', String(atSeconds));
+    }
+    args.push(...graph.inputArgs);
+    if (hasTimedText) {
+      // Accurate seek for subtitles/text to keep PTS aligned.
+      args.push('-ss', String(atSeconds));
+    }
+    args.push(
       '-filter_complex',
       graph.filterComplex,
       '-map',
       graph.videoLabel,
-      '-ss',
-      String(atSeconds),
       '-frames:v',
       '1',
       '-q:v',
       '3',
       outputPath
-    ];
+    );
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';

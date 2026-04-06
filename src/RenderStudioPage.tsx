@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileAudio, FileVideo, Menu, MousePointer2, Save, Type, Image } from 'lucide-react';
+import { FileAudio, FileVideo, Menu, MousePointer2, Type, Image } from 'lucide-react';
 
 type RenderStudioPageProps = Record<string, any>;
 
@@ -16,6 +16,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     runPipelineProject,
     renderReady,
     setShowRenderStudio,
+    setActiveTab,
     runPipelineJob,
     runPipelineSubmitting,
     renderStudioLeftMenuOpen,
@@ -37,6 +38,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     setRenderAudioId,
     renderSubtitleId,
     setRenderSubtitleId,
+    renderTextTrackEnabled,
+    setRenderTextTrackEnabled,
     renderVideoFile,
     renderAudioFile,
     renderSubtitleFile,
@@ -58,6 +61,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     renderSubtitleCues,
     renderTimelineViewDuration,
     showRenderTimelineSubtitleTrack,
+    showRenderTimelineTextTrack,
     showRenderTimelineImageTrack,
     showRenderTimelineEffectTracks,
     renderParams,
@@ -79,6 +83,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     renderPreviewUrl,
     renderPreviewLoading,
     renderPreviewError,
+    setRenderPreviewHold,
     canBrowserPlayVideo,
     getVideoMimeType,
     renderSelectedItem,
@@ -95,16 +100,16 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     coerceNumber,
     RENDER_BLUR_FEATHER_MAX,
     RENDER_PREVIEW_BLACK_DATA_URL,
-    runPipelineParamPreset,
-    handleParamPresetChange,
-    getParamPresetsForType,
-    isRenderPresetDirty,
-    selectProjectDefaults,
-    renderPresetMenuCloseRef,
-    renderPresetSaveMenuOpen,
-    setRenderPresetSaveMenuOpen,
-    saveRenderPresetLoading,
-    saveRenderStudioParamPreset,
+    renderTemplates,
+    runPipelineRenderTemplateId,
+    handleRenderTemplateChange,
+    saveRenderTemplateQuick,
+    saveRenderTemplateCurrent,
+    restoreRenderTemplateCurrent,
+    deleteRenderTemplateWithConfirm,
+    isRenderTemplateDirty,
+    renderConfigV2Override,
+    setRenderConfigV2Override,
     subtitleFontOptions,
     subtitleFontLoading,
     SUBTITLE_STYLE_PRESETS,
@@ -116,25 +121,75 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const RENDER_RESOLUTION_PRESETS = props.RENDER_RESOLUTION_PRESETS ?? DEFAULT_RENDER_RESOLUTION_PRESETS;
   const [selectedTrackKey, setSelectedTrackKey] = React.useState<string | null>(null);
   const timelineScrollContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const selectedImageId = selectedTrackKey?.startsWith('image:') ? selectedTrackKey.slice('image:'.length) : null;
+  const imageInspectorFiles = selectedImageId
+    ? renderImageFiles.filter(file => file.id === selectedImageId)
+    : renderImageFiles;
+  const [templateMenuOpen, setTemplateMenuOpen] = React.useState(false);
+  const templateMenuCloseRef = React.useRef<number | null>(null);
+  const selectedTemplate = renderTemplates.find(template => template.id === runPipelineRenderTemplateId) ?? null;
+  const isCustomTemplate = !selectedTemplate || runPipelineRenderTemplateId === 'custom';
+  const [addTrackMenuOpen, setAddTrackMenuOpen] = React.useState(false);
+  const addTrackMenuCloseRef = React.useRef<number | null>(null);
+  const [renderConfirmOpen, setRenderConfirmOpen] = React.useState(false);
+  const singleTextStartDraft = `${renderParamsDraft?.subtitle?.singleTextStart ?? ''}`;
+  const singleTextEndDraft = `${renderParamsDraft?.subtitle?.singleTextEnd ?? ''}`;
+  const singleTextEndFallback = renderTimelineDuration > 0
+    ? renderTimelineDuration
+    : (renderVideoDuration ?? renderAudioDuration ?? 5);
+  const singleTextStartValue = singleTextStartDraft === '' ? '0' : singleTextStartDraft;
+  const singleTextEndValue = singleTextEndDraft === '' ? String(singleTextEndFallback) : singleTextEndDraft;
+  const singleTextValueDraft = String(renderParamsDraft?.subtitle?.singleText ?? '').trim();
+  const singleTextStartNumber = coerceNumber(singleTextStartValue, 0) ?? 0;
+  const singleTextEndNumber = coerceNumber(singleTextEndValue, singleTextEndFallback) ?? singleTextEndFallback;
+  const singleTextSafeEnd = Math.max(singleTextStartNumber + 0.01, singleTextEndNumber);
+  const singleTextDuration = singleTextValueDraft ? Math.max(0.01, singleTextSafeEnd - singleTextStartNumber) : 0;
+  const subtitlePositionMode = String(renderParamsDraft?.subtitle?.positionMode ?? 'anchor');
+  const positionXDraft = `${renderParamsDraft?.subtitle?.positionX ?? ''}`;
+  const positionYDraft = `${renderParamsDraft?.subtitle?.positionY ?? ''}`;
+  const positionXValue = positionXDraft === '' ? '50' : positionXDraft;
+  const positionYValue = positionYDraft === '' ? '50' : positionYDraft;
+  const previewResolution = (renderParamsDraft?.timeline?.resolution ?? '').toString();
+  const previewSize = (() => {
+    const match = previewResolution.trim().match(/(\d+)\s*[x×]\s*(\d+)/i);
+    if (!match) return { w: 1920, h: 1080 };
+    const w = Number(match[1]);
+    const h = Number(match[2]);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return { w: 1920, h: 1080 };
+    return { w, h };
+  })();
+  const holdPreview = () => setRenderPreviewHold(true);
+  const releasePreview = (commit?: () => void) => {
+    setRenderPreviewHold(false);
+    commit?.();
+  };
+  const releasePreviewOnEnter = (commit?: () => void) => (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      setRenderPreviewHold(false);
+      commit?.();
+    }
+  };
+  const renderTextTrackHeight = 24;
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('effects:') ? 'effects'
       : selectedTrackKey.startsWith('image:') ? 'image'
-        : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle'))
+        : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
     : 'timeline';
 
-  const openInspectorSection = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'effects' | 'image') => {
+  const openInspectorSection = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'effects' | 'image') => {
     setRenderStudioInspectorOpen({
       timeline: false,
       video: false,
       audio: false,
       subtitle: false,
+      text: false,
       effects: false,
       image: false,
       [section]: true
     });
   };
 
-  const selectTrack = (type: 'video' | 'audio' | 'subtitle' | 'image') => {
+  const selectTrack = (type: 'video' | 'audio' | 'subtitle' | 'text' | 'image') => {
     setRenderStudioItemType(type);
     openInspectorSection(type);
   };
@@ -171,7 +226,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                       Back
                     </button>
                     <button
-                      onClick={runPipelineJob}
+                      onClick={() => setRenderConfirmOpen(true)}
                       disabled={!renderReady || runPipelineSubmitting}
                       className="px-4 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                     >
@@ -179,6 +234,49 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                     </button>
                   </div>
                 </div>
+                {renderConfirmOpen && (
+                  <div className="absolute inset-0 z-[70] bg-zinc-950/70 flex items-center justify-center">
+                    <div className="w-[360px] rounded-xl border border-zinc-800 bg-zinc-950 shadow-xl p-4">
+                      <div className="text-sm font-semibold text-zinc-100">Render Output</div>
+                      <div className="mt-4 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          disabled={runPipelineSubmitting}
+                          onClick={() => {
+                            setRenderConfirmOpen(false);
+                            runPipelineJob({ renderPreviewSeconds: null });
+                            setShowRenderStudio(false);
+                            setActiveTab('dashboard');
+                          }}
+                          className="w-full px-3 py-2 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Render Full Video
+                        </button>
+                        <button
+                          type="button"
+                          disabled={runPipelineSubmitting}
+                          onClick={() => {
+                            setRenderConfirmOpen(false);
+                            runPipelineJob({ renderPreviewSeconds: 30 });
+                            setShowRenderStudio(false);
+                            setActiveTab('dashboard');
+                          }}
+                          className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-zinc-800 text-zinc-200 hover:border-zinc-700 hover:text-zinc-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Render Preview 30s
+                        </button>
+                        <button
+                          type="button"
+                          disabled={runPipelineSubmitting}
+                          onClick={() => setRenderConfirmOpen(false)}
+                          className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_300px]">
                   <div className="border-r border-zinc-800 bg-zinc-900/60 p-4 flex flex-col gap-4 min-h-0">
@@ -239,7 +337,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                     </div>
                     {renderStudioMediaBinOpen && (
                       <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1">
-                        {runPipelineProject?.files.map(file => {
+                        {(runPipelineProject?.files ?? []).filter(file => renderInputFileIds.includes(file.id)).map(file => {
                           const isVideo = file.type === 'video';
                           const isAudio = file.type === 'audio';
                           const isSubtitle = file.type === 'subtitle';
@@ -284,6 +382,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               }
                               : isImage
                                 ? () => {
+                                  setSelectedTrackKey(`image:${file.id}`);
                                   setRenderStudioFocus('item');
                                   setRenderStudioItemType('image');
                                 }
@@ -311,7 +410,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </button>
                           );
                         })}
-                        {runPipelineProject?.files.length === 0 && (
+                        {(runPipelineProject?.files ?? []).filter(file => renderInputFileIds.includes(file.id)).length === 0 && (
                           <div className="text-[11px] text-zinc-500">No files</div>
                         )}
                       </div>
@@ -430,6 +529,23 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           ) : (
                             'Select a video from the media bin'
                           )}
+                          <svg
+                            className="absolute inset-0 w-full h-full pointer-events-none"
+                            viewBox={`0 0 ${previewSize.w} ${previewSize.h}`}
+                            preserveAspectRatio="xMidYMid meet"
+                          >
+                            <rect
+                              x="0"
+                              y="0"
+                              width={previewSize.w}
+                              height={previewSize.h}
+                              fill="none"
+                              stroke="rgba(113,113,122,0.7)"
+                              strokeWidth="1"
+                              strokeDasharray="4 3"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          </svg>
                           {renderStudioFocus === 'timeline' && renderPreviewLoading && (
                             <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/40">
                               <div className="h-8 w-8 rounded-full border-2 border-zinc-500 border-t-lime-400 animate-spin-soft" />
@@ -446,14 +562,73 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         <div className="flex-shrink-0 flex items-center justify-between gap-3 flex-wrap">
                           <div className="flex items-center gap-2">
                             <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Timeline</div>
-                            <button
-                              type="button"
-                              onClick={addBlurRegionEffect}
-                              disabled={!renderVideoFile}
-                              className="px-2 py-1 text-[10px] font-semibold border border-zinc-800 rounded-md text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            <div
+                              className="relative"
+                              onMouseEnter={() => {
+                                if (addTrackMenuCloseRef.current) {
+                                  window.clearTimeout(addTrackMenuCloseRef.current);
+                                  addTrackMenuCloseRef.current = null;
+                                }
+                                setAddTrackMenuOpen(true);
+                              }}
+                              onMouseLeave={() => {
+                                if (addTrackMenuCloseRef.current) {
+                                  window.clearTimeout(addTrackMenuCloseRef.current);
+                                }
+                                addTrackMenuCloseRef.current = window.setTimeout(() => {
+                                  setAddTrackMenuOpen(false);
+                                  addTrackMenuCloseRef.current = null;
+                                }, 120);
+                              }}
+                              onFocusCapture={() => setAddTrackMenuOpen(true)}
+                              onBlurCapture={event => {
+                                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                                  setAddTrackMenuOpen(false);
+                                }
+                              }}
                             >
-                              + Effect
-                            </button>
+                              <button
+                                type="button"
+                                aria-label="Add track"
+                                title="Add track"
+                                className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center text-zinc-300 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                +
+                              </button>
+                              {addTrackMenuOpen && (
+                                <div className="absolute left-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAddTrackMenuOpen(false);
+                                      addBlurRegionEffect();
+                                    }}
+                                    disabled={!renderVideoFile}
+                                    className={`w-full px-3 py-2 text-left text-xs transition-colors ${
+                                      renderVideoFile
+                                        ? 'text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-t-lg'
+                                        : 'text-zinc-500 cursor-not-allowed rounded-t-lg'
+                                    }`}
+                                  >
+                                    Effect
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAddTrackMenuOpen(false);
+                                      if (!renderTextTrackEnabled) {
+                                        setRenderTextTrackEnabled(true);
+                                      }
+                                      setSelectedTrackKey('text');
+                                      selectTrack('text');
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-b-lg transition-colors"
+                                  >
+                                    Text
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-zinc-500 flex-wrap justify-end min-w-0">
                             <div
@@ -486,6 +661,15 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         <div className="flex gap-2 text-[11px] text-zinc-400 min-w-0">
                           <div className="w-16 flex flex-col gap-2">
                             <span className="h-5" />
+                            {showRenderTimelineTextTrack ? (
+                              <span
+                                className="text-zinc-500 flex items-center text-[10px] leading-tight"
+                                style={{ height: renderTextTrackHeight }}
+                                title="Text track"
+                              >
+                                Text
+                              </span>
+                            ) : null}
                             {showRenderTimelineSubtitleTrack ? (
                               <span
                                 className="text-zinc-500 flex items-center text-[10px] leading-tight"
@@ -587,6 +771,65 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </div>
                                 )}
                               </div>
+                              {showRenderTimelineTextTrack ? (
+                                <div
+                                  className="rounded-md bg-zinc-800/60 relative overflow-hidden cursor-pointer"
+                                  style={{ height: renderTextTrackHeight }}
+                                  title="Text track"
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={event => {
+                                    event.stopPropagation();
+                                    setSelectedTrackKey('text');
+                                    if (!renderTextTrackEnabled) {
+                                      setRenderTextTrackEnabled(true);
+                                    }
+                                    selectTrack('text');
+                                  }}
+                                  onKeyDown={event => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      setSelectedTrackKey('text');
+                                      if (!renderTextTrackEnabled) {
+                                        setRenderTextTrackEnabled(true);
+                                      }
+                                      selectTrack('text');
+                                    }
+                                  }}
+                                >
+                                  {selectedTrackKey === 'text' && renderTimelineDuration > 0 && renderTimelineViewDuration > 0 ? (
+                                    <div
+                                      className="absolute inset-y-0 left-0 rounded-md outline outline-2 outline-lime-400/80 pointer-events-none"
+                                      style={{
+                                        width: `${Math.min(100, (renderTimelineDuration / renderTimelineViewDuration) * 100)}%`
+                                      }}
+                                    />
+                                  ) : null}
+                                  {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && singleTextDuration > 0 ? (
+                                    (() => {
+                                      const startPct = Math.max(
+                                        0,
+                                        Math.min(100, (singleTextStartNumber / renderTimelineViewDuration) * 100)
+                                      );
+                                      const endPct = Math.max(
+                                        0,
+                                        Math.min(100, (singleTextSafeEnd / renderTimelineViewDuration) * 100)
+                                      );
+                                      const widthPct = Math.max(1.5, endPct - startPct);
+                                      return (
+                                        <div
+                                          className="absolute bg-zinc-200 text-zinc-800 text-[10px] px-1 rounded-sm flex items-center truncate shadow-sm"
+                                          style={{ left: `${startPct}%`, width: `${widthPct}%`, top: 2, height: Math.max(16, renderTextTrackHeight - 4) }}
+                                          title={singleTextValueDraft}
+                                        >
+                                          <span className="truncate">{singleTextValueDraft || '...'}</span>
+                                        </div>
+                                      );
+                                    })()
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {showRenderTimelineSubtitleTrack ? (
                                 <div
                                   className="rounded-md bg-zinc-800/60 relative overflow-hidden cursor-pointer"
@@ -841,6 +1084,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           </div>
                           <div className="w-[52px] flex flex-col gap-2 items-end text-zinc-500 text-[10px]">
                             <span className="h-5" />
+                            {showRenderTimelineTextTrack ? (
+                              <span className="flex items-center" style={{ height: renderTextTrackHeight }}>
+                                {singleTextDuration > 0 ? formatDuration(singleTextDuration) ?? '--' : '--'}
+                              </span>
+                            ) : null}
                             {showRenderTimelineSubtitleTrack ? (
                               <span className="flex items-center" style={{ height: renderSubtitleTrackHeight }}>
                                 {formatDuration(renderSubtitleDuration) ?? '--'}
@@ -881,80 +1129,118 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                   <div className="border-l border-zinc-800 bg-zinc-900/70 p-4 flex flex-col gap-4 min-h-0">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Inspector</div>
                     <div className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 shrink-0">
-                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Preset Params</div>
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Template</div>
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
                         <select
-                          value={
-                            typeof runPipelineParamPreset.render === 'string' &&
-                            runPipelineParamPreset.render.startsWith('preset:')
-                              ? runPipelineParamPreset.render
-                              : 'custom'
-                          }
-                          onChange={e => handleParamPresetChange('render', e.target.value)}
+                          value={runPipelineRenderTemplateId}
+                          onChange={e => handleRenderTemplateChange(e.target.value)}
+                          onContextMenu={event => {
+                            if (runPipelineRenderTemplateId === 'custom' || !selectedTemplate) return;
+                            event.preventDefault();
+                            deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
+                          }}
                           className="min-h-[36px] flex-1 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
                         >
                           <option value="custom">Custom</option>
-                          {getParamPresetsForType('render').map(preset => {
-                            const rawLabel = preset.label?.trim() ? preset.label : `Preset #${preset.id}`;
-                            const selected = runPipelineParamPreset.render === `preset:${preset.id}`;
-                            const label = selected && isRenderPresetDirty ? `*${rawLabel}` : rawLabel;
+                          {renderTemplates.map(template => {
+                            const isSelected = runPipelineRenderTemplateId === template.id;
+                            const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
                             return (
-                              <option key={preset.id} value={`preset:${preset.id}`}>
+                              <option key={template.id} value={template.id}>
                                 {label}
                               </option>
                             );
                           })}
                         </select>
                         <div
-                          className="relative shrink-0 pb-2 -mb-2"
+                          className="relative shrink-0"
                           onMouseEnter={() => {
-                            if (renderPresetMenuCloseRef.current) {
-                              window.clearTimeout(renderPresetMenuCloseRef.current);
-                              renderPresetMenuCloseRef.current = null;
+                            if (templateMenuCloseRef.current) {
+                              window.clearTimeout(templateMenuCloseRef.current);
+                              templateMenuCloseRef.current = null;
                             }
-                            setRenderPresetSaveMenuOpen(true);
+                            setTemplateMenuOpen(true);
                           }}
                           onMouseLeave={() => {
-                            if (renderPresetMenuCloseRef.current) {
-                              window.clearTimeout(renderPresetMenuCloseRef.current);
+                            if (templateMenuCloseRef.current) {
+                              window.clearTimeout(templateMenuCloseRef.current);
                             }
-                            renderPresetMenuCloseRef.current = window.setTimeout(() => {
-                              setRenderPresetSaveMenuOpen(false);
-                              renderPresetMenuCloseRef.current = null;
+                            templateMenuCloseRef.current = window.setTimeout(() => {
+                              setTemplateMenuOpen(false);
+                              templateMenuCloseRef.current = null;
                             }, 120);
                           }}
-                          onFocusCapture={() => setRenderPresetSaveMenuOpen(true)}
+                          onFocusCapture={() => setTemplateMenuOpen(true)}
                           onBlurCapture={event => {
                             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setRenderPresetSaveMenuOpen(false);
+                              setTemplateMenuOpen(false);
                             }
                           }}
                         >
                           <button
                             type="button"
-                            disabled={saveRenderPresetLoading}
-                            aria-label="Save preset options"
-                            title="Save preset options"
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 p-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 disabled:opacity-50 shrink-0"
+                            aria-label="Template options"
+                            title="Template options"
+                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
                           >
-                            <Save size={14} className="shrink-0" />
+                            <Menu size={14} />
                           </button>
-                          {renderPresetSaveMenuOpen && !saveRenderPresetLoading && (
-                            <div className="absolute right-0 top-full mt-1 w-24 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                          {templateMenuOpen && (
+                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
                               <button
                                 type="button"
-                                onClick={() => saveRenderStudioParamPreset('save')}
-                                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-t-lg transition-colors"
+                                onClick={() => {
+                                  setTemplateMenuOpen(false);
+                                  if (selectedTemplate && !isCustomTemplate) {
+                                    saveRenderTemplateCurrent(selectedTemplate);
+                                  } else {
+                                    saveRenderTemplateQuick();
+                                  }
+                                }}
+                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                  isCustomTemplate ? 'rounded-t-lg rounded-b-lg' : 'rounded-t-lg'
+                                }`}
                               >
                                 Save
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => saveRenderStudioParamPreset('saveAs')}
-                                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-b-lg transition-colors"
-                              >
-                                Save As
-                              </button>
+                              {!isCustomTemplate && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setTemplateMenuOpen(false);
+                                      saveRenderTemplateQuick();
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                  >
+                                    Save As
+                                  </button>
+                                  {isRenderTemplateDirty && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!selectedTemplate) return;
+                                        setTemplateMenuOpen(false);
+                                        restoreRenderTemplateCurrent(selectedTemplate);
+                                      }}
+                                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                    >
+                                      Restore
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!selectedTemplate) return;
+                                      setTemplateMenuOpen(false);
+                                      deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1030,8 +1316,88 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </select>
                                 </div>
                               </div>
-                              <div className="text-[11px] text-zinc-500">
-                                Output will be saved to the project output folder.
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Codec</label>
+                                  <select
+                                    value={renderParamsDraft.render?.codec ?? 'h264'}
+                                    onChange={e => {
+                                      const v = e.target.value === 'h265' ? 'h265' : 'h264';
+                                      updateRenderParamDraft('render', 'codec', v);
+                                      updateRenderParam('render', 'codec', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="h264">H.264 (libx264)</option>
+                                    <option value="h265">H.265 (libx265)</option>
+                                  </select>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Preset</label>
+                                  <select
+                                    value={renderParamsDraft.render?.preset ?? 'fast'}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('render', 'preset', v);
+                                      updateRenderParam('render', 'preset', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="ultrafast">ultrafast</option>
+                                    <option value="superfast">superfast</option>
+                                    <option value="veryfast">veryfast</option>
+                                    <option value="faster">faster</option>
+                                    <option value="fast">fast</option>
+                                    <option value="medium">medium</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">CRF</label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    value={renderParamsDraft.render?.crf ?? '21'}
+                                    onChange={e => updateRenderParamDraft('render', 'crf', e.target.value)}
+                                    onBlur={() => commitRenderParamDraftValue('render', 'crf')}
+                                    onKeyDown={commitRenderParamDraftOnEnter('render', 'crf')}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">GOP</label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    placeholder="auto"
+                                    value={renderParamsDraft.render?.gop ?? ''}
+                                    onChange={e => updateRenderParamDraft('render', 'gop', e.target.value)}
+                                    onBlur={() => commitRenderParamDraftValue('render', 'gop')}
+                                    onKeyDown={commitRenderParamDraftOnEnter('render', 'gop')}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Tune</label>
+                                  <select
+                                    value={renderParamsDraft.render?.tune ?? ''}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('render', 'tune', v);
+                                      updateRenderParam('render', 'tune', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="">(none)</option>
+                                    <option value="film">film</option>
+                                    <option value="animation">animation</option>
+                                    <option value="grain">grain</option>
+                                    <option value="stillimage">stillimage</option>
+                                    <option value="fastdecode">fastdecode</option>
+                                    <option value="zerolatency">zerolatency</option>
+                                  </select>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -1088,8 +1454,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="0.1"
                                         value={renderParamsDraft.video.trimStart}
                                         onChange={e => updateRenderParamDraft('video', 'trimStart', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'trimStart')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'trimStart')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'trimStart'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'trimStart'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1100,8 +1467,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="0.1"
                                         value={renderParamsDraft.video.trimEnd}
                                         onChange={e => updateRenderParamDraft('video', 'trimEnd', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'trimEnd')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'trimEnd')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'trimEnd'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'trimEnd'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1115,8 +1483,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         min="0.25"
                                         value={renderParamsDraft.video.speed}
                                         onChange={e => updateRenderParamDraft('video', 'speed', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'speed')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'speed')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'speed'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'speed'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1128,8 +1497,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         min="0"
                                         value={renderParamsDraft.video.volume}
                                         onChange={e => updateRenderParamDraft('video', 'volume', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'volume')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'volume')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'volume'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'volume'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1152,15 +1522,16 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       </select>
                                     </div>
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale (%)</label>
                                       <input
                                         type="number"
-                                        step="0.05"
-                                        min="0.1"
-                                        value={renderParamsDraft.video.scale}
+                                        step="1"
+                                        min="0"
+                                        value={renderParamsDraft.video.scale ?? '100'}
                                         onChange={e => updateRenderParamDraft('video', 'scale', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'scale')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'scale')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'scale'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'scale'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1173,8 +1544,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.video.positionX}
                                         onChange={e => updateRenderParamDraft('video', 'positionX', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'positionX')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'positionX')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'positionX'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'positionX'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1185,8 +1557,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.video.positionY}
                                         onChange={e => updateRenderParamDraft('video', 'positionY', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'positionY')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'positionY')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'positionY'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'positionY'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1199,8 +1572,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.video.rotation}
                                         onChange={e => updateRenderParamDraft('video', 'rotation', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'rotation')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'rotation')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'rotation'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'rotation'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1213,8 +1587,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         max="100"
                                         value={renderParamsDraft.video.opacity}
                                         onChange={e => updateRenderParamDraft('video', 'opacity', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'opacity')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'opacity')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'opacity'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'opacity'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1227,8 +1602,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.video.cropX}
                                         onChange={e => updateRenderParamDraft('video', 'cropX', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'cropX')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropX')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'cropX'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'cropX'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1239,8 +1615,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.video.cropY}
                                         onChange={e => updateRenderParamDraft('video', 'cropY', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'cropY')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropY')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'cropY'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'cropY'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1253,8 +1630,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.video.cropW}
                                         onChange={e => updateRenderParamDraft('video', 'cropW', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'cropW')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropW')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'cropW'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'cropW'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1265,10 +1643,91 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.video.cropH}
                                         onChange={e => updateRenderParamDraft('video', 'cropH', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'cropH')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'cropH')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'cropH'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'cropH'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
+                                    </div>
+                                  </div>
+                                  <div className="border border-zinc-800/70 rounded-lg p-2 mt-1 bg-zinc-950/50">
+                                    <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Mask</div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Type</label>
+                                        <select
+                                          value={renderParamsDraft.video.maskType ?? 'none'}
+                                          onChange={e => {
+                                            const v = e.target.value;
+                                            updateRenderParamDraft('video', 'maskType', v);
+                                            updateRenderParam('video', 'maskType', v);
+                                          }}
+                                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                        >
+                                          <option value="none">None</option>
+                                          <option value="rect">Rectangle</option>
+                                          <option value="circle">Circle</option>
+                                        </select>
+                                      </div>
+                                    </div>
+                                    {renderParamsDraft.video.maskType && renderParamsDraft.video.maskType !== 'none' && (
+                                      <div className="grid grid-cols-2 gap-2 mt-2">
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            value={renderParamsDraft.video.maskLeft}
+                                            onChange={e => updateRenderParamDraft('video', 'maskLeft', e.target.value)}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'maskLeft'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'maskLeft'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            value={renderParamsDraft.video.maskRight}
+                                            onChange={e => updateRenderParamDraft('video', 'maskRight', e.target.value)}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'maskRight'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'maskRight'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            value={renderParamsDraft.video.maskTop}
+                                            onChange={e => updateRenderParamDraft('video', 'maskTop', e.target.value)}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'maskTop'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'maskTop'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            value={renderParamsDraft.video.maskBottom}
+                                            onChange={e => updateRenderParamDraft('video', 'maskBottom', e.target.value)}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'maskBottom'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'maskBottom'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+                                    <div className="text-[10px] text-zinc-600 leading-snug mt-2">
+                                      Mask uses item space (0–100% inset from the video frame after fit/scale).
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
@@ -1279,8 +1738,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="0.1"
                                         value={renderParamsDraft.video.fadeIn}
                                         onChange={e => updateRenderParamDraft('video', 'fadeIn', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'fadeIn')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'fadeIn')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'fadeIn'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'fadeIn'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1291,8 +1751,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="0.1"
                                         value={renderParamsDraft.video.fadeOut}
                                         onChange={e => updateRenderParamDraft('video', 'fadeOut', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('video', 'fadeOut')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('video', 'fadeOut')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'fadeOut'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'fadeOut'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1367,8 +1828,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="0.5"
                                         value={renderParamsDraft.audio.gainDb}
                                         onChange={e => updateRenderParamDraft('audio', 'gainDb', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('audio', 'gainDb')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'gainDb')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'gainDb'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'gainDb'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1396,8 +1858,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="0.1"
                                         value={renderParamsDraft.audio.fadeIn}
                                         onChange={e => updateRenderParamDraft('audio', 'fadeIn', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('audio', 'fadeIn')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'fadeIn')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'fadeIn'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'fadeIn'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1408,8 +1871,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="0.1"
                                         value={renderParamsDraft.audio.fadeOut}
                                         onChange={e => updateRenderParamDraft('audio', 'fadeOut', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('audio', 'fadeOut')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('audio', 'fadeOut')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'fadeOut'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'fadeOut'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1465,165 +1929,222 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     <span>Cues</span>
                                     <span className="text-zinc-300">{renderSubtitleCues.length}</span>
                                   </div>
-                                  <div className="pt-1">
-                                    <div className="flex items-center justify-between">
-                                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Preset style</div>
+                                </>
+                              ) : (
+                                <div className="text-[11px] text-zinc-500">No subtitle file selected.</div>
+                              )}
+
+                              <div className="pt-1">
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Preset style</div>
+                                  <button
+                                    type="button"
+                                    onClick={() => applySubtitleStylePreset(SUBTITLE_STYLE_PRESETS[0])}
+                                    className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 hover:text-zinc-100"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                                <div className="mt-2 grid grid-cols-6 gap-2">
+                                  {SUBTITLE_STYLE_PRESETS.map(preset => {
+                                    const active = isSubtitlePresetActive(preset);
+                                    return (
                                       <button
+                                        key={preset.id}
                                         type="button"
-                                        onClick={() => applySubtitleStylePreset(SUBTITLE_STYLE_PRESETS[0])}
-                                        className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 hover:text-zinc-100"
+                                        title={preset.label}
+                                        onClick={() => applySubtitleStylePreset(preset)}
+                                        className={`h-10 w-10 rounded-lg border flex items-center justify-center transition-colors ${
+                                          active
+                                            ? 'border-lime-400 ring-1 ring-lime-400/50'
+                                            : 'border-zinc-800 hover:border-zinc-700'
+                                        }`}
                                       >
-                                        Reset
+                                        <span
+                                          className="h-8 w-8 rounded-md flex items-center justify-center text-sm font-black"
+                                          style={buildSubtitlePreviewStyle(preset)}
+                                        >
+                                          T
+                                        </span>
                                       </button>
-                                    </div>
-                                    <div className="mt-2 grid grid-cols-6 gap-2">
-                                      {SUBTITLE_STYLE_PRESETS.map(preset => {
-                                        const active = isSubtitlePresetActive(preset);
-                                        return (
-                                          <button
-                                            key={preset.id}
-                                            type="button"
-                                            title={preset.label}
-                                            onClick={() => applySubtitleStylePreset(preset)}
-                                            className={`h-10 w-10 rounded-lg border flex items-center justify-center transition-colors ${
-                                              active
-                                                ? 'border-lime-400 ring-1 ring-lime-400/50'
-                                                : 'border-zinc-800 hover:border-zinc-700'
-                                            }`}
-                                          >
-                                            <span
-                                              className="h-8 w-8 rounded-md flex items-center justify-center text-sm font-black"
-                                              style={buildSubtitlePreviewStyle(preset)}
-                                            >
-                                              T
-                                            </span>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2 pt-1">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">FontName</label>
-                                      <select
-                                        value={renderParamsDraft.subtitle.fontName}
-                                        onChange={e => {
-                                          const v = e.target.value;
-                                          updateRenderParamDraft('subtitle', 'fontName', v);
-                                          updateRenderParam('subtitle', 'fontName', v);
-                                        }}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      >
-                                        {subtitleFontOptions.map(font => (
-                                          <option key={font} value={font}>
-                                            {font}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      {subtitleFontLoading && (
-                                        <span className="text-[10px] text-zinc-600">Loading server fonts...</span>
-                                      )}
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font size</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.subtitle.fontSize}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'fontSize', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'fontSize')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'fontSize')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-1 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Primary</label>
-                                      <input
-                                        type="color"
-                                        value={renderParamsDraft.subtitle.primaryColor}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'primaryColor', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'primaryColor')}
-                                        className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Outline</label>
-                                      <div className="flex gap-2">
-                                        <input
-                                          type="color"
-                                          value={renderParamsDraft.subtitle.outlineColor}
-                                          onChange={e => updateRenderParamDraft('subtitle', 'outlineColor', e.target.value)}
-                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'outlineColor')}
-                                          className="h-9 w-10 bg-zinc-900 border border-zinc-800 rounded-lg p-1"
-                                        />
-                                        <input
-                                          type="number"
-                                          step="1"
-                                          value={renderParamsDraft.subtitle.outline}
-                                          onChange={e => updateRenderParamDraft('subtitle', 'outline', e.target.value)}
-                                          onBlur={() => commitRenderParamDraftValue('subtitle', 'outline')}
-                                          onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'outline')}
-                                          className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                        />
-                                      </div>
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.subtitle.shadow}
-                                        onChange={e => updateRenderParamDraft('subtitle', 'shadow', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'shadow')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'shadow')}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="flex flex-wrap gap-3 text-xs text-zinc-300">
-                                    <label className="flex items-center gap-1.5 cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={renderParamsDraft.subtitle.bold === '1'}
-                                        onChange={e => {
-                                          const v = e.target.checked ? '1' : '0';
-                                          updateRenderParamDraft('subtitle', 'bold', v);
-                                          updateRenderParam('subtitle', 'bold', v);
-                                        }}
-                                        className="rounded border-zinc-600"
-                                      />
-                                      Bold
-                                    </label>
-                                    <label className="flex items-center gap-1.5 cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={renderParamsDraft.subtitle.italic === '1'}
-                                        onChange={e => {
-                                          const v = e.target.checked ? '1' : '0';
-                                          updateRenderParamDraft('subtitle', 'italic', v);
-                                          updateRenderParam('subtitle', 'italic', v);
-                                        }}
-                                        className="rounded border-zinc-600"
-                                      />
-                                      Italic
-                                    </label>
-                                  </div>
-                                  <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Spacing</label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 pt-1">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">FontName</label>
+                                  <select
+                                    value={renderParamsDraft.subtitle.fontName}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('subtitle', 'fontName', v);
+                                      updateRenderParam('subtitle', 'fontName', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    {subtitleFontOptions.map(font => (
+                                      <option key={font} value={font}>
+                                        {font}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {subtitleFontLoading && (
+                                    <span className="text-[10px] text-zinc-600">Loading server fonts...</span>
+                                  )}
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font size</label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    value={renderParamsDraft.subtitle.fontSize}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'fontSize', e.target.value)}
+                                    onFocus={holdPreview}
+                                    onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'fontSize'))}
+                                    onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'fontSize'))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Primary</label>
+                                  <input
+                                    type="color"
+                                    value={renderParamsDraft.subtitle.primaryColor}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'primaryColor', e.target.value)}
+                                    onBlur={() => commitRenderParamDraftValue('subtitle', 'primaryColor')}
+                                    className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Outline</label>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="color"
+                                      value={renderParamsDraft.subtitle.outlineColor}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'outlineColor', e.target.value)}
+                                      onBlur={() => commitRenderParamDraftValue('subtitle', 'outlineColor')}
+                                      className="h-9 w-10 bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                    />
                                     <input
                                       type="number"
                                       step="1"
-                                      value={renderParamsDraft.subtitle.spacing}
-                                      onChange={e => updateRenderParamDraft('subtitle', 'spacing', e.target.value)}
-                                      onBlur={() => commitRenderParamDraftValue('subtitle', 'spacing')}
-                                      onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'spacing')}
+                                      value={renderParamsDraft.subtitle.outline}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'outline', e.target.value)}
+                                      onFocus={holdPreview}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'outline'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'outline'))}
+                                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow</label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    value={renderParamsDraft.subtitle.shadow}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'shadow', e.target.value)}
+                                    onFocus={holdPreview}
+                                    onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'shadow'))}
+                                    onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'shadow'))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-3 text-xs text-zinc-300">
+                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={renderParamsDraft.subtitle.bold === '1'}
+                                    onChange={e => {
+                                      const v = e.target.checked ? '1' : '0';
+                                      updateRenderParamDraft('subtitle', 'bold', v);
+                                      updateRenderParam('subtitle', 'bold', v);
+                                    }}
+                                    className="rounded border-zinc-600"
+                                  />
+                                  Bold
+                                </label>
+                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={renderParamsDraft.subtitle.italic === '1'}
+                                    onChange={e => {
+                                      const v = e.target.checked ? '1' : '0';
+                                      updateRenderParamDraft('subtitle', 'italic', v);
+                                      updateRenderParam('subtitle', 'italic', v);
+                                    }}
+                                    className="rounded border-zinc-600"
+                                  />
+                                  Italic
+                                </label>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Spacing</label>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  value={renderParamsDraft.subtitle.spacing}
+                                  onChange={e => updateRenderParamDraft('subtitle', 'spacing', e.target.value)}
+                                  onFocus={holdPreview}
+                                  onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'spacing'))}
+                                  onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'spacing'))}
+                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                />
+                              </div>
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position Mode</label>
+                                  <select
+                                    value={subtitlePositionMode}
+                                    onChange={e => {
+                                      const v = e.target.value === 'position' ? 'position' : 'anchor';
+                                      updateRenderParamDraft('subtitle', 'positionMode', v);
+                                      updateRenderParam('subtitle', 'positionMode', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="anchor">Anchor (Alignment + Margin)</option>
+                                    <option value="position">Position (X/Y)</option>
+                                  </select>
+                                </div>
+                              </div>
+                              {subtitlePositionMode === 'position' ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">X (%)</label>
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      value={positionXValue}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'positionX', e.target.value)}
+                                      onFocus={holdPreview}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'positionX'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'positionX'))}
                                       className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                     />
                                   </div>
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Y (%)</label>
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      value={positionYValue}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'positionY', e.target.value)}
+                                      onFocus={holdPreview}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'positionY'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'positionY'))}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
                                   <div className="grid grid-cols-1 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Alignment (1–9)</label>
@@ -1656,8 +2177,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.subtitle.marginL}
                                         onChange={e => updateRenderParamDraft('subtitle', 'marginL', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'marginL')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'marginL')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'marginL'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'marginL'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1668,8 +2190,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.subtitle.marginR}
                                         onChange={e => updateRenderParamDraft('subtitle', 'marginR', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'marginR')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'marginR')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'marginR'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'marginR'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -1680,35 +2203,421 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         step="1"
                                         value={renderParamsDraft.subtitle.marginV}
                                         onChange={e => updateRenderParamDraft('subtitle', 'marginV', e.target.value)}
-                                        onBlur={() => commitRenderParamDraftValue('subtitle', 'marginV')}
-                                        onKeyDown={commitRenderParamDraftOnEnter('subtitle', 'marginV')}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'marginV'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'marginV'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
                                   </div>
+                                </>
+                              )}
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">WrapStyle</label>
+                                  <select
+                                    value={renderParamsDraft.subtitle.wrapStyle}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('subtitle', 'wrapStyle', v);
+                                      updateRenderParam('subtitle', 'wrapStyle', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="0">0 — smart wrap</option>
+                                    <option value="1">1 — end of line</option>
+                                    <option value="2">2 — no wrap</option>
+                                    <option value="3">3 — smart (lower)</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        )}
+
+                        {activeInspectorSection === 'text' && (
+                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={activeInspectorSection === 'text'}
+                            onClick={() => openInspectorSection('text')}
+                            onKeyDown={event => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                openInspectorSection('text');
+                              }
+                            }}
+                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
+                          >
+                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Text</span>
+                            <button
+                              onClick={event => {
+                                event.stopPropagation();
+                                openInspectorSection('text');
+                              }}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                          {activeInspectorSection === 'text' && (
+                            <div className="p-3 flex flex-col gap-2">
+                              <div className="rounded-lg border border-zinc-800/60 bg-zinc-900/40 p-2">
+                                <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Single Text</div>
+                                <textarea
+                                  value={renderParamsDraft.subtitle.singleText ?? ''}
+                                  onChange={e => {
+                                    if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                    updateRenderParamDraft('subtitle', 'singleText', e.target.value);
+                                  }}
+                                  onFocus={() => {
+                                    if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                    holdPreview();
+                                  }}
+                                  onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'singleText'))}
+                                  placeholder="Type text to show on the timeline"
+                                  className="mt-2 h-20 w-full resize-none rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-2 text-xs text-zinc-200 focus:outline-none"
+                                />
+                                <div className="mt-2 grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Start (s)</label>
+                                    <input
+                                      type="number"
+                                      step="0.1"
+                                      value={singleTextStartValue}
+                                      onChange={e => {
+                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                        updateRenderParamDraft('subtitle', 'singleTextStart', e.target.value);
+                                      }}
+                                      onFocus={() => {
+                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                        holdPreview();
+                                      }}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'singleTextStart'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'singleTextStart'))}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">End (s)</label>
+                                    <input
+                                      type="number"
+                                      step="0.1"
+                                      value={singleTextEndValue}
+                                      onChange={e => {
+                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                        updateRenderParamDraft('subtitle', 'singleTextEnd', e.target.value);
+                                      }}
+                                      onFocus={() => {
+                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                        holdPreview();
+                                      }}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'singleTextEnd'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'singleTextEnd'))}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="pt-1">
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Preset style</div>
+                                  <button
+                                    type="button"
+                                    onClick={() => applySubtitleStylePreset(SUBTITLE_STYLE_PRESETS[0])}
+                                    className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 hover:text-zinc-100"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                                <div className="mt-2 grid grid-cols-6 gap-2">
+                                  {SUBTITLE_STYLE_PRESETS.map(preset => {
+                                    const active = isSubtitlePresetActive(preset);
+                                    return (
+                                      <button
+                                        key={preset.id}
+                                        type="button"
+                                        title={preset.label}
+                                        onClick={() => applySubtitleStylePreset(preset)}
+                                        className={`h-10 w-10 rounded-lg border flex items-center justify-center transition-colors ${
+                                          active
+                                            ? 'border-lime-400 ring-1 ring-lime-400/50'
+                                            : 'border-zinc-800 hover:border-zinc-700'
+                                        }`}
+                                      >
+                                        <span
+                                          className="h-8 w-8 rounded-md flex items-center justify-center text-sm font-black"
+                                          style={buildSubtitlePreviewStyle(preset)}
+                                        >
+                                          T
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 pt-1">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">FontName</label>
+                                  <select
+                                    value={renderParamsDraft.subtitle.fontName}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('subtitle', 'fontName', v);
+                                      updateRenderParam('subtitle', 'fontName', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    {subtitleFontOptions.map(font => (
+                                      <option key={font} value={font}>
+                                        {font}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {subtitleFontLoading && (
+                                    <span className="text-[10px] text-zinc-600">Loading server fonts...</span>
+                                  )}
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Font size</label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    value={renderParamsDraft.subtitle.fontSize}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'fontSize', e.target.value)}
+                                    onFocus={holdPreview}
+                                    onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'fontSize'))}
+                                    onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'fontSize'))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Primary</label>
+                                  <input
+                                    type="color"
+                                    value={renderParamsDraft.subtitle.primaryColor}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'primaryColor', e.target.value)}
+                                    onBlur={() => commitRenderParamDraftValue('subtitle', 'primaryColor')}
+                                    className="h-9 w-full bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Outline</label>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="color"
+                                      value={renderParamsDraft.subtitle.outlineColor}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'outlineColor', e.target.value)}
+                                      onBlur={() => commitRenderParamDraftValue('subtitle', 'outlineColor')}
+                                      className="h-9 w-10 bg-zinc-900 border border-zinc-800 rounded-lg p-1"
+                                    />
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      value={renderParamsDraft.subtitle.outline}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'outline', e.target.value)}
+                                      onFocus={holdPreview}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'outline'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'outline'))}
+                                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow</label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    value={renderParamsDraft.subtitle.shadow}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'shadow', e.target.value)}
+                                    onFocus={holdPreview}
+                                    onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'shadow'))}
+                                    onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'shadow'))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-3 text-xs text-zinc-300">
+                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={renderParamsDraft.subtitle.bold === '1'}
+                                    onChange={e => {
+                                      const v = e.target.checked ? '1' : '0';
+                                      updateRenderParamDraft('subtitle', 'bold', v);
+                                      updateRenderParam('subtitle', 'bold', v);
+                                    }}
+                                    className="rounded border-zinc-600"
+                                  />
+                                  Bold
+                                </label>
+                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={renderParamsDraft.subtitle.italic === '1'}
+                                    onChange={e => {
+                                      const v = e.target.checked ? '1' : '0';
+                                      updateRenderParamDraft('subtitle', 'italic', v);
+                                      updateRenderParam('subtitle', 'italic', v);
+                                    }}
+                                    className="rounded border-zinc-600"
+                                  />
+                                  Italic
+                                </label>
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Spacing</label>
+                                <input
+                                  type="number"
+                                  step="1"
+                                  value={renderParamsDraft.subtitle.spacing}
+                                  onChange={e => updateRenderParamDraft('subtitle', 'spacing', e.target.value)}
+                                  onFocus={holdPreview}
+                                  onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'spacing'))}
+                                  onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'spacing'))}
+                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                />
+                              </div>
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position Mode</label>
+                                  <select
+                                    value={subtitlePositionMode}
+                                    onChange={e => {
+                                      const v = e.target.value === 'position' ? 'position' : 'anchor';
+                                      updateRenderParamDraft('subtitle', 'positionMode', v);
+                                      updateRenderParam('subtitle', 'positionMode', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="anchor">Anchor (Alignment + Margin)</option>
+                                    <option value="position">Position (X/Y)</option>
+                                  </select>
+                                </div>
+                              </div>
+                              {subtitlePositionMode === 'position' ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">X (%)</label>
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      value={positionXValue}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'positionX', e.target.value)}
+                                      onFocus={holdPreview}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'positionX'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'positionX'))}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Y (%)</label>
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      value={positionYValue}
+                                      onChange={e => updateRenderParamDraft('subtitle', 'positionY', e.target.value)}
+                                      onFocus={holdPreview}
+                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'positionY'))}
+                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'positionY'))}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
                                   <div className="grid grid-cols-1 gap-2">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">WrapStyle</label>
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Alignment (1–9)</label>
                                       <select
-                                        value={renderParamsDraft.subtitle.wrapStyle}
+                                        value={renderParamsDraft.subtitle.alignment}
                                         onChange={e => {
                                           const v = e.target.value;
-                                          updateRenderParamDraft('subtitle', 'wrapStyle', v);
-                                          updateRenderParam('subtitle', 'wrapStyle', v);
+                                          updateRenderParamDraft('subtitle', 'alignment', v);
+                                          updateRenderParam('subtitle', 'alignment', v);
                                         }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       >
-                                        <option value="0">0 — smart wrap</option>
-                                        <option value="1">1 — end of line</option>
-                                        <option value="2">2 — no wrap</option>
-                                        <option value="3">3 — smart (lower)</option>
+                                        <option value="1">1 bottom-left</option>
+                                        <option value="2">2 bottom-center</option>
+                                        <option value="3">3 bottom-right</option>
+                                        <option value="4">4 mid-left</option>
+                                        <option value="5">5 mid-center</option>
+                                        <option value="6">6 mid-right</option>
+                                        <option value="7">7 top-left</option>
+                                        <option value="8">8 top-center</option>
+                                        <option value="9">9 top-right</option>
                                       </select>
                                     </div>
                                   </div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MarginL</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.marginL}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'marginL', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'marginL'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'marginL'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MarginR</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.marginR}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'marginR', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'marginR'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'marginR'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">MarginV</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.subtitle.marginV}
+                                        onChange={e => updateRenderParamDraft('subtitle', 'marginV', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'marginV'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'marginV'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
                                 </>
-                              ) : (
-                                <div className="text-[11px] text-zinc-500">No subtitle selected.</div>
                               )}
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">WrapStyle</label>
+                                  <select
+                                    value={renderParamsDraft.subtitle.wrapStyle}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('subtitle', 'wrapStyle', v);
+                                      updateRenderParam('subtitle', 'wrapStyle', v);
+                                    }}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  >
+                                    <option value="0">0 — smart wrap</option>
+                                    <option value="1">1 — end of line</option>
+                                    <option value="2">2 — no wrap</option>
+                                    <option value="3">3 — smart (lower)</option>
+                                  </select>
+                                </div>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1942,13 +2851,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           </div>
                           {activeInspectorSection === 'image' && (
                             <div className="p-3 flex flex-col gap-2">
-                              {renderImageFiles.length === 0 ? (
+                              {imageInspectorFiles.length === 0 ? (
                                 <div className="text-[11px] text-zinc-500">No images selected.</div>
                               ) : (
                                 <div className="flex flex-col gap-2">
-                                  {renderImageFiles.map((file, index) => {
+                                  {imageInspectorFiles.map((file) => {
                                     const durationValue = renderImageDurations[file.id] ?? '';
                                     const transform = renderImageTransforms?.[file.id] ?? {};
+                                    const layerIndex = renderImageFiles.findIndex(entry => entry.id === file.id);
                                     return (
                                       <div
                                         key={file.id}
@@ -1979,7 +2889,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         </div>
                                         <div className="min-w-0 flex-1">
                                           <div className="text-xs text-zinc-200 truncate">{file.name}</div>
-                                          <div className="text-[10px] text-zinc-500">Layer {index + 1}</div>
+                                          <div className="text-[10px] text-zinc-500">
+                                            Layer {layerIndex >= 0 ? layerIndex + 1 : '--'}
+                                          </div>
                                         </div>
                                         <input
                                           type="number"
@@ -1990,6 +2902,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                             const value = e.target.value;
                                             setRenderImageDurations(prev => ({ ...prev, [file.id]: value }));
                                           }}
+                                          onFocus={holdPreview}
+                                          onBlur={() => setRenderPreviewHold(false)}
+                                          onKeyDown={(event) => {
+                                            if (event.key === 'Enter') setRenderPreviewHold(false);
+                                          }}
                                           className="w-20 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                           placeholder="Duration"
                                         />
@@ -1997,7 +2914,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       </div>
                                     );
                                   })}
-                                  {renderImageFiles.map(file => {
+                                  {imageInspectorFiles.map(file => {
                                     const transform = renderImageTransforms?.[file.id] ?? {};
                                     return (
                                       <div key={`tx-${file.id}`} className="border border-zinc-800 rounded-lg p-2 bg-zinc-900/50">
@@ -2009,6 +2926,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.x ?? '50'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], x: e.target.value }
@@ -2022,6 +2944,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.y ?? '50'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], y: e.target.value }
@@ -2030,11 +2957,17 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                             />
                                           </div>
                                           <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale</label>
+                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale (%)</label>
                                             <input
                                               type="number"
-                                              step="0.01"
-                                              value={transform.scale ?? '1'}
+                                              step="1"
+                                              min="0"
+                                              value={transform.scale ?? '100'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], scale: e.target.value }
@@ -2048,6 +2981,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.opacity ?? '100'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], opacity: e.target.value }
@@ -2061,6 +2999,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.rotation ?? '0'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], rotation: e.target.value }
@@ -2091,6 +3034,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.cropX ?? '0'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], cropX: e.target.value }
@@ -2104,6 +3052,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.cropY ?? '0'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], cropY: e.target.value }
@@ -2117,6 +3070,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.cropW ?? '100'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], cropW: e.target.value }
@@ -2130,12 +3088,116 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               type="number"
                                               step="1"
                                               value={transform.cropH ?? '100'}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
                                               onChange={e => setRenderImageTransforms(prev => ({
                                                 ...prev,
                                                 [file.id]: { ...prev[file.id], cropH: e.target.value }
                                               }))}
                                               className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                             />
+                                          </div>
+                                        </div>
+                                        <div className="border border-zinc-800/70 rounded-lg p-2 mt-2 bg-zinc-950/50">
+                                          <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Mask</div>
+                                          <div className="grid grid-cols-2 gap-2">
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Type</label>
+                                              <select
+                                                value={transform.maskType ?? 'none'}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], maskType: e.target.value as 'none' | 'rect' | 'circle' }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              >
+                                                <option value="none">None</option>
+                                                <option value="rect">Rectangle</option>
+                                                <option value="circle">Circle</option>
+                                              </select>
+                                            </div>
+                                          </div>
+                                          {transform.maskType && transform.maskType !== 'none' && (
+                                            <div className="grid grid-cols-2 gap-2 mt-2">
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  value={transform.maskLeft ?? '0'}
+                                                  onFocus={holdPreview}
+                                                  onBlur={() => setRenderPreviewHold(false)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                  }}
+                                                  onChange={e => setRenderImageTransforms(prev => ({
+                                                    ...prev,
+                                                    [file.id]: { ...prev[file.id], maskLeft: e.target.value }
+                                                  }))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  value={transform.maskRight ?? '0'}
+                                                  onFocus={holdPreview}
+                                                  onBlur={() => setRenderPreviewHold(false)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                  }}
+                                                  onChange={e => setRenderImageTransforms(prev => ({
+                                                    ...prev,
+                                                    [file.id]: { ...prev[file.id], maskRight: e.target.value }
+                                                  }))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  value={transform.maskTop ?? '0'}
+                                                  onFocus={holdPreview}
+                                                  onBlur={() => setRenderPreviewHold(false)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                  }}
+                                                  onChange={e => setRenderImageTransforms(prev => ({
+                                                    ...prev,
+                                                    [file.id]: { ...prev[file.id], maskTop: e.target.value }
+                                                  }))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  value={transform.maskBottom ?? '0'}
+                                                  onFocus={holdPreview}
+                                                  onBlur={() => setRenderPreviewHold(false)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                  }}
+                                                  onChange={e => setRenderImageTransforms(prev => ({
+                                                    ...prev,
+                                                    [file.id]: { ...prev[file.id], maskBottom: e.target.value }
+                                                  }))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                            </div>
+                                          )}
+                                          <div className="text-[10px] text-zinc-600 leading-snug mt-2">
+                                            Mask uses item space (0–100% inset from the image frame after fit/scale).
                                           </div>
                                         </div>
                                       </div>

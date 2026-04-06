@@ -126,6 +126,12 @@ type RenderSubtitleAssState = {
   marginR: string;
   marginV: string;
   wrapStyle: string;
+  positionMode: string;
+  positionX: string;
+  positionY: string;
+  singleText?: string;
+  singleTextStart?: string;
+  singleTextEnd?: string;
 };
 
 type RenderConfigV2 = {
@@ -136,13 +142,22 @@ type RenderConfigV2 = {
     duration?: number;
     backgroundColor?: string;
   };
+  renderOptions?: {
+    codec?: 'h264' | 'h265';
+    preset?: string;
+    crf?: number;
+    gop?: number;
+    tune?: string;
+  };
   inputsMap: Record<string, string>;
   items: Array<{
     id: string;
-    type: 'video' | 'audio' | 'image' | 'subtitle';
+    type: 'video' | 'audio' | 'image' | 'subtitle' | 'text';
     source: { ref?: string; path?: string };
     timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
     layer?: number;
+    mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
+    text?: { value: string; start?: number; end?: number };
     transform?: {
       x?: number;
       y?: number;
@@ -196,7 +211,13 @@ const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
   marginL: '30',
   marginR: '30',
   marginV: '36',
-  wrapStyle: '0'
+  wrapStyle: '0',
+  positionMode: 'anchor',
+  positionX: '50',
+  positionY: '50',
+  singleText: '',
+  singleTextStart: '0',
+  singleTextEnd: ''
 };
 
 const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
@@ -213,7 +234,10 @@ const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
   marginL: DEFAULT_RENDER_SUBTITLE_ASS.marginL,
   marginR: DEFAULT_RENDER_SUBTITLE_ASS.marginR,
   marginV: DEFAULT_RENDER_SUBTITLE_ASS.marginV,
-  wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle
+  wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle,
+  positionMode: DEFAULT_RENDER_SUBTITLE_ASS.positionMode,
+  positionX: DEFAULT_RENDER_SUBTITLE_ASS.positionX,
+  positionY: DEFAULT_RENDER_SUBTITLE_ASS.positionY
 };
 
 type SubtitleStylePreset = {
@@ -300,7 +324,6 @@ const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
 ];
 
 const SHOW_PARAM_PRESETS = false;
-const TASK_TEMPLATES_KEY = 'mediaforge.taskTemplates.v1';
 
 const VIET_SUBTITLE_FONTS = [
   'Be Vietnam Pro',
@@ -462,9 +485,22 @@ type JobRowProps = {
   job: MediaJob;
   index: number;
   onContextMenu: (event: React.MouseEvent<HTMLDivElement>, job: MediaJob) => void;
+  nowMs: number;
+  hasServerNow: boolean;
 };
 
-function JobRow({ job, index, onContextMenu }: JobRowProps) {
+function JobRow({ job, index, onContextMenu, nowMs, hasServerNow }: JobRowProps) {
+  const elapsedMs = (() => {
+    if (job.startedAt) {
+      const start = new Date(job.startedAt).getTime();
+      const end = job.finishedAt ? new Date(job.finishedAt).getTime() : nowMs;
+      if (!job.finishedAt && !hasServerNow) return null;
+      if (Number.isFinite(start) && Number.isFinite(end)) {
+        return Math.max(0, end - start);
+      }
+    }
+    return job.durationMs ?? null;
+  })();
   return (
   <motion.div 
     initial={{ opacity: 0, y: 10 }}
@@ -552,7 +588,7 @@ function JobRow({ job, index, onContextMenu }: JobRowProps) {
     </div>
 
     <div className="text-xs text-zinc-500 text-right -ml-2">
-      {job.durationMs !== undefined ? formatDurationMs(job.durationMs) : '--'}
+      {elapsedMs !== null ? formatDurationMs(elapsedMs) : '--'}
     </div>
   </motion.div>
   );
@@ -942,6 +978,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
   const [jobs, setJobs] = useState<MediaJob[]>([]);
+  const [jobNowMs, setJobNowMs] = useState(() => Date.now());
+  const jobNowBaseRef = useRef<{ serverMs: number; clientMs: number } | null>(null);
   const [jobPage, setJobPage] = useState(1);
   const [jobLogOpen, setJobLogOpen] = useState(false);
   const [jobLogJobId, setJobLogJobId] = useState<string | null>(null);
@@ -1093,12 +1131,13 @@ export default function App() {
   const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(false);
   const [renderStudioProjectOpen, setRenderStudioProjectOpen] = useState(false);
   const [renderStudioInspectorOpen, setRenderStudioInspectorOpen] = useState<
-    Record<'timeline' | 'video' | 'audio' | 'subtitle' | 'effects' | 'image', boolean>
+    Record<'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'effects' | 'image', boolean>
   >({
     timeline: false,
     video: false,
     audio: false,
     subtitle: false,
+    text: false,
     effects: false,
     image: false
   });
@@ -1131,6 +1170,7 @@ export default function App() {
   const [renderVideoId, setRenderVideoId] = useState<string | null>(null);
   const [renderAudioId, setRenderAudioId] = useState<string | null>(null);
   const [renderSubtitleId, setRenderSubtitleId] = useState<string | null>(null);
+  const [renderTextTrackEnabled, setRenderTextTrackEnabled] = useState(false);
   const [renderInputFileIds, setRenderInputFileIds] = useState<string[]>([]);
   const [renderImageOrderIds, setRenderImageOrderIds] = useState<string[]>([]);
   const [renderImageDurations, setRenderImageDurations] = useState<Record<string, string>>({});
@@ -1145,6 +1185,11 @@ export default function App() {
     cropY?: string;
     cropW?: string;
     cropH?: string;
+    maskType?: 'none' | 'rect' | 'circle';
+    maskLeft?: string;
+    maskRight?: string;
+    maskTop?: string;
+    maskBottom?: string;
   }>>({});
   const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
   const [renderTemplates, setRenderTemplates] = useState<RenderTemplate[]>([]);
@@ -1170,10 +1215,12 @@ export default function App() {
   const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
   const [renderPreviewLoading, setRenderPreviewLoading] = useState(false);
   const [renderPreviewError, setRenderPreviewError] = useState<string | null>(null);
+  const [renderPreviewHold, setRenderPreviewHold] = useState(false);
+  const lastTemplateApplyAtRef = useRef(0);
   const [saveRenderPresetLoading, setSaveRenderPresetLoading] = useState(false);
   const [renderSubtitleCues, setRenderSubtitleCues] = useState<Array<{ start: number; end: number; text: string }>>([]);
   const [renderStudioFocus, setRenderStudioFocus] = useState<'timeline' | 'item'>('timeline');
-  const [renderStudioItemType, setRenderStudioItemType] = useState<'video' | 'audio' | 'subtitle' | 'image' | null>(null);
+  const [renderStudioItemType, setRenderStudioItemType] = useState<'video' | 'audio' | 'subtitle' | 'text' | 'image' | null>(null);
   const [renderTimelineViewportWidth, setRenderTimelineViewportWidth] = useState(0);
   const renderTimelineScrollRef = useRef<HTMLDivElement | null>(null);
   const prevShowRenderStudioForZoomRef = useRef(false);
@@ -1196,7 +1243,7 @@ export default function App() {
       fit: 'contain',
       positionX: '50',
       positionY: '50',
-      scale: '1',
+      scale: '100',
       rotation: '0',
       opacity: '100',
       colorLut: '',
@@ -1204,6 +1251,11 @@ export default function App() {
       cropY: '0',
       cropW: '100',
       cropH: '100',
+      maskType: 'none',
+      maskLeft: '0',
+      maskRight: '0',
+      maskTop: '0',
+      maskBottom: '0',
       fadeIn: '0',
       fadeOut: '0'
     },
@@ -1214,6 +1266,13 @@ export default function App() {
       fadeOut: '0'
     },
     subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
+    render: {
+      codec: 'h264',
+      preset: 'fast',
+      crf: '21',
+      gop: '',
+      tune: ''
+    },
     effects: [] as RenderBlurRegionEffect[]
   });
   const runAgainPrefillRef = useRef(false);
@@ -1258,17 +1317,9 @@ export default function App() {
   const [downloadAnalyzeError, setDownloadAnalyzeError] = useState<string | null>(null);
   const [downloadAnalyzeResult, setDownloadAnalyzeResult] = useState<any>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
-  const [runPipelinePrefsReady, setRunPipelinePrefsReady] = useState(false);
-  const runPipelinePrefsReadyRef = useRef(false);
-  const runPipelinePrefsSourceRef = useRef<Record<string, string> | null>(null);
-  const runPipelinePrefsSourceAppliedRef = useRef(false);
-  const runPipelinePrefsPipelineIdRef = useRef<string | null>(null);
-  const runPipelinePrefsPipelineAppliedRef = useRef(false);
   const paramPresetsLoadedRef = useRef(false);
 
   const TASK_PIPELINE_PREFIX = 'task:';
-  const RUN_PIPELINE_PREFS_KEY = 'mediaforge.runPipelinePrefs.v1';
-  const RENDER_TEMPLATES_KEY = 'mediaforge.renderTemplates.v1';
 
   const selectedFolder = vaultFolders.find(folder => folder.id === vaultFolderId) ?? null;
   const selectedFile = selectedFolder?.files.find(file => file.id === vaultFileId) ?? null;
@@ -1310,6 +1361,7 @@ export default function App() {
     setRenderVideoId(firstVideo?.id ?? null);
     setRenderAudioId(firstAudio?.id ?? null);
     setRenderSubtitleId(firstSubtitle?.id ?? null);
+    setRenderTextTrackEnabled(false);
     setRenderInputFileIds(
       [firstVideo?.id, firstAudio?.id, firstSubtitle?.id].filter(Boolean) as string[]
     );
@@ -1318,8 +1370,15 @@ export default function App() {
   };
   const renderVideoDuration = renderVideoFile?.durationSeconds ?? parseDurationToSeconds(renderVideoFile?.duration);
   const renderAudioDuration = renderAudioFile?.durationSeconds ?? parseDurationToSeconds(renderAudioFile?.duration);
-  const renderSubtitleDuration = renderSubtitleFile?.durationSeconds ?? parseDurationToSeconds(renderSubtitleFile?.duration);
-  const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string, value: any) => {
+  const singleTextValue = String(renderParams.subtitle.singleText ?? '').trim();
+  const singleTextStart = coerceNumber(renderParams.subtitle.singleTextStart, 0) ?? 0;
+  const singleTextFallbackEnd = renderVideoDuration ?? renderAudioDuration ?? 5;
+  const singleTextEnd = coerceNumber(renderParams.subtitle.singleTextEnd, singleTextFallbackEnd) ?? singleTextFallbackEnd;
+  const singleTextDuration = singleTextValue ? Math.max(0.01, singleTextEnd - singleTextStart) : 0;
+  const singleTextTrackEnd = singleTextValue ? singleTextStart + singleTextDuration : 0;
+  const renderSubtitleDuration = renderSubtitleFile?.durationSeconds
+    ?? parseDurationToSeconds(renderSubtitleFile?.duration);
+  const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string, value: any) => {
     setRenderParams(prev => ({
       ...prev,
       [section]: {
@@ -1335,7 +1394,7 @@ export default function App() {
     setRenderParamsDraft(renderParams);
   }, [renderParams]);
 
-  const updateRenderParamDraft = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string, value: any) => {
+  const updateRenderParamDraft = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string, value: any) => {
     setRenderParamsDraft(prev => ({
       ...prev,
       [section]: {
@@ -1345,12 +1404,12 @@ export default function App() {
     }));
   };
 
-  const commitRenderParamDraftValue = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string) => {
+  const commitRenderParamDraftValue = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string) => {
     const value = (renderParamsDraft as any)?.[section]?.[key];
     updateRenderParam(section, key, value);
   };
 
-  const commitRenderParamDraftOnEnter = (section: 'timeline' | 'video' | 'audio' | 'subtitle', key: string) =>
+  const commitRenderParamDraftOnEnter = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string) =>
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === 'Enter') {
         commitRenderParamDraftValue(section, key);
@@ -1396,7 +1455,8 @@ export default function App() {
   const renderTimelineMax = Math.max(
     renderVideoDuration ?? 0,
     renderAudioDuration ?? 0,
-    renderSubtitleDuration ?? 0
+    renderSubtitleDuration ?? 0,
+    singleTextTrackEnd ?? 0
   );
   const renderImageDurationFallback = renderTimelineMax > 0 ? renderTimelineMax : 5;
   const renderImageDurationEntries = renderImageFiles.map(file => ({
@@ -1434,6 +1494,7 @@ export default function App() {
   const renderSubtitleLaneHeight = 24;
   const renderSubtitleTrackHeight = Math.max(1, renderSubtitleLanes.length) * renderSubtitleLaneHeight;
   const showRenderTimelineSubtitleTrack = Boolean(renderSubtitleFile);
+  const showRenderTimelineTextTrack = renderTextTrackEnabled || Boolean(singleTextValue);
   const showRenderTimelineImageTrack = renderImageFiles.length > 0;
   const showRenderTimelineVideoTrack = Boolean(renderVideoFile);
   const showRenderTimelineAudioTrack = Boolean(renderAudioFile);
@@ -1444,6 +1505,7 @@ export default function App() {
     if (renderStudioItemType === 'video') return files.find(file => file.id === renderVideoId) ?? null;
     if (renderStudioItemType === 'audio') return files.find(file => file.id === renderAudioId) ?? null;
     if (renderStudioItemType === 'subtitle') return files.find(file => file.id === renderSubtitleId) ?? null;
+    if (renderStudioItemType === 'text') return null;
     if (renderStudioItemType === 'image') {
       return files.find(file => file.id === renderInputFileIds.find(id => {
         const f = files.find(item => item.id === id);
@@ -1504,10 +1566,10 @@ export default function App() {
   };
 
   const toastStyles: Record<'info' | 'success' | 'warning' | 'error', string> = {
-    info: 'border-zinc-500/30 bg-zinc-500/15 text-zinc-200',
-    success: 'border-lime-500/30 bg-lime-500/15 text-lime-200',
-    warning: 'border-amber-500/30 bg-amber-500/15 text-amber-200',
-    error: 'border-red-500/30 bg-red-500/15 text-red-200'
+    info: 'border-zinc-700 bg-zinc-900 text-zinc-200',
+    success: 'border-lime-700 bg-zinc-900 text-lime-200',
+    warning: 'border-amber-700 bg-zinc-900 text-amber-200',
+    error: 'border-red-700 bg-zinc-900 text-red-200'
   };
 
   const forgeProject = vaultFolders.find(folder => folder.id === (vrProjectId ?? vaultFolders[0]?.id));
@@ -1711,6 +1773,8 @@ export default function App() {
       return;
     }
     if (taskType === 'render') {
+      const legacyMask: Record<string, string> = {};
+      let hasNewMaskInsets = false;
       Object.entries(params).forEach(([key, value]) => {
         if (key === 'effects.list') {
           if (value === undefined || value === null) return;
@@ -1727,15 +1791,36 @@ export default function App() {
         }
         if (!key.includes('.')) return;
         const [section, field] = key.split('.');
-        if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle') return;
+        if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle' && section !== 'render') return;
         if (value === undefined || value === null) return;
         if (section === 'audio' && (field === 'normalize' || field === 'pan' || field === 'channelMode')) return;
         if (section === 'audio' && field === 'mute') {
           updateRenderParam('audio', 'mute', Boolean(value));
           return;
         }
-        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle', field, String(value));
+        if (section === 'video' && (field === 'maskLeft' || field === 'maskRight' || field === 'maskTop' || field === 'maskBottom')) {
+          hasNewMaskInsets = true;
+        }
+        if (section === 'video' && (field === 'maskX' || field === 'maskY' || field === 'maskW' || field === 'maskH')) {
+          legacyMask[field] = String(value);
+          return;
+        }
+        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', field, String(value));
       });
+      if (!hasNewMaskInsets && Object.keys(legacyMask).length > 0) {
+        const x = coerceNumber(legacyMask.maskX, 0) ?? 0;
+        const y = coerceNumber(legacyMask.maskY, 0) ?? 0;
+        const w = coerceNumber(legacyMask.maskW, 100) ?? 100;
+        const h = coerceNumber(legacyMask.maskH, 100) ?? 100;
+        const left = Math.max(0, Math.min(100, x));
+        const top = Math.max(0, Math.min(100, y));
+        const right = Math.max(0, Math.min(100, 100 - x - w));
+        const bottom = Math.max(0, Math.min(100, 100 - y - h));
+        updateRenderParam('video', 'maskLeft', String(left));
+        updateRenderParam('video', 'maskRight', String(right));
+        updateRenderParam('video', 'maskTop', String(top));
+        updateRenderParam('video', 'maskBottom', String(bottom));
+      }
     }
   };
 
@@ -1853,7 +1938,128 @@ export default function App() {
     openTemplateSaveModal('render', defaultName);
   };
 
-  const confirmSaveTemplate = () => {
+  const saveRenderTemplateCurrent = async (template: RenderTemplate) => {
+    const config = buildRenderConfigV2();
+    if (!config || !Array.isArray(config.items) || config.items.length === 0) {
+      showToast('Select at least 1 file to build template.', 'warning');
+      return;
+    }
+    const templateConfig = buildTemplateFromConfig(config);
+    try {
+      const saved = await saveRenderTemplate({ id: template.id, name: template.name, config: templateConfig });
+      setRenderTemplates(prev => prev.map(t => (t.id === template.id ? saved : t)));
+      showToast('Saved render template.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save template';
+      showToast(message, 'error');
+    }
+  };
+
+  const restoreRenderTemplateCurrent = (template: RenderTemplate) => {
+    const typeOfKey = (key: string) => {
+      if (key.startsWith('video')) return 'video';
+      if (key.startsWith('audio')) return 'audio';
+      if (key.startsWith('subtitle')) return 'subtitle';
+      if (key.startsWith('image')) return 'image';
+      return null;
+    };
+    const mapping: Record<string, string> = {};
+    const inputsMap = renderConfigV2Override?.inputsMap ?? {};
+    Object.entries(inputsMap).forEach(([key, value]) => {
+      if (!value) return;
+      const file = runPipelineProject?.files.find(f => f.relativePath === value);
+      if (file) mapping[key] = file.id;
+    });
+    const missingKeys = Object.keys(template.config.inputsMap).filter(key => !mapping[key]);
+    if (missingKeys.length > 0) {
+      const selectedFiles = runPipelineProject?.files.filter(file => renderInputFileIds.includes(file.id)) ?? [];
+      const buckets = {
+        video: selectedFiles.filter(file => file.type === 'video'),
+        audio: selectedFiles.filter(file => file.type === 'audio'),
+        subtitle: selectedFiles.filter(file => file.type === 'subtitle'),
+        image: selectedFiles.filter(file => file.type === 'image')
+      };
+      const indices = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
+      Object.keys(template.config.inputsMap).forEach((key) => {
+        if (mapping[key]) return;
+        const type = typeOfKey(key);
+        if (!type) return;
+        const file = buckets[type][indices[type]];
+        if (file) {
+          mapping[key] = file.id;
+          indices[type] += 1;
+        }
+      });
+    }
+    const stillMissing = Object.keys(template.config.inputsMap).filter(key => !mapping[key]);
+    if (stillMissing.length > 0) {
+      setRenderTemplateApplyTarget(template);
+      setRenderTemplateApplyMap(mapping);
+      setRenderTemplateApplyOpen(true);
+      return;
+    }
+    applyRenderTemplate(template, mapping);
+  };
+
+  const saveRenderTemplate = async (payload: { id?: string | null; name: string; config: RenderConfigV2 }) => {
+    const body: Record<string, any> = {
+      name: payload.name,
+      config: payload.config
+    };
+    const numericId = payload.id ? Number(payload.id) : null;
+    if (Number.isFinite(numericId)) body.id = numericId;
+    const response = await fetch('/api/render-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Unable to save template');
+    }
+    const data = await response.json();
+    return data.template as RenderTemplate;
+  };
+
+  const deleteRenderTemplate = async (id: string) => {
+    const numericId = Number(id);
+    if (!Number.isFinite(numericId)) {
+      throw new Error('Invalid template id');
+    }
+    const response = await fetch(`/api/render-templates/${numericId}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Unable to delete template');
+    }
+  };
+
+  const deleteRenderTemplateWithConfirm = (id: string, name?: string) => {
+    openConfirm(
+      {
+        title: 'Delete render template?',
+        description: name ? `Template "${name}" will be removed permanently.` : 'This template will be removed permanently.',
+        confirmLabel: 'Delete',
+        variant: 'danger'
+      },
+      () => {
+        deleteRenderTemplate(id)
+          .then(() => {
+            setRenderTemplates(prev => prev.filter(t => t.id !== id));
+            if (runPipelineRenderTemplateId === id) {
+              setRunPipelineRenderTemplateId('custom');
+              setRenderConfigV2Override(null);
+            }
+            showToast('Deleted render template.', 'success');
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : 'Unable to delete template';
+            showToast(message, 'error');
+          });
+      }
+    );
+  };
+
+  const confirmSaveTemplate = async () => {
     const label = templateSaveName.trim();
     if (templateSaveError) {
       showToast(templateSaveError, 'warning');
@@ -1863,17 +2069,21 @@ export default function App() {
       showToast('Nhập tên template.', 'warning');
       return;
     }
-    const now = new Date().toISOString();
     if (templateSaveTaskType === 'render') {
       if (!templateSaveRenderConfig) return;
       const templateConfig = buildTemplateFromConfig(templateSaveRenderConfig);
-      setRenderTemplates(prev => ([
-        { id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`, name: label, config: templateConfig, updatedAt: now },
-        ...prev
-      ]));
-      showToast('Saved render template.', 'success');
+      try {
+        const saved = await saveRenderTemplate({ name: label, config: templateConfig });
+        setRenderTemplates(prev => ([saved, ...prev]));
+        showToast('Saved render template.', 'success');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to save template';
+        showToast(message, 'error');
+        return;
+      }
     } else {
       if (!templateSaveParams) return;
+      const now = new Date().toISOString();
       setTaskTemplates(prev => ([
         {
           id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -1897,9 +2107,45 @@ export default function App() {
     }
     const template = renderTemplates.find(t => t.id === value);
     if (!template) return;
+    const inputs = Object.keys(template.config.inputsMap ?? {});
+    const typeOfKey = (key: string) => {
+      if (key.startsWith('video')) return 'video';
+      if (key.startsWith('audio')) return 'audio';
+      if (key.startsWith('subtitle')) return 'subtitle';
+      if (key.startsWith('image')) return 'image';
+      return null;
+    };
+    const templateCounts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
+    let hasUnknownKey = false;
+    inputs.forEach((key) => {
+      const type = typeOfKey(key);
+      if (!type) {
+        hasUnknownKey = true;
+        return;
+      }
+      templateCounts[type] += 1;
+    });
+    const availableFiles = runPipelineProject?.files ?? [];
+    const filesByType = {
+      video: availableFiles.filter(file => file.type === 'video'),
+      audio: availableFiles.filter(file => file.type === 'audio'),
+      subtitle: availableFiles.filter(file => file.type === 'subtitle'),
+      image: availableFiles.filter(file => file.type === 'image')
+    };
+    const indices = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
+    const mapping: Record<string, string> = {};
+    inputs.forEach((key) => {
+      const type = typeOfKey(key);
+      if (!type) return;
+      const file = filesByType[type][indices[type]];
+      if (file) {
+        mapping[key] = file.id;
+        indices[type] += 1;
+      }
+    });
     setRenderTemplateApplyTarget(template);
-    setRenderTemplateApplyMap({});
-    setRenderTemplateApplyOpen(true);
+    setRenderTemplateApplyMap(mapping);
+    applyRenderTemplate(template, mapping);
   };
 
   const applySubtitleStylePreset = (preset: SubtitleStylePreset) => {
@@ -2049,6 +2295,21 @@ export default function App() {
     renderParams.subtitle
   ]);
 
+  useEffect(() => {
+    if (!renderConfigV2Override) return;
+    if (runPipelineRenderTemplateId === 'custom') return;
+    if (Date.now() - lastTemplateApplyAtRef.current < 200) return;
+    setRenderConfigV2Override(null);
+  }, [
+    renderConfigV2Override,
+    runPipelineRenderTemplateId,
+    renderParams,
+    renderImageTransforms,
+    renderImageDurations,
+    renderImageOrderIds,
+    renderInputFileIds
+  ]);
+
   const renderPreviewParamsKey = JSON.stringify({
     renderParams,
     renderConfigPreview
@@ -2057,6 +2318,10 @@ export default function App() {
   useEffect(() => {
     if (!showRenderStudio) return;
     if (renderStudioFocus !== 'timeline') {
+      setRenderPreviewLoading(false);
+      return;
+    }
+    if (renderPreviewHold) {
       setRenderPreviewLoading(false);
       return;
     }
@@ -2166,7 +2431,8 @@ export default function App() {
     renderSubtitleFile?.relativePath,
     renderPlayheadSeconds,
     renderTimelineDuration,
-    renderPreviewParamsKey
+    renderPreviewParamsKey,
+    renderPreviewHold
   ]);
 
   useEffect(() => {
@@ -2193,7 +2459,10 @@ export default function App() {
     };
     load();
     return () => controller.abort();
-  }, [showRenderStudio, renderSubtitleFile?.relativePath]);
+  }, [
+    showRenderStudio,
+    renderSubtitleFile?.relativePath
+  ]);
 
   useEffect(() => {
     return () => {
@@ -2297,7 +2566,7 @@ export default function App() {
         { name: 'video.fit', desc: 'contain | cover | stretch', type: 'string', default: 'contain' },
         { name: 'video.positionX', desc: 'Position X (%)', type: 'number', default: 50 },
         { name: 'video.positionY', desc: 'Position Y (%)', type: 'number', default: 50 },
-        { name: 'video.scale', desc: 'Scale', type: 'number', default: 1 },
+        { name: 'video.scale', desc: 'Scale (%)', type: 'number', default: 100 },
         { name: 'video.rotation', desc: 'Rotation (deg)', type: 'number', default: 0 },
         { name: 'video.opacity', desc: 'Opacity (%)', type: 'number', default: 100 },
         { name: 'video.colorLut', desc: 'Color LUT id', type: 'string', default: '' },
@@ -2382,6 +2651,9 @@ export default function App() {
     Object.entries(renderParams.subtitle).forEach(([k, v]) => {
       out[`subtitle.${k}`] = typeof v === 'boolean' ? v : String(v);
     });
+    Object.entries(renderParams.render ?? {}).forEach(([k, v]) => {
+      out[`render.${k}`] = typeof v === 'boolean' ? v : String(v);
+    });
     out['effects.list'] = JSON.stringify(renderParams.effects);
     return out;
   };
@@ -2398,6 +2670,58 @@ export default function App() {
 
     const timelineResolution = renderParams.timeline.resolution || '1920x1080';
     const timelineFramerate = coerceNumber(renderParams.timeline.framerate, 30) ?? 30;
+    const normalizeScaleFactor = (value: string | number | null | undefined, fallbackPercent = 100) => {
+      const numeric = coerceNumber(value, fallbackPercent) ?? fallbackPercent;
+      return numeric > 2 ? numeric / 100 : numeric;
+    };
+
+    const buildMaskFromParams = (
+      maskType?: string,
+      params?: {
+        left?: string;
+        right?: string;
+        top?: string;
+        bottom?: string;
+        x?: string;
+        y?: string;
+        w?: string;
+        h?: string;
+      }
+    ) => {
+      if (!maskType || maskType === 'none') return null;
+      const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+      const leftRaw = coerceNumber(params?.left, undefined);
+      const rightRaw = coerceNumber(params?.right, undefined);
+      const topRaw = coerceNumber(params?.top, undefined);
+      const bottomRaw = coerceNumber(params?.bottom, undefined);
+      const hasInsets = [leftRaw, rightRaw, topRaw, bottomRaw].some(value => typeof value === 'number');
+      if (hasInsets) {
+        const left = clamp(leftRaw ?? 0, 0, 100);
+        const right = clamp(rightRaw ?? 0, 0, 100);
+        const top = clamp(topRaw ?? 0, 0, 100);
+        const bottom = clamp(bottomRaw ?? 0, 0, 100);
+        const w = clamp(100 - left - right, 0.1, 100);
+        const h = clamp(100 - top - bottom, 0.1, 100);
+        return {
+          type: maskType === 'circle' ? 'circle' : 'rect',
+          x: left,
+          y: top,
+          w,
+          h
+        } as { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
+      }
+      const x = clamp(coerceNumber(params?.x, 0) ?? 0, 0, 100);
+      const y = clamp(coerceNumber(params?.y, 0) ?? 0, 0, 100);
+      const w = clamp(coerceNumber(params?.w, 100) ?? 100, 0.1, 100);
+      const h = clamp(coerceNumber(params?.h, 100) ?? 100, 0.1, 100);
+      return {
+        type: maskType === 'circle' ? 'circle' : 'rect',
+        x,
+        y,
+        w,
+        h
+      } as { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
+    };
 
     selected.forEach((file, idx) => {
       if (!file.relativePath) return;
@@ -2424,7 +2748,7 @@ export default function App() {
             baseItem.transform = {
               x: coerceNumber(t.x, 50),
               y: coerceNumber(t.y, 50),
-              scale: coerceNumber(t.scale, 1),
+              scale: normalizeScaleFactor(t.scale, 100),
               rotation: coerceNumber(t.rotation, 0),
               opacity: coerceNumber(t.opacity, 100),
               fit: t.fit ?? 'contain',
@@ -2435,13 +2759,26 @@ export default function App() {
                 h: coerceNumber(t.cropH, 100)
               }
             };
+            const mask = buildMaskFromParams(t.maskType, {
+              left: t.maskLeft,
+              right: t.maskRight,
+              top: t.maskTop,
+              bottom: t.maskBottom,
+              x: (t as any).maskX,
+              y: (t as any).maskY,
+              w: (t as any).maskW,
+              h: (t as any).maskH
+            });
+            if (mask) {
+              baseItem.mask = mask;
+            }
           }
         }
         if (!baseItem.transform) {
           baseItem.transform = {
             x: coerceNumber(renderParams.video.positionX, 50),
             y: coerceNumber(renderParams.video.positionY, 50),
-            scale: coerceNumber(renderParams.video.scale, 1),
+            scale: normalizeScaleFactor(renderParams.video.scale, 100),
             rotation: coerceNumber(renderParams.video.rotation, 0),
             opacity: coerceNumber(renderParams.video.opacity, 100),
             fit: renderParams.video.fit,
@@ -2452,6 +2789,19 @@ export default function App() {
               h: coerceNumber(renderParams.video.cropH, 100)
             }
           };
+          const mask = buildMaskFromParams(renderParams.video.maskType, {
+            left: renderParams.video.maskLeft,
+            right: renderParams.video.maskRight,
+            top: renderParams.video.maskTop,
+            bottom: renderParams.video.maskBottom,
+            x: (renderParams.video as any).maskX,
+            y: (renderParams.video as any).maskY,
+            w: (renderParams.video as any).maskW,
+            h: (renderParams.video as any).maskH
+          });
+          if (mask) {
+            baseItem.mask = mask;
+          }
         }
       }
 
@@ -2486,11 +2836,34 @@ export default function App() {
       items.push(baseItem);
     });
 
+    const singleText = String(renderParams.subtitle.singleText ?? '').trim();
+    if (singleText) {
+      const start = coerceNumber(renderParams.subtitle.singleTextStart, 0) ?? 0;
+      const fallbackEnd = renderTimelineDuration > 0 ? renderTimelineDuration : start + 5;
+      const end = coerceNumber(renderParams.subtitle.singleTextEnd, fallbackEnd) ?? fallbackEnd;
+      const safeEnd = Math.max(start + 0.01, end);
+      items.push({
+        id: 'text-1',
+        type: 'text',
+        source: {},
+        timeline: { start, duration: safeEnd - start },
+        text: { value: singleText, start, end: safeEnd },
+        subtitleStyle: { ...(renderParams.subtitle ?? {}) }
+      });
+    }
+
     return {
       version: '2',
       timeline: {
         resolution: timelineResolution,
         framerate: timelineFramerate
+      },
+      renderOptions: {
+        codec: renderParams.render?.codec === 'h265' ? 'h265' : 'h264',
+        preset: renderParams.render?.preset || 'fast',
+        crf: coerceNumber(renderParams.render?.crf, 21) ?? 21,
+        gop: coerceNumber(renderParams.render?.gop, 0) ?? 0,
+        tune: renderParams.render?.tune || ''
       },
       inputsMap,
       items
@@ -2513,7 +2886,7 @@ export default function App() {
     setRenderTemplateEditorOpen(true);
   };
 
-  const saveRenderTemplateDraft = () => {
+  const saveRenderTemplateDraft = async () => {
     let parsed: RenderConfigV2 | null = null;
     try {
       parsed = JSON.parse(renderTemplateJsonDraft) as RenderConfigV2;
@@ -2526,22 +2899,29 @@ export default function App() {
       return;
     }
     const name = renderTemplateNameDraft.trim() || `Render template ${renderTemplates.length + 1}`;
-    const now = new Date().toISOString();
-    if (renderTemplateEditingId) {
-      setRenderTemplates(prev => prev.map(t => (
-        t.id === renderTemplateEditingId ? { ...t, name, config: parsed!, updatedAt: now } : t
-      )));
-    } else {
-      setRenderTemplates(prev => ([
-        { id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`, name, config: parsed!, updatedAt: now },
-        ...prev
-      ]));
+    try {
+      const saved = await saveRenderTemplate({
+        id: renderTemplateEditingId,
+        name,
+        config: parsed!
+      });
+      if (renderTemplateEditingId) {
+        setRenderTemplates(prev => prev.map(t => (
+          t.id === renderTemplateEditingId ? saved : t
+        )));
+      } else {
+        setRenderTemplates(prev => ([saved, ...prev]));
+      }
+      setRenderTemplateEditingId(null);
+      setRenderTemplateEditorOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save template';
+      showToast(message, 'error');
     }
-    setRenderTemplateEditingId(null);
-    setRenderTemplateEditorOpen(false);
   };
 
   const applyRenderTemplate = (template: RenderTemplate, mapping: Record<string, string>) => {
+    lastTemplateApplyAtRef.current = Date.now();
     const inputsMap: Record<string, string> = {};
     Object.entries(template.config.inputsMap).forEach(([key]) => {
       const fileId = mapping[key];
@@ -2563,7 +2943,106 @@ export default function App() {
     setRenderVideoId(firstVideo?.id ?? firstImage?.id ?? null);
     setRenderAudioId(firstAudio?.id ?? null);
     setRenderSubtitleId(firstSubtitle?.id ?? null);
+
+    const firstVideoItem = template.config.items.find(item => item.type === 'video') ?? null;
+    if (firstVideoItem) {
+      const transform = firstVideoItem.transform ?? {};
+      const crop = transform.crop ?? {};
+      const mask = firstVideoItem.mask;
+      const scalePercent = (() => {
+        const raw = typeof transform.scale === 'number' ? transform.scale : 1;
+        return Math.round(raw * 100);
+      })();
+      const maskLeft = mask ? mask.x : undefined;
+      const maskTop = mask ? mask.y : undefined;
+      const maskRight = mask ? Math.max(0, 100 - (mask.x + mask.w)) : undefined;
+      const maskBottom = mask ? Math.max(0, 100 - (mask.y + mask.h)) : undefined;
+      setRenderParams(prev => ({
+        ...prev,
+        timeline: {
+          ...prev.timeline,
+          framerate: String(template.config.timeline?.framerate ?? prev.timeline.framerate),
+          resolution: String(template.config.timeline?.resolution ?? prev.timeline.resolution)
+        },
+        render: {
+          ...prev.render,
+          codec: (template.config.renderOptions?.codec ?? prev.render.codec) as string,
+          preset: (template.config.renderOptions?.preset ?? prev.render.preset) as string,
+          crf: String(template.config.renderOptions?.crf ?? prev.render.crf ?? '21'),
+          gop: String(template.config.renderOptions?.gop ?? prev.render.gop ?? ''),
+          tune: String(template.config.renderOptions?.tune ?? prev.render.tune ?? '')
+        },
+        video: {
+          ...prev.video,
+          fit: transform.fit ?? prev.video.fit,
+          positionX: String(transform.x ?? prev.video.positionX),
+          positionY: String(transform.y ?? prev.video.positionY),
+          scale: String(scalePercent),
+          rotation: String(transform.rotation ?? prev.video.rotation),
+          opacity: String(transform.opacity ?? prev.video.opacity),
+          cropX: String(crop.x ?? prev.video.cropX),
+          cropY: String(crop.y ?? prev.video.cropY),
+          cropW: String(crop.w ?? prev.video.cropW),
+          cropH: String(crop.h ?? prev.video.cropH),
+          maskType: mask ? mask.type : prev.video.maskType,
+          maskLeft: maskLeft !== undefined ? String(maskLeft) : prev.video.maskLeft,
+          maskRight: maskRight !== undefined ? String(maskRight) : prev.video.maskRight,
+          maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
+          maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom
+        },
+        effects: Array.isArray(template.config.effects) ? template.config.effects : prev.effects
+      }));
+    }
+
+    const imageItems = template.config.items.filter(item => item.type === 'image');
+    if (imageItems.length > 0) {
+      setRenderImageTransforms(prev => {
+        const next = { ...prev };
+        imageItems.forEach((item, index) => {
+          const targetId = selectedIds[index];
+          if (!targetId) return;
+          const transform = item.transform ?? {};
+          const crop = transform.crop ?? {};
+          const mask = item.mask;
+          const scalePercent = (() => {
+            const raw = typeof transform.scale === 'number' ? transform.scale : 1;
+            return Math.round(raw * 100);
+          })();
+          const maskLeft = mask ? mask.x : undefined;
+          const maskTop = mask ? mask.y : undefined;
+          const maskRight = mask ? Math.max(0, 100 - (mask.x + mask.w)) : undefined;
+          const maskBottom = mask ? Math.max(0, 100 - (mask.y + mask.h)) : undefined;
+          next[targetId] = {
+            ...(next[targetId] ?? {}),
+            x: String(transform.x ?? next[targetId]?.x ?? '50'),
+            y: String(transform.y ?? next[targetId]?.y ?? '50'),
+            scale: String(scalePercent),
+            rotation: String(transform.rotation ?? next[targetId]?.rotation ?? '0'),
+            opacity: String(transform.opacity ?? next[targetId]?.opacity ?? '100'),
+            fit: transform.fit ?? next[targetId]?.fit ?? 'contain',
+            cropX: String(crop.x ?? next[targetId]?.cropX ?? '0'),
+            cropY: String(crop.y ?? next[targetId]?.cropY ?? '0'),
+            cropW: String(crop.w ?? next[targetId]?.cropW ?? '100'),
+            cropH: String(crop.h ?? next[targetId]?.cropH ?? '100'),
+            maskType: mask ? mask.type : (next[targetId]?.maskType ?? 'none'),
+            maskLeft: maskLeft !== undefined ? String(maskLeft) : (next[targetId]?.maskLeft ?? '0'),
+            maskRight: maskRight !== undefined ? String(maskRight) : (next[targetId]?.maskRight ?? '0'),
+            maskTop: maskTop !== undefined ? String(maskTop) : (next[targetId]?.maskTop ?? '0'),
+            maskBottom: maskBottom !== undefined ? String(maskBottom) : (next[targetId]?.maskBottom ?? '0')
+          };
+        });
+        return next;
+      });
+    }
   };
+
+  const isRenderTemplateDirty = React.useMemo(() => {
+    if (runPipelineRenderTemplateId === 'custom') return false;
+    const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
+    if (!template || !renderConfigPreview) return false;
+    const normalized = buildTemplateFromConfig(renderConfigPreview);
+    return JSON.stringify(normalized) !== JSON.stringify(template.config);
+  }, [runPipelineRenderTemplateId, renderTemplates, renderConfigPreview]);
 
   const saveRenderStudioParamPreset = async (mode: 'save' | 'saveAs') => {
     const defaultName = getDefaultParamPresetName('Render', 'render');
@@ -2887,23 +3366,6 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(TASK_TEMPLATES_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setTaskTemplates(parsed as TaskTemplate[]);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(TASK_TEMPLATES_KEY, JSON.stringify(taskTemplates));
-  }, [taskTemplates]);
-
-  useEffect(() => {
     if (!showRunPipeline) return;
     if (runAgainPrefillRef.current) return;
     setRunPipelineParamPreset(prev => {
@@ -2916,23 +3378,6 @@ export default function App() {
       else delete next.tts;
       if (runPipelineHasRender) next.render = next.render ?? 'custom';
       else delete next.render;
-      const saved = runPipelinePrefsSourceRef.current;
-      if (saved) {
-        const idsByType = new Map<string, Set<number>>();
-        paramPresets.forEach(preset => {
-          const set = idsByType.get(preset.taskType) ?? new Set<number>();
-          set.add(preset.id);
-          idsByType.set(preset.taskType, set);
-        });
-        Object.entries(saved).forEach(([taskType, value]) => {
-          if (typeof value !== 'string') return;
-          if (!value.startsWith('preset:')) return;
-          const id = Number(value.slice('preset:'.length));
-          if (!Number.isFinite(id)) return;
-          if (!idsByType.get(taskType)?.has(id)) return;
-          next[taskType] = value;
-        });
-      }
       return next;
     });
   }, [showRunPipeline, runPipelineHasDownload, runPipelineHasUvr, runPipelineHasTts, runPipelineHasRender, runPipelineId, paramPresets]);
@@ -2956,171 +3401,6 @@ export default function App() {
     });
   }, [paramPresets]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(RUN_PIPELINE_PREFS_KEY);
-      if (!raw) {
-        runPipelinePrefsReadyRef.current = true;
-        return;
-      }
-      const data = JSON.parse(raw);
-      if (data?.paramSource && typeof data.paramSource === 'object') {
-        runPipelinePrefsSourceRef.current = { ...data.paramSource };
-        setRunPipelineParamPreset(prev => ({ ...prev, ...data.paramSource }));
-      }
-      if (typeof data?.pipelineId === 'string' && data.pipelineId.trim()) {
-        runPipelinePrefsPipelineIdRef.current = data.pipelineId;
-        setRunPipelineId(data.pipelineId);
-      }
-      if (typeof data?.projectId === 'string' && data.projectId.trim()) {
-        setRunPipelineProjectId(data.projectId);
-      }
-      if (data?.download && typeof data.download === 'object') {
-        if (typeof data.download.downloadMode === 'string') {
-          const mode = data.download.downloadMode;
-          if (mode === 'all' || mode === 'subs' || mode === 'media') setDownloadMode(mode);
-        }
-        if (typeof data.download.downloadNoPlaylist === 'boolean') setDownloadNoPlaylist(data.download.downloadNoPlaylist);
-        if (typeof data.download.downloadSubtitleLang === 'string') setDownloadSubtitleLang(data.download.downloadSubtitleLang);
-      }
-      if (data?.uvr && typeof data.uvr === 'object') {
-        if (typeof data.uvr.backend === 'string') setRunPipelineBackend(data.uvr.backend);
-        if (typeof data.uvr.model === 'string') setVrModel(data.uvr.model);
-        if (typeof data.uvr.outputType === 'string') {
-          const type = data.uvr.outputType;
-          if (type === 'Mp3' || type === 'Wav' || type === 'Flac') setVrOutputType(type);
-        }
-      }
-      if (data?.tts && typeof data.tts === 'object') {
-        if (typeof data.tts.voice === 'string') setRunPipelineTtsVoice(data.tts.voice);
-        if (typeof data.tts.rate === 'string') setRunPipelineTtsRate(data.tts.rate);
-        if (typeof data.tts.pitch === 'string') setRunPipelineTtsPitch(data.tts.pitch);
-        if (data.tts.overlapMode === 'overlap' || data.tts.overlapMode === 'truncate') {
-          setRunPipelineTtsOverlapMode(data.tts.overlapMode);
-        }
-        if (typeof data.tts.removeLineBreaks === 'boolean') setRunPipelineTtsRemoveLineBreaks(data.tts.removeLineBreaks);
-      }
-      if (data?.render && typeof data.render === 'object') {
-        if (data.render.renderParams && typeof data.render.renderParams === 'object') {
-          const incomingAudio = (data.render.renderParams.audio ?? {}) as Record<string, unknown>;
-          const { normalize, pan, channelMode, ...audioRest } = incomingAudio;
-          setRenderParams(prev => ({
-            timeline: { ...prev.timeline, ...(data.render.renderParams.timeline ?? {}) },
-            video: { ...prev.video, ...(data.render.renderParams.video ?? {}) },
-            audio: { ...prev.audio, ...audioRest },
-            subtitle: normalizeLoadedSubtitleState({
-              ...prev.subtitle,
-              ...(data.render.renderParams.subtitle ?? {})
-            }),
-            effects: normalizeLoadedRenderEffects(data.render.renderParams.effects) ?? prev.effects
-          }));
-        }
-      }
-    } catch {
-      // ignore bad storage
-    } finally {
-      runPipelinePrefsReadyRef.current = true;
-      setRunPipelinePrefsReady(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!runPipelinePrefsReadyRef.current || !runPipelinePrefsReady) return;
-    if (typeof window === 'undefined') return;
-    if (paramPresetsLoadedRef.current) {
-      runPipelinePrefsSourceRef.current = runPipelineParamPreset;
-    }
-    const effectiveParamSource = paramPresetsLoadedRef.current
-      ? runPipelineParamPreset
-      : (runPipelinePrefsSourceRef.current ?? runPipelineParamPreset);
-    const payload = {
-      pipelineId: runPipelineId,
-      projectId: runPipelineProjectId,
-      paramSource: effectiveParamSource,
-      download: {
-        downloadMode,
-        downloadNoPlaylist,
-        downloadSubtitleLang
-      },
-      uvr: {
-        backend: runPipelineBackend,
-        model: vrModel,
-        outputType: vrOutputType
-      },
-      tts: {
-        voice: runPipelineTtsVoice,
-        rate: runPipelineTtsRate,
-        pitch: runPipelineTtsPitch,
-        overlapMode: runPipelineTtsOverlapMode,
-        removeLineBreaks: runPipelineTtsRemoveLineBreaks
-      },
-      render: {
-        renderParams
-      }
-    };
-    try {
-      window.localStorage.setItem(RUN_PIPELINE_PREFS_KEY, JSON.stringify(payload));
-    } catch {
-      // ignore storage errors
-    }
-  }, [
-    runPipelinePrefsReady,
-    runPipelineId,
-    runPipelineParamPreset,
-    downloadMode,
-    downloadNoPlaylist,
-    downloadSubtitleLang,
-    runPipelineBackend,
-    vrModel,
-    vrOutputType,
-    runPipelineTtsVoice,
-    runPipelineTtsRate,
-    runPipelineTtsPitch,
-    runPipelineTtsOverlapMode,
-    runPipelineTtsRemoveLineBreaks,
-    renderParams
-  ]);
-
-  useEffect(() => {
-    if (!runPipelinePrefsSourceRef.current || runPipelinePrefsSourceAppliedRef.current === true) return;
-    const saved = runPipelinePrefsSourceRef.current;
-    if (!saved || typeof saved !== 'object') return;
-    const idsByType = new Map<string, Set<number>>();
-    paramPresets.forEach(preset => {
-      const set = idsByType.get(preset.taskType) ?? new Set<number>();
-      set.add(preset.id);
-      idsByType.set(preset.taskType, set);
-    });
-    let didApply = false;
-    setRunPipelineParamPreset(prev => {
-      const next = { ...prev };
-      Object.entries(saved).forEach(([taskType, value]) => {
-        if (typeof value !== 'string') return;
-        if (!value.startsWith('preset:')) return;
-        const id = Number(value.slice('preset:'.length));
-        if (!Number.isFinite(id)) return;
-        if (!idsByType.get(taskType)?.has(id)) return;
-        if (next[taskType] && next[taskType] !== 'custom') return;
-        next[taskType] = value;
-        didApply = true;
-      });
-      return next;
-    });
-    if (didApply) {
-      runPipelinePrefsSourceAppliedRef.current = true;
-    }
-  }, [paramPresets]);
-
-  useEffect(() => {
-    if (!runPipelinePrefsPipelineIdRef.current || runPipelinePrefsPipelineAppliedRef.current) return;
-    const desired = runPipelinePrefsPipelineIdRef.current;
-    if (!desired) return;
-    if (pipelineLibrary.find(item => item.id === desired)) {
-      setRunPipelineId(desired);
-      runPipelinePrefsPipelineAppliedRef.current = true;
-    }
-  }, [pipelineLibrary]);
 
   useEffect(() => {
     if (!pipelinePreviewTask) return;
@@ -3245,11 +3525,6 @@ export default function App() {
       }));
       const nextPipelines = [...taskPipelines, ...savedPipelines];
       setPipelineLibrary(nextPipelines);
-      const preferredId = runPipelinePrefsPipelineIdRef.current;
-      if (preferredId && nextPipelines.find(item => item.id === preferredId)) {
-        setRunPipelineId(preferredId);
-        return;
-      }
       if (!nextPipelines.find(item => item.id === runPipelineId)) {
         setRunPipelineId(nextPipelines[0]?.id ?? null);
       }
@@ -3315,8 +3590,15 @@ export default function App() {
     try {
       const response = await fetch('/api/jobs');
       if (!response.ok) return;
-      const data = await response.json() as { jobs: MediaJob[] };
+      const data = await response.json() as { jobs: MediaJob[]; now?: string };
       setJobs(data.jobs ?? []);
+      if (data.now) {
+        const serverMs = new Date(data.now).getTime();
+        if (Number.isFinite(serverMs)) {
+          jobNowBaseRef.current = { serverMs, clientMs: Date.now() };
+          setJobNowMs(serverMs);
+        }
+      }
     } catch {
       return;
     }
@@ -3694,27 +3976,26 @@ export default function App() {
   }, [selectedFolder?.id, runPipelineHasTts]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(RENDER_TEMPLATES_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setRenderTemplates(parsed as RenderTemplate[]);
+    let active = true;
+    const loadRenderTemplates = async () => {
+      try {
+        const response = await fetch('/api/render-templates');
+        if (!response.ok) throw new Error('Unable to load templates');
+        const data = await response.json();
+        if (!active) return;
+        if (Array.isArray(data?.templates)) {
+          setRenderTemplates(data.templates as RenderTemplate[]);
+        }
+      } catch {
+        if (!active) return;
+        showToast('Không thể tải render templates.', 'error');
       }
-    } catch {
-      /* ignore bad storage */
-    }
+    };
+    loadRenderTemplates();
+    return () => {
+      active = false;
+    };
   }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(RENDER_TEMPLATES_KEY, JSON.stringify(renderTemplates));
-    } catch {
-      /* ignore storage errors */
-    }
-  }, [renderTemplates]);
 
   useEffect(() => {
     if (!runPipelineProject) return;
@@ -3765,22 +4046,90 @@ export default function App() {
     setRenderImageTransforms(prev => {
       const next: Record<string, any> = {};
       selectedImages.forEach(id => {
-        next[id] = prev[id] ?? {
-          x: '50',
-          y: '50',
-          scale: '1',
-          rotation: '0',
-          opacity: '100',
-          fit: 'contain',
-          cropX: '0',
-          cropY: '0',
-          cropW: '100',
-          cropH: '100'
+        const existing = prev[id] ?? {};
+        let maskLeft = existing.maskLeft;
+        let maskRight = existing.maskRight;
+        let maskTop = existing.maskTop;
+        let maskBottom = existing.maskBottom;
+        if (
+          maskLeft === undefined
+          && maskRight === undefined
+          && maskTop === undefined
+          && maskBottom === undefined
+          && (existing as any).maskX !== undefined
+        ) {
+          const x = coerceNumber((existing as any).maskX, 0) ?? 0;
+          const y = coerceNumber((existing as any).maskY, 0) ?? 0;
+          const w = coerceNumber((existing as any).maskW, 100) ?? 100;
+          const h = coerceNumber((existing as any).maskH, 100) ?? 100;
+          maskLeft = String(Math.max(0, Math.min(100, x)));
+          maskTop = String(Math.max(0, Math.min(100, y)));
+          maskRight = String(Math.max(0, Math.min(100, 100 - x - w)));
+          maskBottom = String(Math.max(0, Math.min(100, 100 - y - h)));
+        }
+        const scaleValue = coerceNumber(existing.scale, null);
+        const scalePercent = scaleValue !== null && scaleValue !== undefined && scaleValue <= 2
+          ? String(scaleValue * 100)
+          : (existing.scale ?? '100');
+        next[id] = {
+          x: existing.x ?? '50',
+          y: existing.y ?? '50',
+          scale: scalePercent,
+          rotation: existing.rotation ?? '0',
+          opacity: existing.opacity ?? '100',
+          fit: existing.fit ?? 'contain',
+          cropX: existing.cropX ?? '0',
+          cropY: existing.cropY ?? '0',
+          cropW: existing.cropW ?? '100',
+          cropH: existing.cropH ?? '100',
+          maskType: existing.maskType ?? 'none',
+          maskLeft: maskLeft ?? '0',
+          maskRight: maskRight ?? '0',
+          maskTop: maskTop ?? '0',
+          maskBottom: maskBottom ?? '0'
         };
       });
       return next;
     });
   }, [renderInputFileIds, runPipelineProject?.id]);
+
+    const normalizeRenderVideoMaskInsets = (video: Record<string, any>) => {
+      const hasInsets = (
+        video.maskLeft !== undefined
+        || video.maskRight !== undefined
+        || video.maskTop !== undefined
+        || video.maskBottom !== undefined
+    );
+    const hasLegacy = (
+      video.maskX !== undefined
+      || video.maskY !== undefined
+      || video.maskW !== undefined
+      || video.maskH !== undefined
+    );
+    if (hasInsets || !hasLegacy) return video;
+    const x = coerceNumber(video.maskX, 0) ?? 0;
+    const y = coerceNumber(video.maskY, 0) ?? 0;
+    const w = coerceNumber(video.maskW, 100) ?? 100;
+    const h = coerceNumber(video.maskH, 100) ?? 100;
+    const left = Math.max(0, Math.min(100, x));
+    const top = Math.max(0, Math.min(100, y));
+    const right = Math.max(0, Math.min(100, 100 - x - w));
+    const bottom = Math.max(0, Math.min(100, 100 - y - h));
+      return {
+        ...video,
+        maskLeft: String(left),
+        maskRight: String(right),
+        maskTop: String(top),
+        maskBottom: String(bottom)
+      };
+    };
+
+  const normalizeRenderVideoScalePercent = (video: Record<string, any>) => {
+    const value = coerceNumber(video.scale, null);
+    if (value === null || value === undefined) return video;
+    if (value > 2) return video;
+    return { ...video, scale: String(value * 100) };
+  };
 
   const savePipeline = async (nameOverride?: string) => {
     if (!graphNodes.length) {
@@ -4103,7 +4452,7 @@ export default function App() {
     }
   };
 
-  const runPipelineJob = async () => {
+  const runPipelineJob = async (options?: { renderPreviewSeconds?: number | null }) => {
     if (!runPipelineId) {
       showToast('Select a pipeline first', 'warning');
       return;
@@ -4126,6 +4475,7 @@ export default function App() {
       showToast('Select an input file first', 'warning');
       return;
     }
+    const renderPreviewSeconds = options?.renderPreviewSeconds;
     const sendPipeline = async (overwrite: boolean) => {
       const pipelinePayload: Record<string, any> = runPipelineHasDownload
         ? {
@@ -4221,7 +4571,18 @@ export default function App() {
             .filter((e): e is NonNullable<typeof e> => e !== null)
         };
         const renderConfigV2 = buildRenderConfigV2();
-        if (renderConfigV2) pipelinePayload.renderConfigV2 = renderConfigV2;
+        if (renderConfigV2) {
+          if (Number.isFinite(renderPreviewSeconds) && (renderPreviewSeconds ?? 0) > 0) {
+            renderConfigV2.timeline = {
+              ...renderConfigV2.timeline,
+              duration: Number(renderPreviewSeconds)
+            };
+          }
+          pipelinePayload.renderConfigV2 = renderConfigV2;
+        }
+        if (Number.isFinite(renderPreviewSeconds) && (renderPreviewSeconds ?? 0) > 0) {
+          pipelinePayload.renderPreviewSeconds = Number(renderPreviewSeconds);
+        }
       }
       if (overwrite) {
         pipelinePayload.overwrite = true;
@@ -4366,6 +4727,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const id = window.setInterval(() => {
+      const base = jobNowBaseRef.current;
+      if (!base) {
+        setJobNowMs(Date.now());
+        return;
+      }
+      const delta = Date.now() - base.clientMs;
+      setJobNowMs(base.serverMs + Math.max(0, delta));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     if (!vaultFolders.length) {
       setVaultFolderId(null);
       return;
@@ -4388,6 +4762,7 @@ export default function App() {
     runPipelineProject,
     renderReady,
     setShowRenderStudio,
+    setActiveTab,
     runPipelineJob,
     runPipelineSubmitting,
     renderStudioLeftMenuOpen,
@@ -4409,6 +4784,8 @@ export default function App() {
     setRenderAudioId,
     renderSubtitleId,
     setRenderSubtitleId,
+    renderTextTrackEnabled,
+    setRenderTextTrackEnabled,
     renderVideoFile,
     renderAudioFile,
     renderSubtitleFile,
@@ -4430,6 +4807,7 @@ export default function App() {
     renderSubtitleCues,
     renderTimelineViewDuration,
     showRenderTimelineSubtitleTrack,
+    showRenderTimelineTextTrack,
     showRenderTimelineImageTrack,
     showRenderTimelineEffectTracks,
     renderParams,
@@ -4451,6 +4829,7 @@ export default function App() {
     renderPreviewUrl,
     renderPreviewLoading,
     renderPreviewError,
+    setRenderPreviewHold,
     canBrowserPlayVideo,
     getVideoMimeType,
     renderSelectedItem,
@@ -4468,16 +4847,16 @@ export default function App() {
     coerceNumber,
     RENDER_BLUR_FEATHER_MAX,
     RENDER_PREVIEW_BLACK_DATA_URL,
-    runPipelineParamPreset,
-    handleParamPresetChange,
-    getParamPresetsForType,
-    isRenderPresetDirty,
-    selectProjectDefaults,
-    renderPresetMenuCloseRef,
-    renderPresetSaveMenuOpen,
-    setRenderPresetSaveMenuOpen,
-    saveRenderPresetLoading,
-    saveRenderStudioParamPreset,
+    renderTemplates,
+    runPipelineRenderTemplateId,
+    handleRenderTemplateChange,
+    saveRenderTemplateQuick,
+    saveRenderTemplateCurrent,
+    restoreRenderTemplateCurrent,
+    deleteRenderTemplateWithConfirm,
+    isRenderTemplateDirty,
+    renderConfigV2Override,
+    setRenderConfigV2Override,
     subtitleFontOptions,
     subtitleFontLoading,
     SUBTITLE_STYLE_PRESETS,
@@ -4485,6 +4864,75 @@ export default function App() {
     isSubtitlePresetActive,
     buildSubtitlePreviewStyle
   };
+
+  const selectedRenderTemplate = renderTemplates.find(t => t.id === runPipelineRenderTemplateId) ?? null;
+  const renderTemplatePlaceholders = React.useMemo(() => {
+    if (!selectedRenderTemplate || runPipelineRenderTemplateId === 'custom') return [];
+    const keys = Object.keys(selectedRenderTemplate.config.inputsMap ?? {});
+    const typeOfKey = (key: string) => {
+      if (key.startsWith('video')) return 'video';
+      if (key.startsWith('audio')) return 'audio';
+      if (key.startsWith('subtitle')) return 'subtitle';
+      if (key.startsWith('image')) return 'image';
+      return 'other';
+    };
+    return keys.map(key => ({ key, type: typeOfKey(key) }));
+  }, [selectedRenderTemplate, runPipelineRenderTemplateId]);
+  const renderTemplatePlaceholdersByType = React.useMemo(() => {
+    const grouped = {
+      video: [] as Array<{ key: string; type: string }>,
+      audio: [] as Array<{ key: string; type: string }>,
+      subtitle: [] as Array<{ key: string; type: string }>,
+      image: [] as Array<{ key: string; type: string }>,
+      other: [] as Array<{ key: string; type: string }>
+    };
+    renderTemplatePlaceholders.forEach(item => {
+      const key = item.type in grouped ? (item.type as keyof typeof grouped) : 'other';
+      grouped[key].push(item);
+    });
+    return grouped;
+  }, [renderTemplatePlaceholders]);
+  const renderTemplateFilesByType = React.useMemo(() => {
+    const availableFiles = runPipelineProject?.files ?? [];
+    return {
+      video: availableFiles.filter(file => file.type === 'video'),
+      audio: availableFiles.filter(file => file.type === 'audio'),
+      subtitle: availableFiles.filter(file => file.type === 'subtitle'),
+      image: availableFiles.filter(file => file.type === 'image')
+    };
+  }, [runPipelineProject?.files]);
+  const renderTemplateSummary = React.useMemo(() => {
+    if (!selectedRenderTemplate || runPipelineRenderTemplateId === 'custom') return null;
+    const config = selectedRenderTemplate.config;
+    const placeholders = Object.keys(config.inputsMap ?? {});
+    const placeholderCounts = {
+      video: 0,
+      audio: 0,
+      subtitle: 0,
+      image: 0,
+      other: 0
+    };
+    placeholders.forEach(key => {
+      if (key.startsWith('video')) placeholderCounts.video += 1;
+      else if (key.startsWith('audio')) placeholderCounts.audio += 1;
+      else if (key.startsWith('subtitle')) placeholderCounts.subtitle += 1;
+      else if (key.startsWith('image')) placeholderCounts.image += 1;
+      else placeholderCounts.other += 1;
+    });
+    const effects = Array.isArray(config.effects) ? config.effects : [];
+    const effectCounts = effects.reduce((acc, item) => {
+      const type = String(item?.type ?? 'effect');
+      acc[type] = (acc[type] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    return {
+      resolution: config.timeline?.resolution ?? '--',
+      framerate: config.timeline?.framerate ?? '--',
+      renderOptions: config.renderOptions ?? {},
+      placeholderCounts,
+      effectCounts
+    };
+  }, [selectedRenderTemplate, runPipelineRenderTemplateId]);
 
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-300 font-sans selection:bg-lime-500/30 selection:text-lime-200">
@@ -4671,7 +5119,7 @@ export default function App() {
                     <span>Pipeline</span>
                     <span>Progress</span>
                     <span>Status</span>
-                    <span className="text-right -ml-2">Duration</span>
+                    <span className="text-right -ml-2">Elapsed Time</span>
                   </div>
                   
                   <div className="flex flex-col">
@@ -4685,6 +5133,8 @@ export default function App() {
                             <JobRow
                               job={job}
                               index={(jobPage - 1) * 10 + index + 1}
+                              nowMs={jobNowMs}
+                              hasServerNow={Boolean(jobNowBaseRef.current)}
                               onContextMenu={(event, targetJob) => {
                                 event.preventDefault();
                                 setJobContextMenu({
@@ -5206,7 +5656,7 @@ export default function App() {
                         </button>
                       </div>
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-zinc-500">Templates saved locally for Render V2.</div>
+                        <div className="text-xs text-zinc-500">Templates saved in database for Render V2.</div>
                         <button
                           onClick={() => {
                             const config = buildRenderConfigV2();
@@ -5255,7 +5705,7 @@ export default function App() {
                               </button>
                               <button
                                 onClick={() => {
-                                  setRenderTemplates(prev => prev.filter(t => t.id !== template.id));
+                                  deleteRenderTemplateWithConfirm(template.id, template.name);
                                 }}
                                 className="px-2.5 py-1.5 text-xs font-semibold border border-red-500/40 text-red-300 rounded-lg hover:border-red-500/70"
                               >
@@ -6544,71 +6994,109 @@ export default function App() {
                           </div>
                         ) : runPipelineHasRender ? (
                           <div className="flex flex-col gap-2">
-                            {renderConfigV2Override && (
-                              <div className="rounded-lg border border-lime-500/30 bg-lime-500/10 px-2.5 py-1.5 text-[11px] text-lime-200 flex items-center justify-between">
-                                <span>Template mode active</span>
-                                <button
-                                  type="button"
-                                  onClick={() => setRenderConfigV2Override(null)}
-                                  className="text-[10px] font-semibold uppercase tracking-widest text-lime-200 hover:text-lime-100"
+                            {!runPipelineProject ? (
+                              <div className="text-[11px] text-zinc-500">Select a project first.</div>
+                            ) : runPipelineRenderTemplateId === 'custom' || !selectedRenderTemplate ? (
+                              <>
+                                <select
+                                  multiple
+                                  value={renderInputFileIds}
+                                  onChange={e => {
+                                    const selected = Array.from(e.target.selectedOptions).map(option => option.value);
+                                    setRenderInputFileIds(selected);
+                                    const selectedFiles = runPipelineProject?.files.filter(file => selected.includes(file.id)) ?? [];
+                                    const firstVideo = selectedFiles.find(file => file.type === 'video');
+                                    const firstAudio = selectedFiles.find(file => file.type === 'audio');
+                                    const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
+                                    setRenderVideoId(firstVideo?.id ?? null);
+                                    setRenderAudioId(firstAudio?.id ?? null);
+                                    setRenderSubtitleId(firstSubtitle?.id ?? null);
+                                  }}
+                                  className="min-h-[140px] bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                                 >
-                                  Clear
-                                </button>
+                                  {runPipelineProject?.files
+                                    .filter(file => file.type === 'video' || file.type === 'audio' || file.type === 'subtitle' || file.type === 'image')
+                                    .map(file => (
+                                      <option
+                                        key={file.id}
+                                        value={file.id}
+                                        title={file.name}
+                                      >
+                                        [{file.type}] {truncateLabel(file.name, 52)}
+                                      </option>
+                                    ))}
+                                </select>
+                                <div className="text-[10px] text-zinc-500">
+                                  Select multiple files (Ctrl/Cmd + click).
+                                </div>
+                              </>
+                            ) : (
+                              <div className="grid grid-cols-2 gap-2">
+                                {(['video', 'audio', 'subtitle', 'image', 'other'] as const).map(group => {
+                                  const placeholders = renderTemplatePlaceholdersByType[group];
+                                  if (!placeholders.length) return null;
+                                  const files = renderTemplateFilesByType[group as keyof typeof renderTemplateFilesByType] ?? [];
+                                  const needsWarning = group !== 'other' && (files.length === 0 || files.length !== placeholders.length);
+                                  let warningText = '';
+                                  if (files.length === 0) {
+                                    warningText = `No ${group} files available`;
+                                  } else if (files.length < placeholders.length) {
+                                    warningText = `Missing ${placeholders.length - files.length} ${group} file(s)`;
+                                  } else if (files.length > placeholders.length) {
+                                    warningText = `Extra ${files.length - placeholders.length} ${group} file(s)`;
+                                  }
+                                  return (
+                                    <div key={group} className="border border-zinc-800 rounded-lg bg-zinc-950/50">
+                                      <div className="flex items-center justify-between px-2.5 py-2 border-b border-zinc-800">
+                                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest">{group}</span>
+                                        {needsWarning && (
+                                          <span className="text-[10px] text-amber-300">{warningText}</span>
+                                        )}
+                                      </div>
+                                      <div className="p-2 grid gap-2">
+                                        {placeholders.map((placeholder, index) => {
+                                          const label = placeholders.length === 1 && placeholder.key === placeholder.type
+                                            ? ''
+                                            : (placeholder.key === placeholder.type ? `${placeholder.type}1` : placeholder.key);
+                                          return (
+                                            <div key={placeholder.key} className="flex flex-col gap-1 min-w-0">
+                                              {label ? (
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">
+                                                  {label}
+                                                </label>
+                                              ) : null}
+                                              <select
+                                                value={renderTemplateApplyMap[placeholder.key] ?? ''}
+                                                onChange={e => {
+                                                  const next = { ...renderTemplateApplyMap, [placeholder.key]: e.target.value };
+                                                  setRenderTemplateApplyMap(next);
+                                                  if (selectedRenderTemplate) {
+                                                    applyRenderTemplate(selectedRenderTemplate, next);
+                                                  }
+                                                }}
+                                                title={(() => {
+                                                  const selectedId = renderTemplateApplyMap[placeholder.key];
+                                                  const selectedFile = files.find(file => file.id === selectedId);
+                                                  return selectedFile?.name ?? '';
+                                                })()}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                                              >
+                                                <option value="">Select file</option>
+                                                {files.map(file => (
+                                                  <option key={file.id} value={file.id} title={file.name}>
+                                                    {truncateLabel(file.name, 52)}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
-                            <div className="flex items-center justify-between">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                              <div className="flex items-center gap-2">
-                                <select
-                                  value={runPipelineRenderTemplateId}
-                                  onChange={e => handleRenderTemplateChange(e.target.value)}
-                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                >
-                                  <option value="custom">Custom</option>
-                                  {renderTemplates.map(template => (
-                                    <option key={template.id} value={template.id}>{template.name}</option>
-                                  ))}
-                                </select>
-                                <button
-                                  type="button"
-                                  onClick={saveRenderTemplateQuick}
-                                  className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
-                                >
-                                  Save Template
-                                </button>
-                              </div>
-                            </div>
-                            <select
-                              multiple
-                              value={renderInputFileIds}
-                              onChange={e => {
-                                const selected = Array.from(e.target.selectedOptions).map(option => option.value);
-                                setRenderInputFileIds(selected);
-                                const selectedFiles = runPipelineProject?.files.filter(file => selected.includes(file.id)) ?? [];
-                                const firstVideo = selectedFiles.find(file => file.type === 'video');
-                                const firstAudio = selectedFiles.find(file => file.type === 'audio');
-                                const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
-                                setRenderVideoId(firstVideo?.id ?? null);
-                                setRenderAudioId(firstAudio?.id ?? null);
-                                setRenderSubtitleId(firstSubtitle?.id ?? null);
-                              }}
-                              className="min-h-[140px] bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                            >
-                              {runPipelineProject?.files
-                                .filter(file => file.type === 'video' || file.type === 'audio' || file.type === 'subtitle' || file.type === 'image')
-                                .map(file => (
-                                  <option
-                                    key={file.id}
-                                    value={file.id}
-                                    title={file.name}
-                                  >
-                                    [{file.type}] {truncateLabel(file.name, 52)}
-                                  </option>
-                                ))}
-                            </select>
-                            <div className="text-[10px] text-zinc-500">
-                              Select multiple files (Ctrl/Cmd + click).
-                            </div>
                           </div>
                         ) : (
                           <>
@@ -6640,7 +7128,83 @@ export default function App() {
                     )}
                   </div>
 
-                {runPipelineHasDownload && (
+                {runPipelineHasRender && renderTemplates.length > 0 && (
+                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Render</div>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={runPipelineRenderTemplateId}
+                          onChange={e => handleRenderTemplateChange(e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                        >
+                          <option value="custom">Custom</option>
+                          {renderTemplates.map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    {renderTemplateSummary && (
+                      <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5 text-[11px] text-zinc-400">
+                        <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Template Summary</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex items-center justify-between">
+                            <span>Resolution</span>
+                            <span className="text-zinc-200">{renderTemplateSummary.resolution}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Framerate</span>
+                            <span className="text-zinc-200">{renderTemplateSummary.framerate}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Codec</span>
+                            <span className="text-zinc-200">{renderTemplateSummary.renderOptions.codec ?? 'h264'}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Preset</span>
+                            <span className="text-zinc-200">{renderTemplateSummary.renderOptions.preset ?? 'fast'}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>CRF</span>
+                            <span className="text-zinc-200">{renderTemplateSummary.renderOptions.crf ?? 21}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>GOP</span>
+                            <span className="text-zinc-200">
+                              {renderTemplateSummary.renderOptions.gop ? renderTemplateSummary.renderOptions.gop : 'auto'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <div className="flex items-center justify-between">
+                            <span>Placeholders</span>
+                            <span className="text-zinc-200">
+                              {`${renderTemplateSummary.placeholderCounts.video} video, ${renderTemplateSummary.placeholderCounts.audio} audio, ${renderTemplateSummary.placeholderCounts.subtitle} subtitle, ${renderTemplateSummary.placeholderCounts.image} images`}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-2">
+                          <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Effects</div>
+                          {Object.keys(renderTemplateSummary.effectCounts).length === 0 ? (
+                            <div className="text-zinc-500">None</div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(renderTemplateSummary.effectCounts).map(([type, count]) => (
+                                <div key={type} className="px-2 py-1 rounded-md border border-zinc-800 bg-zinc-900 text-zinc-200">
+                                  {type} × {count}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {runPipelineHasDownload && getTaskTemplatesForType('download').length > 0 && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Download</div>
                     <div className="flex items-center justify-between mb-3">
@@ -6656,12 +7220,6 @@ export default function App() {
                             <option key={template.id} value={template.id}>{template.name}</option>
                           ))}
                         </select>
-                        <button
-                          onClick={() => saveTaskTemplate('download')}
-                          className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
-                        >
-                          Save Template
-                        </button>
                       </div>
                     </div>
                     {SHOW_PARAM_PRESETS && (
@@ -6767,7 +7325,7 @@ export default function App() {
                   </div>
                 )}
 
-                {runPipelineHasUvr && (
+                {runPipelineHasUvr && getTaskTemplatesForType('uvr').length > 0 && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: VR (UVR)</div>
                     <div className="flex items-center justify-between mb-3">
@@ -6783,12 +7341,6 @@ export default function App() {
                             <option key={template.id} value={template.id}>{template.name}</option>
                           ))}
                         </select>
-                        <button
-                          onClick={() => saveTaskTemplate('uvr')}
-                          className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
-                        >
-                          Save Template
-                        </button>
                       </div>
                     </div>
                     {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
@@ -6906,7 +7458,7 @@ export default function App() {
                   </div>
                 )}
 
-                {runPipelineHasTts && (
+                {runPipelineHasTts && getTaskTemplatesForType('tts').length > 0 && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: TTS</div>
                     <div className="flex items-center justify-between mb-3">
@@ -6922,12 +7474,6 @@ export default function App() {
                             <option key={template.id} value={template.id}>{template.name}</option>
                           ))}
                         </select>
-                        <button
-                          onClick={() => saveTaskTemplate('tts')}
-                          className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-800 text-zinc-300 rounded-md hover:text-zinc-100 hover:border-zinc-700"
-                        >
-                          Save Template
-                        </button>
                       </div>
                     </div>
                     {SHOW_PARAM_PRESETS && hasParamPresets('tts') && (

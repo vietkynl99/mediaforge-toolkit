@@ -21,6 +21,10 @@ export type AssRenderStyle = {
   marginV: number;
   /** Script Info WrapStyle 0–3. */
   wrapStyle: number;
+  /** anchor | position */
+  positionMode: string;
+  positionX: number;
+  positionY: number;
   playResX: number;
   playResY: number;
 };
@@ -44,6 +48,13 @@ const str = (v: unknown, fallback: string) => (typeof v === 'string' ? v : fallb
 /** Merge JSON from client with ASS-safe defaults. */
 export const parseAssRenderStyle = (raw: unknown): AssRenderStyle => {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  const playResX = clamp(Math.round(num(o.playResX, 1920)), 320, 7680);
+  const playResY = clamp(Math.round(num(o.playResY, 1080)), 240, 4320);
+  const positionMode = str(o.positionMode, 'anchor') === 'position' ? 'position' : 'anchor';
+  const rawX = num(o.positionX, 50);
+  const rawY = num(o.positionY, 50);
+  const positionX = clamp(Math.round((rawX / 100) * playResX), 0, playResX);
+  const positionY = clamp(Math.round((rawY / 100) * playResY), 0, playResY);
   return {
     fontName: str(o.fontName, 'Arial').replace(/,/g, ' ').trim() || 'Arial',
     fontSize: clamp(Math.round(num(o.fontSize, 48)), 6, 200),
@@ -59,8 +70,11 @@ export const parseAssRenderStyle = (raw: unknown): AssRenderStyle => {
     marginR: clamp(Math.round(num(o.marginR, 30)), 0, 9999),
     marginV: clamp(Math.round(num(o.marginV, 36)), 0, 9999),
     wrapStyle: clamp(Math.round(num(o.wrapStyle, 0)), 0, 3),
-    playResX: clamp(Math.round(num(o.playResX, 1920)), 320, 7680),
-    playResY: clamp(Math.round(num(o.playResY, 1080)), 240, 4320)
+    positionMode,
+    positionX,
+    positionY,
+    playResX,
+    playResY
   };
 };
 
@@ -145,6 +159,9 @@ export const buildAssDocument = (cues: SubtitleCue[], style: AssRenderStyle): st
     `${borderStyle},${style.outline},${style.shadow},${style.alignment},${style.marginL},${style.marginR},${style.marginV},${encoding}`;
 
   const shift = 0;
+  const posOverride = style.positionMode === 'position'
+    ? `{\\pos(${style.positionX},${style.positionY})}`
+    : '';
   const dialogue = cues
     .map(c => {
       const start = Math.max(0, c.start + shift);
@@ -152,7 +169,7 @@ export const buildAssDocument = (cues: SubtitleCue[], style: AssRenderStyle): st
       const t0 = formatAssTime(start);
       const t1 = formatAssTime(end);
       const tx = escapeAssDialogueText(c.text);
-      return `Dialogue: 0,${t0},${t1},Default,,0,0,0,,${tx}`;
+      return `Dialogue: 0,${t0},${t1},Default,,0,0,0,,${posOverride}${tx}`;
     })
     .join('\n');
 
