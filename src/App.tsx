@@ -986,6 +986,28 @@ export default function App() {
     y: 0,
     file: null
   });
+  const [renderStudioMediaBinContextMenu, setRenderStudioMediaBinContextMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    file: VaultFile | null;
+  }>({
+    open: false,
+    x: 0,
+    y: 0,
+    file: null
+  });
+  const [renderStudioTimelineContextMenu, setRenderStudioTimelineContextMenu] = useState<{
+    open: boolean;
+    x: number;
+    y: number;
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number } | null;
+  }>({
+    open: false,
+    x: 0,
+    y: 0,
+    track: null
+  });
   const [vaultFolders, setVaultFolders] = useState<VaultFolder[]>([]);
   const [vaultLoading, setVaultLoading] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
@@ -3352,6 +3374,104 @@ export default function App() {
     setFileContextMenu(prev => ({ ...prev, open: false, file: null }));
   };
 
+  const openRenderStudioMediaBinContextMenu = (event: React.MouseEvent, file: VaultFile) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setRenderStudioMediaBinContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      file
+    });
+  };
+
+  const closeRenderStudioMediaBinContextMenu = () => {
+    setRenderStudioMediaBinContextMenu(prev => ({ ...prev, open: false, file: null }));
+  };
+
+  const openRenderStudioTimelineContextMenu = (
+    event: React.MouseEvent,
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number }
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setRenderStudioTimelineContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      track
+    });
+  };
+
+  const closeRenderStudioTimelineContextMenu = () => {
+    setRenderStudioTimelineContextMenu(prev => ({ ...prev, open: false, track: null }));
+  };
+
+  const addRenderStudioFileToTimeline = (file: VaultFile) => {
+    if (!file || !file.id) return;
+    if (file.type !== 'video' && file.type !== 'audio' && file.type !== 'subtitle' && file.type !== 'image') return;
+    setRenderInputFileIds(prev => (prev.includes(file.id) ? prev : [...prev, file.id]));
+    if (file.type === 'video') {
+      setRenderVideoId(file.id);
+      setRenderStudioFocus('timeline');
+      setRenderStudioItemType(null);
+    }
+    if (file.type === 'audio') {
+      setRenderAudioId(file.id);
+      setRenderStudioFocus('timeline');
+      setRenderStudioItemType(null);
+    }
+    if (file.type === 'subtitle') {
+      setRenderSubtitleId(file.id);
+      setRenderStudioFocus('timeline');
+      setRenderStudioItemType(null);
+    }
+  };
+
+  const removeRenderStudioTrackFromTimeline = (track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number }) => {
+    if (!track) return;
+    if (!runPipelineProject) return;
+    if (track.type === 'effect') {
+      if (typeof track.index !== 'number') return;
+      removeRenderEffect(track.index);
+      setRenderStudioFocus('timeline');
+      setRenderStudioItemType(null);
+      return;
+    }
+    const targetId =
+      track.type === 'image'
+        ? track.id
+        : track.type === 'video'
+          ? renderVideoId
+          : track.type === 'audio'
+            ? renderAudioId
+            : renderSubtitleId;
+    if (!targetId) return;
+    const nextIds = renderInputFileIds.filter(id => id !== targetId);
+    setRenderInputFileIds(nextIds);
+
+    if (track.type === 'video') {
+      const nextVideo = runPipelineProject.files.find(file => (
+        file.type === 'video' && nextIds.includes(file.id)
+      ));
+      setRenderVideoId(nextVideo?.id ?? null);
+    }
+    if (track.type === 'audio') {
+      const nextAudio = runPipelineProject.files.find(file => (
+        file.type === 'audio' && nextIds.includes(file.id)
+      ));
+      setRenderAudioId(nextAudio?.id ?? null);
+    }
+    if (track.type === 'subtitle') {
+      const nextSubtitle = runPipelineProject.files.find(file => (
+        file.type === 'subtitle' && nextIds.includes(file.id)
+      ));
+      setRenderSubtitleId(nextSubtitle?.id ?? null);
+    }
+    setRenderStudioFocus('timeline');
+    setRenderStudioItemType(null);
+  };
+
   const downloadVaultFile = (file: VaultFile) => {
     if (!file.relativePath) return;
     const link = document.createElement('a');
@@ -4280,6 +4400,8 @@ export default function App() {
     setRenderStudioFocus,
     renderStudioItemType,
     setRenderStudioItemType,
+    openRenderStudioMediaBinContextMenu,
+    openRenderStudioTimelineContextMenu,
     renderInputFileIds,
     renderVideoId,
     setRenderVideoId,
@@ -7250,6 +7372,64 @@ export default function App() {
                   <span className="flex items-center gap-2">
                     <Download size={12} />
                     Download
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {renderStudioMediaBinContextMenu.open && renderStudioMediaBinContextMenu.file && (
+            <div className="fixed inset-0 z-[70]" onClick={closeRenderStudioMediaBinContextMenu}>
+              <div
+                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[190px]"
+                style={{ top: renderStudioMediaBinContextMenu.y, left: renderStudioMediaBinContextMenu.x }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {!renderInputFileIds.includes(renderStudioMediaBinContextMenu.file.id) && (
+                  <button
+                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                    onClick={() => {
+                      addRenderStudioFileToTimeline(renderStudioMediaBinContextMenu.file as VaultFile);
+                      closeRenderStudioMediaBinContextMenu();
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Plus size={12} />
+                      Add to timeline
+                    </span>
+                  </button>
+                )}
+                {renderInputFileIds.includes(renderStudioMediaBinContextMenu.file.id) && (
+                  <div className="px-3 py-2 text-left text-xs text-zinc-500 flex items-center gap-2">
+                    <CheckCircle2 size={12} />
+                    Already in timeline
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {renderStudioTimelineContextMenu.open && renderStudioTimelineContextMenu.track && (
+            <div className="fixed inset-0 z-[70]" onClick={closeRenderStudioTimelineContextMenu}>
+              <div
+                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[190px]"
+                style={{ top: renderStudioTimelineContextMenu.y, left: renderStudioTimelineContextMenu.x }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
+                  onClick={() => {
+                    removeRenderStudioTrackFromTimeline(renderStudioTimelineContextMenu.track as {
+                      type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect';
+                      id?: string;
+                      index?: number;
+                    });
+                    closeRenderStudioTimelineContextMenu();
+                  }}
+                >
+                  <span className="flex items-center gap-2">
+                    <Trash2 size={12} />
+                    Remove from timeline
                   </span>
                 </button>
               </div>

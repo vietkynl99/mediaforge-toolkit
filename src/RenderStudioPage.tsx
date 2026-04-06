@@ -28,6 +28,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     setRenderStudioFocus,
     renderStudioItemType,
     setRenderStudioItemType,
+    openRenderStudioMediaBinContextMenu,
+    openRenderStudioTimelineContextMenu,
     renderInputFileIds,
     renderVideoId,
     setRenderVideoId,
@@ -286,10 +288,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   setRenderStudioItemType('image');
                                 }
                                 : undefined;
+                        const onContextMenu = onClick
+                          ? (event: React.MouseEvent) => openRenderStudioMediaBinContextMenu(event, file)
+                          : undefined;
                           return (
                             <button
                               key={file.id}
                               onClick={onClick}
+                              onContextMenu={onContextMenu}
                               disabled={!onClick}
                               className={`rounded-lg border p-2 text-left flex flex-col gap-1 ${
                                 isSelected ? selectedClass : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700'
@@ -598,6 +604,10 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       openInspectorSection('subtitle');
                                     }
                                   }}
+                                  onContextMenu={event => {
+                                    if (!renderSubtitleFile) return;
+                                    openRenderStudioTimelineContextMenu(event, { type: 'subtitle' });
+                                  }}
                                   onKeyDown={event => {
                                     if (event.key === 'Enter' || event.key === ' ') {
                                       event.preventDefault();
@@ -672,6 +682,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         setSelectedTrackKey(`effects:${idx}`);
                                         openInspectorSection('effects');
                                       }}
+                                      onContextMenu={event => {
+                                        openRenderStudioTimelineContextMenu(event, { type: 'effect', index: idx });
+                                      }}
                                       onKeyDown={event => {
                                         if (event.key === 'Enter' || event.key === ' ') {
                                           event.preventDefault();
@@ -706,6 +719,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         event.stopPropagation();
                                         setSelectedTrackKey(`image:${entry.id}`);
                                         selectTrack('image');
+                                      }}
+                                      onContextMenu={event => {
+                                        openRenderStudioTimelineContextMenu(event, { type: 'image', id: entry.id });
                                       }}
                                       onKeyDown={event => {
                                         if (event.key === 'Enter' || event.key === ' ') {
@@ -744,6 +760,10 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     } else {
                                       openInspectorSection('video');
                                     }
+                                  }}
+                                  onContextMenu={event => {
+                                    if (!renderVideoFile) return;
+                                    openRenderStudioTimelineContextMenu(event, { type: 'video' });
                                   }}
                                   onKeyDown={event => {
                                     if (event.key === 'Enter' || event.key === ' ') {
@@ -786,6 +806,10 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     } else {
                                       openInspectorSection('audio');
                                     }
+                                  }}
+                                  onContextMenu={event => {
+                                    if (!renderAudioFile) return;
+                                    openRenderStudioTimelineContextMenu(event, { type: 'audio' });
                                   }}
                                   onKeyDown={event => {
                                     if (event.key === 'Enter' || event.key === ' ') {
