@@ -343,11 +343,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                     </div>
                     {renderStudioMediaBinOpen && (
                       <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1">
-                        {(runPipelineProject?.files ?? []).filter(file => renderInputFileIds.includes(file.id)).map(file => {
+                        {(runPipelineProject?.files ?? []).map(file => {
                           const isVideo = file.type === 'video';
                           const isAudio = file.type === 'audio';
                           const isSubtitle = file.type === 'subtitle';
                           const isImage = file.type === 'image';
+                          const isAdded = renderInputFileIds.includes(file.id);
                           const isSelected = renderStudioFocus === 'item'
                             ? isVideo
                               ? renderStudioItemType === 'video' && renderVideoId === file.id
@@ -356,7 +357,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 : isSubtitle
                                   ? renderStudioItemType === 'subtitle' && renderSubtitleId === file.id
                                   : isImage
-                                    ? renderStudioItemType === 'image' && renderInputFileIds?.includes?.(file.id)
+                                    ? renderStudioItemType === 'image' && selectedImageId === file.id
                                     : false
                             : false;
                           const icon = isVideo ? FileVideo : isAudio ? FileAudio : isSubtitle ? Type : Image;
@@ -406,8 +407,13 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 isSelected ? selectedClass : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700'
                               } ${!onClick ? 'opacity-60 cursor-not-allowed' : ''}`}
                             >
-                              <div className={`h-7 w-7 rounded-md ${iconClass} flex items-center justify-center`}>
-                                {React.createElement(icon, { size: 14 })}
+                              <div className="flex items-center justify-between w-full">
+                                <div className={`h-7 w-7 rounded-md ${iconClass} flex items-center justify-center`}>
+                                  {React.createElement(icon, { size: 14 })}
+                                </div>
+                                {isAdded && (
+                                  <span className="text-[9px] font-bold text-lime-500 uppercase tracking-tighter">added</span>
+                                )}
                               </div>
                               <div className="min-w-0">
                                 <div className="text-[11px] font-semibold truncate">{file.name}</div>
@@ -654,10 +660,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             <span className="h-5" />
                             {showRenderTimelineTextTrack ? (
                               <div
-                                className="flex items-center min-w-0"
+                                className="flex items-center gap-1.5 min-w-0"
                                 style={{ height: renderTextTrackHeight }}
                                 title="Text track · placeholder: text"
                               >
+                                <Type size={14} className="text-zinc-500 shrink-0" />
                                 <input
                                   type="text"
                                   className="w-full min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 py-0.5 text-[10px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
@@ -690,7 +697,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             ) : null}
                             {showRenderTimelineImageTrack
                               ? renderImageFiles.map((file, idx) => (
-                                  <div key={`img-label-${file.id}`} className="h-3 flex items-center min-w-0" title={file.name}>
+                                  <div key={`img-label-${file.id}`} className="h-3 flex items-center gap-1.5 min-w-0" title={file.name}>
+                                    <Image size={10} className="text-zinc-500 shrink-0" />
                                     <input
                                       type="text"
                                       className="w-full min-w-0 h-3 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 text-[9px] leading-none text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
@@ -703,7 +711,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 ))
                               : null}
                             {showRenderTimelineVideoTrack ? (
-                              <div className="h-3 flex items-center min-w-0" title={renderVideoFile ? `Video · ${placeholderKeyByFileId[renderVideoFile.id] ?? 'video'}` : 'Video'}>
+                              <div className="h-3 flex items-center gap-1.5 min-w-0" title={renderVideoFile ? `Video · ${placeholderKeyByFileId[renderVideoFile.id] ?? 'video'}` : 'Video'}>
+                                <FileVideo size={10} className="text-zinc-500 shrink-0" />
                                 {renderVideoFile ? (
                                   <input
                                     type="text"
@@ -719,7 +728,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               </div>
                             ) : null}
                             {showRenderTimelineAudioTrack ? (
-                              <div className="h-3 flex items-center min-w-0" title={renderAudioFile ? `Audio · ${placeholderKeyByFileId[renderAudioFile.id] ?? 'audio'}` : 'Audio'}>
+                              <div className="h-3 flex items-center gap-1.5 min-w-0" title={renderAudioFile ? `Audio · ${placeholderKeyByFileId[renderAudioFile.id] ?? 'audio'}` : 'Audio'}>
+                                <FileAudio size={10} className="text-zinc-500 shrink-0" />
                                 {renderAudioFile ? (
                                   <input
                                     type="text"
