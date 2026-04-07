@@ -111,6 +111,29 @@ type RenderBlurRegionEffect = {
 
 const num = (v: unknown, fb: number) => coerceNumber(v as string | number | null | undefined, fb) ?? fb;
 
+/** Same ref keys as `buildRenderConfigV2` inputsMap (video, audio, subtitle, image, image2, …). */
+const computePlaceholderKeyByFileId = (
+  files: Array<{ id: string; type: string }>,
+  renderInputFileIds: string[]
+): Record<string, string> => {
+  const selected = files.filter(file => renderInputFileIds.includes(file.id));
+  const counts: Record<'video' | 'audio' | 'subtitle' | 'image', number> = {
+    video: 0,
+    audio: 0,
+    subtitle: 0,
+    image: 0
+  };
+  const fileIdToKey: Record<string, string> = {};
+  selected.forEach(file => {
+    if (file.type !== 'video' && file.type !== 'audio' && file.type !== 'subtitle' && file.type !== 'image') return;
+    const t = file.type as 'video' | 'audio' | 'subtitle' | 'image';
+    counts[t] += 1;
+    const key = counts[t] === 1 ? file.type : `${file.type}${counts[t]}`;
+    fileIdToKey[file.id] = key;
+  });
+  return fileIdToKey;
+};
+
 type RenderSubtitleAssState = {
   fontName: string;
   fontSize: string;
@@ -141,6 +164,8 @@ type RenderConfigV2 = {
     framerate: number;
     duration?: number;
     backgroundColor?: string;
+    /** Display names keyed by placeholder ref (inputsMap keys) plus `text` for the text overlay track. */
+    trackLabels?: Record<string, string>;
   };
   renderOptions?: {
     codec?: 'h264' | 'h265';
@@ -1193,6 +1218,7 @@ export default function App() {
     blurEffects?: RenderBlurRegionEffect[];
   }>>({});
   const [renderVideoBlurEffects, setRenderVideoBlurEffects] = useState<RenderBlurRegionEffect[]>([]);
+  const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
   const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
   const [renderTemplates, setRenderTemplates] = useState<RenderTemplate[]>([]);
   const [renderTemplateModalOpen, setRenderTemplateModalOpen] = useState(false);
@@ -1354,6 +1380,19 @@ export default function App() {
   const renderVideoFile = runPipelineProject?.files.find(file => file.id === renderVideoId) ?? null;
   const renderAudioFile = runPipelineProject?.files.find(file => file.id === renderAudioId) ?? null;
   const renderSubtitleFile = runPipelineProject?.files.find(file => file.id === renderSubtitleId) ?? null;
+  const placeholderKeyByFileId = React.useMemo(() => {
+    if (!runPipelineProject?.files) return {};
+    return computePlaceholderKeyByFileId(runPipelineProject.files, renderInputFileIds);
+  }, [runPipelineProject?.files, renderInputFileIds]);
+
+  const updateRenderTrackLabel = React.useCallback((key: string, value: string) => {
+    setRenderTrackLabels(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  useEffect(() => {
+    setRenderTrackLabels({});
+  }, [runPipelineProject?.id]);
+
   const selectProjectDefaults = () => {
     const files = runPipelineProject?.files ?? [];
     const firstVideo = files.find(file => file.type === 'video');
@@ -2295,6 +2334,7 @@ export default function App() {
     renderImageDurations,
     renderImageTransforms,
     renderVideoBlurEffects,
+    renderTrackLabels,
     renderParams.timeline,
     renderParams.video,
     renderParams.audio,
@@ -2311,6 +2351,7 @@ export default function App() {
     runPipelineRenderTemplateId,
     renderParams,
     renderVideoBlurEffects,
+    renderTrackLabels,
     renderImageTransforms,
     renderImageDurations,
     renderImageOrderIds,
@@ -2640,6 +2681,7 @@ export default function App() {
 
     const counts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
     const inputsMap: Record<string, string> = {};
+    const trackLabelsOut: Record<string, string> = {};
     const items: Array<Record<string, any>> = [];
 
     const timelineResolution = renderParams.timeline.resolution || '1920x1080';
@@ -2718,6 +2760,8 @@ export default function App() {
       counts[file.type] += 1;
       const key = counts[file.type] === 1 ? file.type : `${file.type}${counts[file.type]}`;
       inputsMap[key] = file.relativePath;
+      const labelFromUser = (renderTrackLabels[key] ?? '').trim();
+      trackLabelsOut[key] = labelFromUser || file.name || key;
       const baseItem: Record<string, any> = {
         id: `${file.type}-${counts[file.type]}`,
         type: file.type,
@@ -2849,13 +2893,16 @@ export default function App() {
         text: { value: singleText, start, end: safeEnd },
         subtitleStyle: { ...(renderParams.subtitle ?? {}) }
       });
+      const textLabel = (renderTrackLabels.text ?? '').trim();
+      trackLabelsOut.text = textLabel || 'Text';
     }
 
     return {
       version: '2',
       timeline: {
         resolution: timelineResolution,
-        framerate: timelineFramerate
+        framerate: timelineFramerate,
+        trackLabels: trackLabelsOut
       },
       renderOptions: {
         codec: renderParams.render?.codec === 'h265' ? 'h265' : 'h264',
@@ -2932,6 +2979,7 @@ export default function App() {
       inputsMap
     };
     setRenderConfigV2Override(nextConfig);
+    setRenderTrackLabels(template.config.timeline?.trackLabels ?? {});
     const selectedIds = Object.values(mapping).filter(Boolean);
     setRenderInputFileIds(selectedIds);
     const selectedFiles = runPipelineProject?.files.filter(file => selectedIds.includes(file.id)) ?? [];
@@ -4739,6 +4787,7 @@ export default function App() {
 
   const renderStudioProps = {
     runPipelineProject,
+    selectProjectDefaults,
     renderReady,
     setShowRenderStudio,
     setActiveTab,
@@ -4827,6 +4876,9 @@ export default function App() {
     updateRenderImageBlurEffect,
     commitRenderImageBlurEffectValue,
     removeRenderImageBlurEffect,
+    renderTrackLabels,
+    placeholderKeyByFileId,
+    updateRenderTrackLabel,
     coerceNumber,
     RENDER_BLUR_FEATHER_MAX,
     RENDER_PREVIEW_BLACK_DATA_URL,
@@ -7038,14 +7090,19 @@ export default function App() {
                                       </div>
                                       <div className="p-2 grid gap-2">
                                         {placeholders.map((placeholder, index) => {
-                                          const label = placeholders.length === 1 && placeholder.key === placeholder.type
+                                          const fallbackKey = placeholders.length === 1 && placeholder.key === placeholder.type
                                             ? ''
                                             : (placeholder.key === placeholder.type ? `${placeholder.type}1` : placeholder.key);
+                                          const savedName = (selectedRenderTemplate?.config?.timeline?.trackLabels?.[placeholder.key] ?? '').trim();
+                                          const displayName = savedName || fallbackKey;
                                           return (
                                             <div key={placeholder.key} className="flex flex-col gap-1 min-w-0">
-                                              {label ? (
-                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">
-                                                  {label}
+                                              {displayName ? (
+                                                <label
+                                                  className="text-[10px] text-zinc-500 uppercase tracking-widest truncate"
+                                                  title={`${placeholder.key}${savedName ? ` · ${savedName}` : ''}`}
+                                                >
+                                                  {displayName}
                                                 </label>
                                               ) : null}
                                               <select

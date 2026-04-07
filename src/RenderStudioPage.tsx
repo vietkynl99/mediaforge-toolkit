@@ -14,6 +14,7 @@ const DEFAULT_RENDER_RESOLUTION_PRESETS = [
 export default function RenderStudioPage(props: RenderStudioPageProps) {
   const {
     runPipelineProject,
+    selectProjectDefaults,
     renderReady,
     setShowRenderStudio,
     setActiveTab,
@@ -101,6 +102,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     updateRenderImageBlurEffect,
     commitRenderImageBlurEffectValue,
     removeRenderImageBlurEffect,
+    renderTrackLabels,
+    placeholderKeyByFileId,
+    updateRenderTrackLabel,
     coerceNumber,
     RENDER_BLUR_FEATHER_MAX,
     RENDER_PREVIEW_BLACK_DATA_URL,
@@ -646,46 +650,89 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         </div>
                         <div className="max-h-[min(45vh,28rem)] overflow-y-auto pr-1">
                         <div className="flex gap-2 text-[11px] text-zinc-400 min-w-0">
-                          <div className="w-16 flex flex-col gap-2">
+                          <div className="w-[7.5rem] shrink-0 flex flex-col gap-2">
                             <span className="h-5" />
                             {showRenderTimelineTextTrack ? (
-                              <span
-                                className="text-zinc-500 flex items-center text-[10px] leading-tight"
+                              <div
+                                className="flex items-center min-w-0"
                                 style={{ height: renderTextTrackHeight }}
-                                title="Text track"
+                                title="Text track · placeholder: text"
                               >
-                                Text
-                              </span>
+                                <input
+                                  type="text"
+                                  className="w-full min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 py-0.5 text-[10px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                  value={renderTrackLabels.text ?? ''}
+                                  placeholder="Text"
+                                  onClick={e => e.stopPropagation()}
+                                  onChange={e => updateRenderTrackLabel('text', e.target.value)}
+                                />
+                              </div>
                             ) : null}
                             {showRenderTimelineSubtitleTrack ? (
-                              <span
-                                className="text-zinc-500 flex items-center text-[10px] leading-tight"
+                              <div
+                                className="flex items-center min-w-0"
                                 style={{ height: renderSubtitleTrackHeight }}
-                                title="Layer trên cùng (phủ lên các track bên dưới)"
+                                title={renderSubtitleFile ? `Subtitle · ${placeholderKeyByFileId[renderSubtitleFile.id] ?? 'subtitle'}` : 'Subtitle'}
                               >
-                                Subtitle
-                              </span>
+                                {renderSubtitleFile ? (
+                                  <input
+                                    type="text"
+                                    className="w-full min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 py-0.5 text-[10px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                    value={renderTrackLabels[placeholderKeyByFileId[renderSubtitleFile.id] ?? ''] ?? ''}
+                                    placeholder={renderSubtitleFile.name}
+                                    onClick={e => e.stopPropagation()}
+                                    onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[renderSubtitleFile.id] ?? 'subtitle', e.target.value)}
+                                  />
+                                ) : (
+                                  <span className="text-zinc-500 text-[10px] leading-tight">Subtitle</span>
+                                )}
+                              </div>
                             ) : null}
                             {showRenderTimelineImageTrack
                               ? renderImageFiles.map((file, idx) => (
-                                  <span
-                                    key={`img-label-${file.id}`}
-                                    className="text-zinc-500 h-3 flex items-center text-[10px] leading-none truncate"
-                                    title={file.name}
-                                  >
-                                    Image {idx + 1}
-                                  </span>
+                                  <div key={`img-label-${file.id}`} className="h-3 flex items-center min-w-0" title={file.name}>
+                                    <input
+                                      type="text"
+                                      className="w-full min-w-0 h-3 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 text-[9px] leading-none text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                      value={renderTrackLabels[placeholderKeyByFileId[file.id] ?? `image${idx + 1}`] ?? ''}
+                                      placeholder={`Image ${idx + 1}`}
+                                      onClick={e => e.stopPropagation()}
+                                      onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[file.id] ?? `image${idx + 1}`, e.target.value)}
+                                    />
+                                  </div>
                                 ))
                               : null}
                             {showRenderTimelineVideoTrack ? (
-                              <span className="text-zinc-500 h-3 flex items-center" title="Nguồn hình">
-                                Video
-                              </span>
+                              <div className="h-3 flex items-center min-w-0" title={renderVideoFile ? `Video · ${placeholderKeyByFileId[renderVideoFile.id] ?? 'video'}` : 'Video'}>
+                                {renderVideoFile ? (
+                                  <input
+                                    type="text"
+                                    className="w-full min-w-0 h-3 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 text-[9px] leading-none text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                    value={renderTrackLabels[placeholderKeyByFileId[renderVideoFile.id] ?? ''] ?? ''}
+                                    placeholder={renderVideoFile.name}
+                                    onClick={e => e.stopPropagation()}
+                                    onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[renderVideoFile.id] ?? 'video', e.target.value)}
+                                  />
+                                ) : (
+                                  <span className="text-zinc-500 text-[10px]">Video</span>
+                                )}
+                              </div>
                             ) : null}
                             {showRenderTimelineAudioTrack ? (
-                              <span className="text-zinc-500 h-3 flex items-center" title="Layer dưới cùng (chỉ âm thanh)">
-                                Audio
-                              </span>
+                              <div className="h-3 flex items-center min-w-0" title={renderAudioFile ? `Audio · ${placeholderKeyByFileId[renderAudioFile.id] ?? 'audio'}` : 'Audio'}>
+                                {renderAudioFile ? (
+                                  <input
+                                    type="text"
+                                    className="w-full min-w-0 h-3 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 text-[9px] leading-none text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                    value={renderTrackLabels[placeholderKeyByFileId[renderAudioFile.id] ?? ''] ?? ''}
+                                    placeholder={renderAudioFile.name}
+                                    onClick={e => e.stopPropagation()}
+                                    onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[renderAudioFile.id] ?? 'audio', e.target.value)}
+                                  />
+                                ) : (
+                                  <span className="text-zinc-500 text-[10px]">Audio</span>
+                                )}
+                              </div>
                             ) : null}
                           </div>
                           <div

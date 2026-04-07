@@ -57,6 +57,7 @@ type RenderConfigV2 = {
     framerate: number;
     duration?: number;
     backgroundColor?: string;
+    trackLabels?: Record<string, string>;
   };
   renderOptions?: {
     codec?: 'h264' | 'h265';
