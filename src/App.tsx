@@ -1877,6 +1877,37 @@ export default function App() {
 
   const getTaskTemplatesForType = (taskType: string) => taskTemplates.filter(template => template.taskType === taskType);
 
+  const getSelectedTaskTemplate = (taskType: string) => {
+    const selectedId = runPipelineTaskTemplate[taskType];
+    if (!selectedId || selectedId === 'custom') return null;
+    return taskTemplates.find(template => template.taskType === taskType && template.id === selectedId) ?? null;
+  };
+
+  const renderTaskTemplateParamsSummary = (template: TaskTemplate | null) => {
+    if (!template) return null;
+    const entries = Object.entries(template.params || {});
+    if (entries.length === 0) {
+      return (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-400">
+          No template parameters available.
+        </div>
+      );
+    }
+    return (
+      <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-200">
+        <div className="mb-2 text-xs uppercase tracking-widest text-zinc-500">Template Parameters</div>
+        <div className="grid gap-2 text-[12px]">
+          {entries.map(([key, value]) => (
+            <div key={key} className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 items-start border-b border-zinc-800 pb-2 last:border-b-0 last:pb-0">
+              <div className="text-zinc-400 font-medium">{key}</div>
+              <div className="text-zinc-200 break-words">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const applyTaskTemplateParams = (taskType: string, params: Record<string, any>) => {
     if (!params || typeof params !== 'object') return;
     if (taskType === 'uvr') {
@@ -7244,7 +7275,7 @@ export default function App() {
                   </div>
                 )}
 
-                {runPipelineHasDownload && getTaskTemplatesForType('download').length > 0 && (
+                {runPipelineHasDownload && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Download</div>
                     <div className="flex items-center justify-between mb-3">
@@ -7262,110 +7293,118 @@ export default function App() {
                         </select>
                       </div>
                     </div>
-                    {SHOW_PARAM_PRESETS && (
-                      hasParamPresets('download') ? (
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                            {runPipelineParamPreset.download !== 'custom' && null}
-                          </div>
-                          <select
-                            value={runPipelineParamPreset.download ?? 'custom'}
-                            onChange={e => handleParamPresetChange('download', e.target.value)}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                          >
-                            <option value="custom">Manual</option>
-                            {getParamPresetsForType('download').map(preset => (
-                              <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                            ))}
-                          </select>
-                          {runPipelineParamPreset.download !== 'custom' && (
-                            <div
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => switchPresetToManual('download')}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  switchPresetToManual('download');
-                                }
-                              }}
-                              title="Switch to manual and load these params"
-                              className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                            >
-                              <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                                {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
-                                  <div key={key} className="flex items-center justify-between gap-2">
-                                    <span className="font-mono text-zinc-500">{key}</span>
-                                    <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                  </div>
-                                ))}
+                    {getSelectedTaskTemplate('download') ? (
+                      <div className="mt-3">
+                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('download'))}
+                      </div>
+                    ) : (
+                      <>
+                        {SHOW_PARAM_PRESETS && (
+                          hasParamPresets('download') ? (
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                                {runPipelineParamPreset.download !== 'custom' && null}
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
-                      )
-                    )}
-                    {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <select
-                          value={downloadMode}
-                          onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                        >
-                          <option value="all">Download: All (subs + audio + video)</option>
-                          <option value="subs">Download: Subtitles only</option>
-                          <option value="media">Download: Audio + Video only</option>
-                        </select>
-                        <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
-                          <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
-                          <input
-                            type="file"
-                            accept=".txt"
-                            onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
-                            className="hidden"
-                          />
-                        </label>
-                        <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
-                          <input
-                            type="checkbox"
-                            checked={downloadNoPlaylist}
-                            onChange={e => setDownloadNoPlaylist(e.target.checked)}
-                            className="accent-lime-400"
-                          />
-                          No playlist
-                        </label>
-                        {downloadMode !== 'media' ? (
-                          <>
-                            <input
-                              value={downloadSubtitleLang}
-                              onChange={e => setDownloadSubtitleLang(e.target.value)}
-                              list="ytdlp-sub-langs"
-                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                              placeholder="Subtitle language (e.g. ai-zh)"
-                              title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
-                            />
-                            {downloadAnalyzeListSubs.length > 0 && (
-                              <datalist id="ytdlp-sub-langs">
-                                {downloadAnalyzeListSubs.map((entry: any) => (
-                                  <option key={entry.lang} value={entry.lang} />
+                              <select
+                                value={runPipelineParamPreset.download ?? 'custom'}
+                                onChange={e => handleParamPresetChange('download', e.target.value)}
+                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                              >
+                                <option value="custom">Manual</option>
+                                {getParamPresetsForType('download').map(preset => (
+                                  <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
                                 ))}
-                              </datalist>
+                              </select>
+                              {runPipelineParamPreset.download !== 'custom' && (
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => switchPresetToManual('download')}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      switchPresetToManual('download');
+                                    }
+                                  }}
+                                  title="Switch to manual and load these params"
+                                  className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                                >
+                                  <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                                    {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
+                                      <div key={key} className="flex items-center justify-between gap-2">
+                                        <span className="font-mono text-zinc-500">{key}</span>
+                                        <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
+                          )
+                        )}
+                        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <select
+                              value={downloadMode}
+                              onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
+                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                            >
+                              <option value="all">Download: All (subs + audio + video)</option>
+                              <option value="subs">Download: Subtitles only</option>
+                              <option value="media">Download: Audio + Video only</option>
+                            </select>
+                            <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
+                              <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
+                              <input
+                                type="file"
+                                accept=".txt"
+                                onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
+                                className="hidden"
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
+                              <input
+                                type="checkbox"
+                                checked={downloadNoPlaylist}
+                                onChange={e => setDownloadNoPlaylist(e.target.checked)}
+                                className="accent-lime-400"
+                              />
+                              No playlist
+                            </label>
+                            {downloadMode !== 'media' ? (
+                              <>
+                                <input
+                                  value={downloadSubtitleLang}
+                                  onChange={e => setDownloadSubtitleLang(e.target.value)}
+                                  list="ytdlp-sub-langs"
+                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                                  placeholder="Subtitle language (e.g. ai-zh)"
+                                  title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
+                                />
+                                {downloadAnalyzeListSubs.length > 0 && (
+                                  <datalist id="ytdlp-sub-langs">
+                                    {downloadAnalyzeListSubs.map((entry: any) => (
+                                      <option key={entry.lang} value={entry.lang} />
+                                    ))}
+                                  </datalist>
+                                )}
+                              </>
+                            ) : (
+                              <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
+                                Subtitles disabled for media-only.
+                              </div>
                             )}
-                          </>
-                        ) : (
-                          <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
-                            Subtitles disabled for media-only.
                           </div>
                         )}
-                      </div>
+                      </>
                     )}
                   </div>
                 )}
 
-                {runPipelineHasUvr && getTaskTemplatesForType('uvr').length > 0 && (
+                {runPipelineHasUvr && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: VR (UVR)</div>
                     <div className="flex items-center justify-between mb-3">
@@ -7383,122 +7422,130 @@ export default function App() {
                         </select>
                       </div>
                     </div>
-                    {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
-                      <div className="mb-3 flex flex-col gap-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                          {runPipelineParamPreset.uvr !== 'custom' && null}
-                        </div>
-                        <select
-                          value={runPipelineParamPreset.uvr ?? 'custom'}
-                          onChange={e => handleParamPresetChange('uvr', e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                        >
-                          <option value="custom">Manual</option>
-                          {getParamPresetsForType('uvr').map(preset => (
-                            <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                          ))}
-                        </select>
-                        {runPipelineParamPreset.uvr !== 'custom' && (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => switchPresetToManual('uvr')}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                switchPresetToManual('uvr');
-                              }
-                            }}
-                            title="Switch to manual and load these params"
-                            className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                          >
-                            <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                              {Object.entries(getSelectedParamPresetParams('uvr')).map(([key, value]) => (
-                                <div key={key} className="flex items-center justify-between gap-2">
-                                  <span className="font-mono text-zinc-500">{key}</span>
-                                  <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                </div>
+                    {getSelectedTaskTemplate('uvr') ? (
+                      <div className="mt-3">
+                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('uvr'))}
+                      </div>
+                    ) : (
+                      <>
+                        {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
+                          <div className="mb-3 flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                              {runPipelineParamPreset.uvr !== 'custom' && null}
+                            </div>
+                            <select
+                              value={runPipelineParamPreset.uvr ?? 'custom'}
+                              onChange={e => handleParamPresetChange('uvr', e.target.value)}
+                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                            >
+                              <option value="custom">Manual</option>
+                              {getParamPresetsForType('uvr').map(preset => (
+                                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
                               ))}
+                            </select>
+                            {runPipelineParamPreset.uvr !== 'custom' && (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => switchPresetToManual('uvr')}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    switchPresetToManual('uvr');
+                                  }
+                                }}
+                                title="Switch to manual and load these params"
+                                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                              >
+                                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                                  {Object.entries(getSelectedParamPresetParams('uvr')).map(([key, value]) => (
+                                    <div key={key} className="flex items-center justify-between gap-2">
+                                      <span className="font-mono text-zinc-500">{key}</span>
+                                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.uvr === 'custom') && (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="flex flex-col gap-2">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                                Backend
+                                {isParamOverridden('uvr', 'backend', runPipelineBackend) && (
+                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                    Overridden
+                                  </span>
+                                )}
+                              </label>
+                              <input
+                                list="uvr-backends"
+                                value={runPipelineBackend}
+                                onChange={e => setRunPipelineBackend(e.target.value)}
+                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                                  isParamOverridden('uvr', 'backend', runPipelineBackend) ? 'border-amber-500/60' : 'border-zinc-800'
+                                }`}
+                                placeholder="vr"
+                              />
+                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').backend !== undefined && (
+                                <div className="text-[10px] text-zinc-500">
+                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').backend)}
+                                </div>
+                              )}
+                              <datalist id="uvr-backends">
+                                <option value="vr" />
+                                <option value="mdx" />
+                                <option value="demucs" />
+                              </datalist>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                                Model
+                                {isParamOverridden('uvr', 'model', vrModel) && (
+                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                    Overridden
+                                  </span>
+                                )}
+                              </label>
+                              {vrModels.length ? (
+                                <select
+                                  value={vrModel}
+                                  onChange={e => setVrModel(e.target.value)}
+                                  className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                                    isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
+                                  }`}
+                                >
+                                  {vrModels.map(model => (
+                                    <option key={model} value={model}>{model}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  value={vrModel}
+                                  onChange={e => setVrModel(e.target.value)}
+                                  className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                                    isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
+                                  }`}
+                                  placeholder="MGM_MAIN_v4.pth"
+                                />
+                              )}
+                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').model !== undefined && (
+                                <div className="text-[10px] text-zinc-500">
+                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').model)}
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
-                      </div>
-                    )}
-                    {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.uvr === 'custom') && (
-                      <div className="grid gap-3 md:grid-cols-2">
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          Backend
-                          {isParamOverridden('uvr', 'backend', runPipelineBackend) && (
-                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                              Overridden
-                            </span>
-                          )}
-                        </label>
-                        <input
-                          list="uvr-backends"
-                          value={runPipelineBackend}
-                          onChange={e => setRunPipelineBackend(e.target.value)}
-                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                            isParamOverridden('uvr', 'backend', runPipelineBackend) ? 'border-amber-500/60' : 'border-zinc-800'
-                          }`}
-                          placeholder="vr"
-                        />
-                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').backend !== undefined && (
-                          <div className="text-[10px] text-zinc-500">
-                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').backend)}
-                          </div>
-                        )}
-                        <datalist id="uvr-backends">
-                          <option value="vr" />
-                          <option value="mdx" />
-                          <option value="demucs" />
-                        </datalist>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          Model
-                          {isParamOverridden('uvr', 'model', vrModel) && (
-                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                              Overridden
-                            </span>
-                          )}
-                        </label>
-                        {vrModels.length ? (
-                          <select
-                            value={vrModel}
-                            onChange={e => setVrModel(e.target.value)}
-                            className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                              isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
-                            }`}
-                          >
-                            {vrModels.map(model => (
-                              <option key={model} value={model}>{model}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            value={vrModel}
-                            onChange={e => setVrModel(e.target.value)}
-                            className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                              isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
-                            }`}
-                            placeholder="MGM_MAIN_v4.pth"
-                          />
-                        )}
-                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').model !== undefined && (
-                          <div className="text-[10px] text-zinc-500">
-                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').model)}
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                      </>
                     )}
                   </div>
                 )}
 
-                {runPipelineHasTts && getTaskTemplatesForType('tts').length > 0 && (
+                {runPipelineHasTts && (
                   <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: TTS</div>
                     <div className="flex items-center justify-between mb-3">
@@ -7516,178 +7563,186 @@ export default function App() {
                         </select>
                       </div>
                     </div>
-                    {SHOW_PARAM_PRESETS && hasParamPresets('tts') && (
-                      <div className="mb-3 flex flex-col gap-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                          {runPipelineParamPreset.tts !== 'custom' && null}
-                        </div>
-                        <select
-                          value={runPipelineParamPreset.tts ?? 'custom'}
-                          onChange={e => handleParamPresetChange('tts', e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                        >
-                          <option value="custom">Manual</option>
-                          {getParamPresetsForType('tts').map(preset => (
-                            <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                          ))}
-                        </select>
-                        {runPipelineParamPreset.tts !== 'custom' && (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => switchPresetToManual('tts')}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                switchPresetToManual('tts');
-                              }
-                            }}
-                            title="Switch to manual and load these params"
-                            className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                          >
-                            <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                              {Object.entries(getSelectedParamPresetParams('tts')).map(([key, value]) => (
-                                <div key={key} className="flex items-center justify-between gap-2">
-                                  <span className="font-mono text-zinc-500">{key}</span>
-                                  <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                </div>
-                              ))}
+                    {getSelectedTaskTemplate('tts') ? (
+                      <div className="mt-3">
+                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('tts'))}
+                      </div>
+                    ) : (
+                      <>
+                        {SHOW_PARAM_PRESETS && hasParamPresets('tts') && (
+                          <div className="mb-3 flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                              {runPipelineParamPreset.tts !== 'custom' && null}
                             </div>
+                            <select
+                              value={runPipelineParamPreset.tts ?? 'custom'}
+                              onChange={e => handleParamPresetChange('tts', e.target.value)}
+                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                            >
+                              <option value="custom">Manual</option>
+                              {getParamPresetsForType('tts').map(preset => (
+                                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                              ))}
+                            </select>
+                            {runPipelineParamPreset.tts !== 'custom' && (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => switchPresetToManual('tts')}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    switchPresetToManual('tts');
+                                  }
+                                }}
+                                title="Switch to manual and load these params"
+                                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                              >
+                                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                                  {Object.entries(getSelectedParamPresetParams('tts')).map(([key, value]) => (
+                                    <div key={key} className="flex items-center justify-between gap-2">
+                                      <span className="font-mono text-zinc-500">{key}</span>
+                                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
-                      </div>
-                    )}
-                    {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.tts === 'custom') && (
-                      <div className="grid gap-3 md:grid-cols-2">
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          Voice
-                          {isParamOverridden('tts', 'voice', runPipelineTtsVoice) && (
-                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                              Overridden
-                            </span>
-                          )}
-                        </label>
-                        <select
-                          value={runPipelineTtsVoice}
-                          onChange={e => setRunPipelineTtsVoice(e.target.value)}
-                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                            isParamOverridden('tts', 'voice', runPipelineTtsVoice) ? 'border-amber-500/60' : 'border-zinc-800'
-                          }`}
-                        >
-                          {PREFERRED_TTS_VOICES.map(name => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
-                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').voice !== undefined && (
-                          <div className="text-[10px] text-zinc-500">
-                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').voice)}
+                        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.tts === 'custom') && (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="flex flex-col gap-2">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                                Voice
+                                {isParamOverridden('tts', 'voice', runPipelineTtsVoice) && (
+                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                    Overridden
+                                  </span>
+                                )}
+                              </label>
+                              <select
+                                value={runPipelineTtsVoice}
+                                onChange={e => setRunPipelineTtsVoice(e.target.value)}
+                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                                  isParamOverridden('tts', 'voice', runPipelineTtsVoice) ? 'border-amber-500/60' : 'border-zinc-800'
+                                }`}
+                              >
+                                {PREFERRED_TTS_VOICES.map(name => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                              </select>
+                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').voice !== undefined && (
+                                <div className="text-[10px] text-zinc-500">
+                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').voice)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                                Long Cue
+                                {isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) && (
+                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                    Overridden
+                                  </span>
+                                )}
+                              </label>
+                              <select
+                                value={runPipelineTtsOverlapMode}
+                                onChange={e => setRunPipelineTtsOverlapMode(e.target.value as 'truncate' | 'overlap')}
+                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                                  isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) ? 'border-amber-500/60' : 'border-zinc-800'
+                                }`}
+                              >
+                                <option value="overlap">Overlap voices</option>
+                                <option value="truncate">Cut previous voice (truncate)</option>
+                              </select>
+                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').overlapMode !== undefined && (
+                                <div className="text-[10px] text-zinc-500">
+                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').overlapMode)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                                Rate
+                                {isParamOverridden('tts', 'rate', runPipelineTtsRate) && (
+                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                    Overridden
+                                  </span>
+                                )}
+                              </label>
+                              <input
+                                type="number"
+                                step="0.1"
+                                value={runPipelineTtsRate}
+                                onChange={e => setRunPipelineTtsRate(e.target.value)}
+                                placeholder="1.0"
+                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                                  isParamOverridden('tts', 'rate', runPipelineTtsRate) ? 'border-amber-500/60' : 'border-zinc-800'
+                                }`}
+                              />
+                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').rate !== undefined && (
+                                <div className="text-[10px] text-zinc-500">
+                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').rate)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                                Pitch
+                                {isParamOverridden('tts', 'pitch', runPipelineTtsPitch) && (
+                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                    Overridden
+                                  </span>
+                                )}
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={runPipelineTtsPitch}
+                                  onChange={e => setRunPipelineTtsPitch(e.target.value)}
+                                  placeholder="0"
+                                  className={`flex-1 bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
+                                    isParamOverridden('tts', 'pitch', runPipelineTtsPitch) ? 'border-amber-500/60' : 'border-zinc-800'
+                                  }`}
+                                />
+                                <span className="text-xs text-zinc-500">st</span>
+                              </div>
+                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').pitch !== undefined && (
+                                <div className="text-[10px] text-zinc-500">
+                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').pitch)}
+                                </div>
+                              )}
+                            </div>
+                            <label className="flex items-center gap-2 text-xs text-zinc-300">
+                              <input
+                                type="checkbox"
+                                checked={runPipelineTtsRemoveLineBreaks}
+                                onChange={e => setRunPipelineTtsRemoveLineBreaks(e.target.checked)}
+                                className="accent-lime-400"
+                              />
+                              <span className="flex items-center gap-2">
+                                Remove line breaks
+                                {isParamOverridden('tts', 'removeLineBreaks', runPipelineTtsRemoveLineBreaks) && (
+                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
+                                    Overridden
+                                  </span>
+                                )}
+                              </span>
+                            </label>
+                            {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').removeLineBreaks !== undefined && (
+                              <div className="text-[10px] text-zinc-500">
+                                Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').removeLineBreaks)}
+                              </div>
+                            )}
                           </div>
                         )}
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          Long Cue
-                          {isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) && (
-                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                              Overridden
-                            </span>
-                          )}
-                        </label>
-                        <select
-                          value={runPipelineTtsOverlapMode}
-                          onChange={e => setRunPipelineTtsOverlapMode(e.target.value as 'truncate' | 'overlap')}
-                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                            isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) ? 'border-amber-500/60' : 'border-zinc-800'
-                          }`}
-                        >
-                          <option value="overlap">Overlap voices</option>
-                          <option value="truncate">Cut previous voice (truncate)</option>
-                        </select>
-                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').overlapMode !== undefined && (
-                          <div className="text-[10px] text-zinc-500">
-                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').overlapMode)}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          Rate
-                          {isParamOverridden('tts', 'rate', runPipelineTtsRate) && (
-                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                              Overridden
-                            </span>
-                          )}
-                        </label>
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={runPipelineTtsRate}
-                          onChange={e => setRunPipelineTtsRate(e.target.value)}
-                          placeholder="1.0"
-                          className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                            isParamOverridden('tts', 'rate', runPipelineTtsRate) ? 'border-amber-500/60' : 'border-zinc-800'
-                          }`}
-                        />
-                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').rate !== undefined && (
-                          <div className="text-[10px] text-zinc-500">
-                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').rate)}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          Pitch
-                          {isParamOverridden('tts', 'pitch', runPipelineTtsPitch) && (
-                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                              Overridden
-                            </span>
-                          )}
-                        </label>
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={runPipelineTtsPitch}
-                            onChange={e => setRunPipelineTtsPitch(e.target.value)}
-                            placeholder="0"
-                            className={`flex-1 bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                              isParamOverridden('tts', 'pitch', runPipelineTtsPitch) ? 'border-amber-500/60' : 'border-zinc-800'
-                            }`}
-                          />
-                          <span className="text-xs text-zinc-500">st</span>
-                        </div>
-                        {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').pitch !== undefined && (
-                          <div className="text-[10px] text-zinc-500">
-                            Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').pitch)}
-                          </div>
-                        )}
-                      </div>
-                      <label className="flex items-center gap-2 text-xs text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={runPipelineTtsRemoveLineBreaks}
-                          onChange={e => setRunPipelineTtsRemoveLineBreaks(e.target.checked)}
-                          className="accent-lime-400"
-                        />
-                        <span className="flex items-center gap-2">
-                          Remove line breaks
-                          {isParamOverridden('tts', 'removeLineBreaks', runPipelineTtsRemoveLineBreaks) && (
-                            <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                              Overridden
-                            </span>
-                          )}
-                        </span>
-                      </label>
-                      {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').removeLineBreaks !== undefined && (
-                        <div className="text-[10px] text-zinc-500">
-                          Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').removeLineBreaks)}
-                        </div>
-                      )}
-                    </div>
+                      </>
                     )}
                   </div>
                 )}
