@@ -63,7 +63,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     showRenderTimelineSubtitleTrack,
     showRenderTimelineTextTrack,
     showRenderTimelineImageTrack,
-    showRenderTimelineEffectTracks,
     renderParams,
     showRenderTimelineVideoTrack,
     renderVideoDuration,
@@ -93,10 +92,15 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     commitRenderParamDraftOnEnter,
     updateRenderParam,
     setRenderStudioInspectorOpen,
-    removeRenderEffect,
-    addBlurRegionEffect,
-    updateRenderEffectDraft,
-    commitRenderEffectDraftValue,
+    renderVideoBlurEffects,
+    addRenderVideoBlurEffect,
+    updateRenderVideoBlurEffect,
+    commitRenderVideoBlurEffectValue,
+    removeRenderVideoBlurEffect,
+    addRenderImageBlurEffect,
+    updateRenderImageBlurEffect,
+    commitRenderImageBlurEffectValue,
+    removeRenderImageBlurEffect,
     coerceNumber,
     RENDER_BLUR_FEATHER_MAX,
     RENDER_PREVIEW_BLACK_DATA_URL,
@@ -171,19 +175,17 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   };
   const renderTextTrackHeight = 24;
   const activeInspectorSection = selectedTrackKey
-    ? (selectedTrackKey.startsWith('effects:') ? 'effects'
-      : selectedTrackKey.startsWith('image:') ? 'image'
-        : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
+    ? (selectedTrackKey.startsWith('image:') ? 'image'
+      : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
     : 'timeline';
 
-  const openInspectorSection = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'effects' | 'image') => {
+  const openInspectorSection = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'image') => {
     setRenderStudioInspectorOpen({
       timeline: false,
       video: false,
       audio: false,
       subtitle: false,
       text: false,
-      effects: false,
       image: false,
       [section]: true
     });
@@ -601,28 +603,13 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     type="button"
                                     onClick={() => {
                                       setAddTrackMenuOpen(false);
-                                      addBlurRegionEffect();
-                                    }}
-                                    disabled={!renderVideoFile}
-                                    className={`w-full px-3 py-2 text-left text-xs transition-colors ${
-                                      renderVideoFile
-                                        ? 'text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-t-lg'
-                                        : 'text-zinc-500 cursor-not-allowed rounded-t-lg'
-                                    }`}
-                                  >
-                                    Effect
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setAddTrackMenuOpen(false);
                                       if (!renderTextTrackEnabled) {
                                         setRenderTextTrackEnabled(true);
                                       }
                                       setSelectedTrackKey('text');
                                       selectTrack('text');
                                     }}
-                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-b-lg transition-colors"
+                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 rounded-lg transition-colors"
                                   >
                                     Text
                                   </button>
@@ -679,17 +666,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 Subtitle
                               </span>
                             ) : null}
-                            {showRenderTimelineEffectTracks
-                              ? renderParams.effects.map((effect, idx) => (
-                                  <span
-                                    key={`fx-label-${idx}`}
-                                    className="text-zinc-500 h-3 flex items-center text-[10px] leading-none truncate"
-                                    title={`Blur ${idx + 1} · σ${effect.sigma.toFixed(1)} · áp lên video bên dưới`}
-                                  >
-                                    Blur {idx + 1}
-                                  </span>
-                                ))
-                              : null}
                             {showRenderTimelineImageTrack
                               ? renderImageFiles.map((file, idx) => (
                                   <span
@@ -912,44 +888,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   ) : null}
                                 </div>
                               ) : null}
-                              {showRenderTimelineEffectTracks
-                                ? renderParams.effects.map((effect, idx) => (
-                                    <div
-                                      key={`fx-track-${idx}`}
-                                      className="h-3 rounded-full bg-zinc-800 relative shrink-0 cursor-pointer"
-                                      title={`Blur ${idx + 1}`}
-                                      role="button"
-                                      tabIndex={0}
-                                      onClick={event => {
-                                        event.stopPropagation();
-                                        setSelectedTrackKey(`effects:${idx}`);
-                                        openInspectorSection('effects');
-                                      }}
-                                      onContextMenu={event => {
-                                        openRenderStudioTimelineContextMenu(event, { type: 'effect', index: idx });
-                                      }}
-                                      onKeyDown={event => {
-                                        if (event.key === 'Enter' || event.key === ' ') {
-                                          event.preventDefault();
-                                          event.stopPropagation();
-                                          setSelectedTrackKey(`effects:${idx}`);
-                                          openInspectorSection('effects');
-                                        }
-                                      }}
-                                    >
-                                      {renderTimelineDuration > 0 && renderTimelineViewDuration > 0 ? (
-                                        <div
-                                          className={`h-full rounded-full ${idx % 2 === 0 ? 'bg-violet-500/55' : 'bg-fuchsia-500/45'} ${
-                                            selectedTrackKey === `effects:${idx}` ? 'outline outline-2 outline-lime-400/80' : ''
-                                          }`}
-                                          style={{
-                                            width: `${Math.min(100, (renderTimelineDuration / renderTimelineViewDuration) * 100)}%`
-                                          }}
-                                        />
-                                      ) : null}
-                                    </div>
-                                  ))
-                                : null}
                               {showRenderTimelineImageTrack
                                 ? renderImageDurationEntries.map((entry, idx) => (
                                     <div
@@ -1094,17 +1032,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 {formatDuration(renderSubtitleDuration) ?? '--'}
                               </span>
                             ) : null}
-                            {showRenderTimelineEffectTracks
-                              ? renderParams.effects.map((effect, idx) => (
-                                  <span
-                                    key={`fx-dur-${idx}`}
-                                    className="h-3 flex items-center tabular-nums"
-                                    title={`σ${effect.sigma < 10 ? effect.sigma.toFixed(1) : Math.round(effect.sigma)} · same as timeline`}
-                                  >
-                                    {formatDuration(renderTimelineDuration) ?? '--'}
-                                  </span>
-                                ))
-                              : null}
                             {showRenderTimelineImageTrack
                               ? renderImageDurationEntries.map(entry => (
                                   <span key={`img-dur-${entry.id}`} className="h-3 flex items-center">
@@ -1726,9 +1653,160 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         </div>
                                       </div>
                                     )}
-                                    <div className="text-[10px] text-zinc-600 leading-snug mt-2">
-                                      Mask uses item space (0–100% inset from the video frame after fit/scale).
+                                  </div>
+                                  <div className="border border-zinc-800/70 rounded-lg p-2 mt-1 bg-zinc-950/50">
+                                    <div className="flex items-center justify-between gap-2 mb-2">
+                                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur</div>
+                                      <button
+                                        type="button"
+                                        onClick={addRenderVideoBlurEffect}
+                                        className="text-[10px] rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:border-zinc-600"
+                                      >
+                                        + Blur region
+                                      </button>
                                     </div>
+                                    {renderVideoBlurEffects.length === 0 ? (
+                                      <div className="text-[11px] text-zinc-500">No blur effect for this video track.</div>
+                                    ) : (
+                                      <div className="flex flex-col gap-2">
+                                        {renderVideoBlurEffects.map((effect, idx) => (
+                                          <div key={`video-blur-${idx}`} className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-2 flex flex-col gap-2">
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="text-[10px] uppercase tracking-widest text-zinc-500">Region #{idx + 1}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => removeRenderVideoBlurEffect(idx)}
+                                                className="text-[10px] text-red-400 hover:text-red-300"
+                                              >
+                                                Remove
+                                              </button>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  min="0"
+                                                  max="100"
+                                                  value={effect.left}
+                                                  onFocus={holdPreview}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'left'))}
+                                                  onChange={e => {
+                                                    const v = coerceNumber(e.target.value, effect.left) ?? effect.left;
+                                                    updateRenderVideoBlurEffect(idx, { left: v });
+                                                  }}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'left'))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  min="0"
+                                                  max="100"
+                                                  value={effect.right}
+                                                  onFocus={holdPreview}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'right'))}
+                                                  onChange={e => {
+                                                    const v = coerceNumber(e.target.value, effect.right) ?? effect.right;
+                                                    updateRenderVideoBlurEffect(idx, { right: v });
+                                                  }}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'right'))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  min="0"
+                                                  max="100"
+                                                  value={effect.top}
+                                                  onFocus={holdPreview}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'top'))}
+                                                  onChange={e => {
+                                                    const v = coerceNumber(e.target.value, effect.top) ?? effect.top;
+                                                    updateRenderVideoBlurEffect(idx, { top: v });
+                                                  }}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'top'))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                              <div className="flex flex-col gap-1">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
+                                                <input
+                                                  type="number"
+                                                  step="1"
+                                                  min="0"
+                                                  max="100"
+                                                  value={effect.bottom}
+                                                  onFocus={holdPreview}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'bottom'))}
+                                                  onChange={e => {
+                                                    const v = coerceNumber(e.target.value, effect.bottom) ?? effect.bottom;
+                                                    updateRenderVideoBlurEffect(idx, { bottom: v });
+                                                  }}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'bottom'))}
+                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                />
+                                              </div>
+                                            </div>
+                                            <div className="flex flex-col gap-2">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur strength</label>
+                                                <span className="text-xs tabular-nums text-zinc-300">{effect.sigma.toFixed(1)}</span>
+                                              </div>
+                                              <input
+                                                type="range"
+                                                min={0.5}
+                                                max={80}
+                                                step={0.5}
+                                                value={effect.sigma}
+                                                onMouseDown={holdPreview}
+                                                onTouchStart={holdPreview}
+                                                onChange={e => {
+                                                  const v = Number(e.target.value);
+                                                  if (!Number.isFinite(v)) return;
+                                                  updateRenderVideoBlurEffect(idx, { sigma: Math.min(80, Math.max(0.5, v)) });
+                                                }}
+                                                onMouseUp={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'sigma'))}
+                                                onTouchEnd={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'sigma'))}
+                                                className="w-full accent-lime-400 cursor-pointer"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-2">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Feather</label>
+                                                <span className="text-xs tabular-nums text-zinc-300">{effect.feather}</span>
+                                              </div>
+                                              <input
+                                                type="range"
+                                                min={0}
+                                                max={RENDER_BLUR_FEATHER_MAX}
+                                                step={1}
+                                                value={effect.feather}
+                                                onMouseDown={holdPreview}
+                                                onTouchStart={holdPreview}
+                                                onChange={e => {
+                                                  const v = Number(e.target.value);
+                                                  if (!Number.isFinite(v)) return;
+                                                  updateRenderVideoBlurEffect(idx, {
+                                                    feather: Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, Math.round(v)))
+                                                  });
+                                                }}
+                                                onMouseUp={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'feather'))}
+                                                onTouchEnd={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'feather'))}
+                                                className="w-full accent-lime-400 cursor-pointer"
+                                              />
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
@@ -2623,206 +2701,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         </div>
                         )}
 
-                        {activeInspectorSection === 'effects' && (
-                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            aria-expanded={activeInspectorSection === 'effects'}
-                            onClick={() => openInspectorSection('effects')}
-                            onKeyDown={event => {
-                              if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault();
-                                openInspectorSection('effects');
-                              }
-                            }}
-                            className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60 cursor-pointer hover:bg-zinc-900/60 transition-colors"
-                          >
-                            <span className="text-[11px] uppercase tracking-widest text-zinc-500">Effects</span>
-                            <button
-                              type="button"
-                              onClick={event => {
-                                event.stopPropagation();
-                                openInspectorSection('effects');
-                              }}
-                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
-                            >
-                              <Menu size={12} />
-                            </button>
-                          </div>
-                          {activeInspectorSection === 'effects' && (
-                            <div className="p-3 flex flex-col gap-3">
-                              <button
-                                type="button"
-                                onClick={addBlurRegionEffect}
-                                disabled={!renderVideoFile}
-                                className="text-xs rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-zinc-200 hover:border-zinc-600 disabled:opacity-40"
-                              >
-                                + Blur region
-                              </button>
-                              {renderParamsDraft.effects.length === 0 ? (
-                                <div className="text-[11px] text-zinc-500">No effects. Add a blur region to obscure part of the picture.</div>
-                              ) : (
-                                <div className="flex flex-col gap-3">
-                                  {renderParamsDraft.effects.map((effect, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-2 flex flex-col gap-2"
-                                    >
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="text-[10px] uppercase tracking-widest text-zinc-500">
-                                          Blur #{idx + 1}
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={() => removeRenderEffect(idx)}
-                                          className="text-[10px] text-red-400 hover:text-red-300"
-                                        >
-                                          Remove
-                                        </button>
-                                      </div>
-                                      <div className="grid grid-cols-2 gap-2">
-                                        <div className="flex flex-col gap-1">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
-                                          <input
-                                            type="number"
-                                            step="1"
-                                            min="0"
-                                            max="100"
-                                            value={effect.left}
-                                            onChange={e => {
-                                              const v = coerceNumber(e.target.value, effect.left) ?? effect.left;
-                                              updateRenderEffectDraft(idx, { left: v });
-                                            }}
-                                            onBlur={() => commitRenderEffectDraftValue(idx, 'left')}
-                                            onKeyDown={event => {
-                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'left');
-                                            }}
-                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                          />
-                                        </div>
-                                        <div className="flex flex-col gap-1">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
-                                          <input
-                                            type="number"
-                                            step="1"
-                                            min="0"
-                                            max="100"
-                                            value={effect.right}
-                                            onChange={e => {
-                                              const v = coerceNumber(e.target.value, effect.right) ?? effect.right;
-                                              updateRenderEffectDraft(idx, { right: v });
-                                            }}
-                                            onBlur={() => commitRenderEffectDraftValue(idx, 'right')}
-                                            onKeyDown={event => {
-                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'right');
-                                            }}
-                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                          />
-                                        </div>
-                                      </div>
-                                      <div className="grid grid-cols-2 gap-2">
-                                        <div className="flex flex-col gap-1">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
-                                          <input
-                                            type="number"
-                                            step="1"
-                                            min="0"
-                                            max="100"
-                                            value={effect.top}
-                                            onChange={e => {
-                                              const v = coerceNumber(e.target.value, effect.top) ?? effect.top;
-                                              updateRenderEffectDraft(idx, { top: v });
-                                            }}
-                                            onBlur={() => commitRenderEffectDraftValue(idx, 'top')}
-                                            onKeyDown={event => {
-                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'top');
-                                            }}
-                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                          />
-                                        </div>
-                                        <div className="flex flex-col gap-1">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
-                                          <input
-                                            type="number"
-                                            step="1"
-                                            min="0"
-                                            max="100"
-                                            value={effect.bottom}
-                                            onChange={e => {
-                                              const v = coerceNumber(e.target.value, effect.bottom) ?? effect.bottom;
-                                              updateRenderEffectDraft(idx, { bottom: v });
-                                            }}
-                                            onBlur={() => commitRenderEffectDraftValue(idx, 'bottom')}
-                                            onKeyDown={event => {
-                                              if (event.key === 'Enter') commitRenderEffectDraftValue(idx, 'bottom');
-                                            }}
-                                            className="bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                          />
-                                        </div>
-                                      </div>
-                                      <div className="flex flex-col gap-2">
-                                        <div className="flex items-center justify-between gap-2">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">
-                                            Blur strength
-                                          </label>
-                                          <span className="text-xs tabular-nums text-zinc-300">{effect.sigma.toFixed(1)}</span>
-                                        </div>
-                                        <input
-                                          type="range"
-                                          min={0.5}
-                                          max={80}
-                                          step={0.5}
-                                          value={effect.sigma}
-                                          onChange={e => {
-                                            const v = Number(e.target.value);
-                                            if (!Number.isFinite(v)) return;
-                                            updateRenderEffectDraft(idx, {
-                                              sigma: Math.min(80, Math.max(0.5, v))
-                                            });
-                                          }}
-                                          onMouseUp={() => commitRenderEffectDraftValue(idx, 'sigma')}
-                                          onTouchEnd={() => commitRenderEffectDraftValue(idx, 'sigma')}
-                                          className="w-full accent-lime-400 cursor-pointer"
-                                        />
-                                      </div>
-                                      <div className="flex flex-col gap-2">
-                                        <div className="flex items-center justify-between gap-2">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">
-                                            Feather
-                                          </label>
-                                          <span className="text-xs tabular-nums text-zinc-300">{effect.feather}</span>
-                                        </div>
-                                        <input
-                                          type="range"
-                                          min={0}
-                                          max={RENDER_BLUR_FEATHER_MAX}
-                                          step={1}
-                                          value={effect.feather}
-                                          onChange={e => {
-                                            const v = Number(e.target.value);
-                                            if (!Number.isFinite(v)) return;
-                                            updateRenderEffectDraft(idx, {
-                                              feather: Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, Math.round(v)))
-                                            });
-                                          }}
-                                          onMouseUp={() => commitRenderEffectDraftValue(idx, 'feather')}
-                                          onTouchEnd={() => commitRenderEffectDraftValue(idx, 'feather')}
-                                          className="w-full accent-lime-400 cursor-pointer"
-                                        />
-                                        <div className="text-[10px] text-zinc-600 leading-snug">
-                                          Softer edge: blur ramps from the crop border inward; 0 = hard rectangle.
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        )}
-
                         {activeInspectorSection === 'image' && (
                         <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                           <div
@@ -3199,6 +3077,160 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                           <div className="text-[10px] text-zinc-600 leading-snug mt-2">
                                             Mask uses item space (0–100% inset from the image frame after fit/scale).
                                           </div>
+                                        </div>
+                                        <div className="border border-zinc-800/70 rounded-lg p-2 mt-2 bg-zinc-950/50">
+                                          <div className="flex items-center justify-between gap-2 mb-2">
+                                            <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur</div>
+                                            <button
+                                              type="button"
+                                              onClick={() => addRenderImageBlurEffect(file.id)}
+                                              className="text-[10px] rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:border-zinc-600"
+                                            >
+                                              + Blur region
+                                            </button>
+                                          </div>
+                                          {(transform.blurEffects ?? []).length === 0 ? (
+                                            <div className="text-[11px] text-zinc-500">No blur effect for this image track.</div>
+                                          ) : (
+                                            <div className="flex flex-col gap-2">
+                                              {(transform.blurEffects ?? []).map((effect, idx) => (
+                                                <div key={`img-blur-${file.id}-${idx}`} className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-2 flex flex-col gap-2">
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-[10px] uppercase tracking-widest text-zinc-500">Region #{idx + 1}</span>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => removeRenderImageBlurEffect(file.id, idx)}
+                                                      className="text-[10px] text-red-400 hover:text-red-300"
+                                                    >
+                                                      Remove
+                                                    </button>
+                                                  </div>
+                                                  <div className="grid grid-cols-2 gap-2">
+                                                    <div className="flex flex-col gap-1">
+                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
+                                                      <input
+                                                        type="number"
+                                                        step="1"
+                                                        min="0"
+                                                        max="100"
+                                                        value={effect.left}
+                                                        onFocus={holdPreview}
+                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'left'))}
+                                                        onChange={e => {
+                                                          const v = coerceNumber(e.target.value, effect.left) ?? effect.left;
+                                                          updateRenderImageBlurEffect(file.id, idx, { left: v });
+                                                        }}
+                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'left'))}
+                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                      />
+                                                    </div>
+                                                    <div className="flex flex-col gap-1">
+                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
+                                                      <input
+                                                        type="number"
+                                                        step="1"
+                                                        min="0"
+                                                        max="100"
+                                                        value={effect.right}
+                                                        onFocus={holdPreview}
+                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'right'))}
+                                                        onChange={e => {
+                                                          const v = coerceNumber(e.target.value, effect.right) ?? effect.right;
+                                                          updateRenderImageBlurEffect(file.id, idx, { right: v });
+                                                        }}
+                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'right'))}
+                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                      />
+                                                    </div>
+                                                    <div className="flex flex-col gap-1">
+                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
+                                                      <input
+                                                        type="number"
+                                                        step="1"
+                                                        min="0"
+                                                        max="100"
+                                                        value={effect.top}
+                                                        onFocus={holdPreview}
+                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'top'))}
+                                                        onChange={e => {
+                                                          const v = coerceNumber(e.target.value, effect.top) ?? effect.top;
+                                                          updateRenderImageBlurEffect(file.id, idx, { top: v });
+                                                        }}
+                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'top'))}
+                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                      />
+                                                    </div>
+                                                    <div className="flex flex-col gap-1">
+                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
+                                                      <input
+                                                        type="number"
+                                                        step="1"
+                                                        min="0"
+                                                        max="100"
+                                                        value={effect.bottom}
+                                                        onFocus={holdPreview}
+                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'bottom'))}
+                                                        onChange={e => {
+                                                          const v = coerceNumber(e.target.value, effect.bottom) ?? effect.bottom;
+                                                          updateRenderImageBlurEffect(file.id, idx, { bottom: v });
+                                                        }}
+                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'bottom'))}
+                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                      />
+                                                    </div>
+                                                  </div>
+                                                  <div className="flex flex-col gap-2">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur strength</label>
+                                                      <span className="text-xs tabular-nums text-zinc-300">{effect.sigma.toFixed(1)}</span>
+                                                    </div>
+                                                    <input
+                                                      type="range"
+                                                      min={0.5}
+                                                      max={80}
+                                                      step={0.5}
+                                                      value={effect.sigma}
+                                                      onMouseDown={holdPreview}
+                                                      onTouchStart={holdPreview}
+                                                      onChange={e => {
+                                                        const v = Number(e.target.value);
+                                                        if (!Number.isFinite(v)) return;
+                                                        updateRenderImageBlurEffect(file.id, idx, { sigma: Math.min(80, Math.max(0.5, v)) });
+                                                      }}
+                                                      onMouseUp={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'sigma'))}
+                                                      onTouchEnd={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'sigma'))}
+                                                      className="w-full accent-lime-400 cursor-pointer"
+                                                    />
+                                                  </div>
+                                                  <div className="flex flex-col gap-2">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Feather</label>
+                                                      <span className="text-xs tabular-nums text-zinc-300">{effect.feather}</span>
+                                                    </div>
+                                                    <input
+                                                      type="range"
+                                                      min={0}
+                                                      max={RENDER_BLUR_FEATHER_MAX}
+                                                      step={1}
+                                                      value={effect.feather}
+                                                      onMouseDown={holdPreview}
+                                                      onTouchStart={holdPreview}
+                                                      onChange={e => {
+                                                        const v = Number(e.target.value);
+                                                        if (!Number.isFinite(v)) return;
+                                                        updateRenderImageBlurEffect(file.id, idx, {
+                                                          feather: Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, Math.round(v)))
+                                                        });
+                                                      }}
+                                                      onMouseUp={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'feather'))}
+                                                      onTouchEnd={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'feather'))}
+                                                      className="w-full accent-lime-400 cursor-pointer"
+                                                    />
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     );

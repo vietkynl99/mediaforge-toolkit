@@ -1190,7 +1190,9 @@ export default function App() {
     maskRight?: string;
     maskTop?: string;
     maskBottom?: string;
+    blurEffects?: RenderBlurRegionEffect[];
   }>>({});
+  const [renderVideoBlurEffects, setRenderVideoBlurEffects] = useState<RenderBlurRegionEffect[]>([]);
   const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
   const [renderTemplates, setRenderTemplates] = useState<RenderTemplate[]>([]);
   const [renderTemplateModalOpen, setRenderTemplateModalOpen] = useState(false);
@@ -1272,8 +1274,7 @@ export default function App() {
       crf: '21',
       gop: '',
       tune: ''
-    },
-    effects: [] as RenderBlurRegionEffect[]
+    }
   });
   const runAgainPrefillRef = useRef(false);
   const [paramPresets, setParamPresets] = useState<Array<{
@@ -1416,41 +1417,70 @@ export default function App() {
       }
     };
 
-  const updateRenderEffectDraft = (index: number, patch: Partial<RenderBlurRegionEffect>) => {
-    setRenderParamsDraft(prev => ({
-      ...prev,
-      effects: prev.effects.map((e, i) => (i === index ? { ...e, ...patch } : e))
-    }));
+  const defaultBlurRegionEffect = (): RenderBlurRegionEffect => ({
+    type: 'blur_region',
+    left: 10,
+    right: 10,
+    top: 40,
+    bottom: 40,
+    sigma: 20,
+    feather: 0
+  });
+  const addRenderVideoBlurEffect = () => {
+    setRenderVideoBlurEffects(prev => [...prev, defaultBlurRegionEffect()]);
   };
-
-  const commitRenderEffectDraftValue = (index: number, key: keyof RenderBlurRegionEffect) => {
-    const value = renderParamsDraft.effects[index]?.[key];
-    if (value === undefined) return;
-    patchRenderEffect(index, { [key]: value } as Partial<RenderBlurRegionEffect>);
+  const updateRenderVideoBlurEffect = (index: number, patch: Partial<RenderBlurRegionEffect>) => {
+    setRenderVideoBlurEffects(prev => prev.map((effect, effectIndex) => (
+      effectIndex === index ? { ...effect, ...patch } : effect
+    )));
   };
-
-  const patchRenderEffect = (index: number, patch: Partial<RenderBlurRegionEffect>) => {
-    setRenderParams(prev => ({
-      ...prev,
-      effects: prev.effects.map((e, i) => (i === index ? { ...e, ...patch } : e))
-    }));
+  const commitRenderVideoBlurEffectValue = (_index: number, _key: keyof RenderBlurRegionEffect) => {};
+  const removeRenderVideoBlurEffect = (index: number) => {
+    setRenderVideoBlurEffects(prev => prev.filter((_, effectIndex) => effectIndex !== index));
   };
-
-  const removeRenderEffect = (index: number) => {
-    setRenderParams(prev => ({
-      ...prev,
-      effects: prev.effects.filter((_, i) => i !== index)
-    }));
+  const addRenderImageBlurEffect = (fileId: string) => {
+    if (!fileId) return;
+    setRenderImageTransforms(prev => {
+      const current = prev[fileId] ?? {};
+      return {
+        ...prev,
+        [fileId]: {
+          ...current,
+          blurEffects: [...(current.blurEffects ?? []), defaultBlurRegionEffect()]
+        }
+      };
+    });
   };
-
-  const addBlurRegionEffect = () => {
-    setRenderParams(prev => ({
-      ...prev,
-      effects: [
-        ...prev.effects,
-        { type: 'blur_region' as const, left: 10, right: 10, top: 40, bottom: 40, sigma: 20, feather: 0 }
-      ]
-    }));
+  const updateRenderImageBlurEffect = (fileId: string, index: number, patch: Partial<RenderBlurRegionEffect>) => {
+    if (!fileId) return;
+    setRenderImageTransforms(prev => {
+      const current = prev[fileId] ?? {};
+      const effects = current.blurEffects ?? [];
+      return {
+        ...prev,
+        [fileId]: {
+          ...current,
+          blurEffects: effects.map((effect, effectIndex) => (
+            effectIndex === index ? { ...effect, ...patch } : effect
+          ))
+        }
+      };
+    });
+  };
+  const commitRenderImageBlurEffectValue = (_fileId: string, _index: number, _key: keyof RenderBlurRegionEffect) => {};
+  const removeRenderImageBlurEffect = (fileId: string, index: number) => {
+    if (!fileId) return;
+    setRenderImageTransforms(prev => {
+      const current = prev[fileId] ?? {};
+      const effects = current.blurEffects ?? [];
+      return {
+        ...prev,
+        [fileId]: {
+          ...current,
+          blurEffects: effects.filter((_, effectIndex) => effectIndex !== index)
+        }
+      };
+    });
   };
   const renderTimelineMax = Math.max(
     renderVideoDuration ?? 0,
@@ -1498,7 +1528,6 @@ export default function App() {
   const showRenderTimelineImageTrack = renderImageFiles.length > 0;
   const showRenderTimelineVideoTrack = Boolean(renderVideoFile);
   const showRenderTimelineAudioTrack = Boolean(renderAudioFile);
-  const showRenderTimelineEffectTracks = renderParams.effects.length > 0;
   const renderSelectedItem = useMemo(() => {
     if (renderStudioFocus !== 'item') return null;
     const files = runPipelineProject?.files ?? [];
@@ -1714,17 +1743,6 @@ export default function App() {
     const presetParams = getSelectedParamPresetParams('render');
     if (!presetParams || typeof presetParams !== 'object') return false;
     for (const [key, value] of Object.entries(presetParams)) {
-      if (key === 'effects.list') {
-        try {
-          const parsed = JSON.parse(String(value));
-          const normalized = normalizeLoadedRenderEffects(parsed);
-          if (normalized === undefined) continue;
-          if (JSON.stringify(normalized) !== JSON.stringify(renderParams.effects)) return true;
-        } catch {
-          continue;
-        }
-        continue;
-      }
       if (!key.includes('.')) continue;
       const [section, field] = key.split('.');
       if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle') continue;
@@ -1776,19 +1794,6 @@ export default function App() {
       const legacyMask: Record<string, string> = {};
       let hasNewMaskInsets = false;
       Object.entries(params).forEach(([key, value]) => {
-        if (key === 'effects.list') {
-          if (value === undefined || value === null) return;
-          try {
-            const parsed = JSON.parse(String(value));
-            const normalized = normalizeLoadedRenderEffects(parsed);
-            if (normalized !== undefined) {
-              setRenderParams(prev => ({ ...prev, effects: normalized }));
-            }
-          } catch {
-            /* ignore invalid preset JSON */
-          }
-          return;
-        }
         if (!key.includes('.')) return;
         const [section, field] = key.split('.');
         if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle' && section !== 'render') return;
@@ -2289,6 +2294,7 @@ export default function App() {
     renderImageOrderIds,
     renderImageDurations,
     renderImageTransforms,
+    renderVideoBlurEffects,
     renderParams.timeline,
     renderParams.video,
     renderParams.audio,
@@ -2304,6 +2310,7 @@ export default function App() {
     renderConfigV2Override,
     runPipelineRenderTemplateId,
     renderParams,
+    renderVideoBlurEffects,
     renderImageTransforms,
     renderImageDurations,
     renderImageOrderIds,
@@ -2325,7 +2332,7 @@ export default function App() {
       setRenderPreviewLoading(false);
       return;
     }
-    if (!renderVideoFile?.relativePath) {
+    if (!renderConfigPreview || !Array.isArray(renderConfigPreview.items) || renderConfigPreview.items.length === 0) {
       setRenderPreviewUrl(null);
       setRenderPreviewError(null);
       setRenderPreviewLoading(false);
@@ -2343,42 +2350,12 @@ export default function App() {
             ? Math.min(renderPlayheadSeconds, renderTimelineDuration)
             : renderPlayheadSeconds
         );
-        let response: Response;
-        if (renderConfigPreview) {
-          response = await fetch('/api/render-preview-v2', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config: renderConfigPreview, at: previewAt }),
-            signal: controller.signal
-          });
-        } else {
-          if (!renderVideoFile?.relativePath) {
-            setRenderPreviewUrl(null);
-            setRenderPreviewError(null);
-            setRenderPreviewLoading(false);
-            return;
-          }
-          const previewRes = parseResolution(renderParams.timeline.resolution);
-          const params = new URLSearchParams({
-            videoPath: renderVideoFile.relativePath,
-            at: String(previewAt)
-          });
-          if (renderSubtitleFile?.relativePath) {
-            params.set('subtitlePath', renderSubtitleFile.relativePath);
-            params.set(
-              'subtitleStyle',
-              JSON.stringify({
-                ...renderParams.subtitle,
-                playResX: previewRes.w,
-                playResY: previewRes.h
-              })
-            );
-          }
-          if (renderParams.effects.length > 0) {
-            params.set('effects', JSON.stringify(renderParams.effects));
-          }
-          response = await fetch(`/api/render-preview?${params.toString()}`, { signal: controller.signal });
-        }
+        const response = await fetch('/api/render-preview-v2', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config: renderConfigPreview, at: previewAt }),
+          signal: controller.signal
+        });
         const useBlackPreview = () => {
           setRenderPreviewUrl(prev => {
             if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
@@ -2427,8 +2404,7 @@ export default function App() {
   }, [
     showRenderStudio,
     renderStudioFocus,
-    renderVideoFile?.relativePath,
-    renderSubtitleFile?.relativePath,
+    renderConfigPreview,
     renderPlayheadSeconds,
     renderTimelineDuration,
     renderPreviewParamsKey,
@@ -2593,8 +2569,7 @@ export default function App() {
         { name: 'subtitle.marginL', desc: 'MarginL px (PlayRes)', type: 'number', default: 30 },
         { name: 'subtitle.marginR', desc: 'MarginR px (PlayRes)', type: 'number', default: 30 },
         { name: 'subtitle.marginV', desc: 'MarginV px (PlayRes)', type: 'number', default: 36 },
-        { name: 'subtitle.wrapStyle', desc: 'Script WrapStyle 0–3', type: 'number', default: 0 },
-        { name: 'effects.list', desc: 'JSON array of effects (blur_region: left,right,top,bottom,sigma,feather 0–20)', type: 'string', default: '[]' }
+        { name: 'subtitle.wrapStyle', desc: 'Script WrapStyle 0–3', type: 'number', default: 0 }
       ]
     }
   ]), []);
@@ -2654,7 +2629,6 @@ export default function App() {
     Object.entries(renderParams.render ?? {}).forEach(([k, v]) => {
       out[`render.${k}`] = typeof v === 'boolean' ? v : String(v);
     });
-    out['effects.list'] = JSON.stringify(renderParams.effects);
     return out;
   };
 
@@ -2722,6 +2696,21 @@ export default function App() {
         h
       } as { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
     };
+    const buildBlurEffectsFromRaw = (raw: unknown) => {
+      const normalized = normalizeLoadedRenderEffects(raw);
+      if (!normalized || normalized.length === 0) return undefined;
+      return normalized.map(effect => ({
+        type: 'blur_region',
+        params: {
+          left: effect.left,
+          right: effect.right,
+          top: effect.top,
+          bottom: effect.bottom,
+          sigma: effect.sigma,
+          feather: effect.feather
+        }
+      }));
+    };
 
     selected.forEach((file, idx) => {
       if (!file.relativePath) return;
@@ -2772,6 +2761,10 @@ export default function App() {
             if (mask) {
               baseItem.mask = mask;
             }
+            const imageBlurEffects = buildBlurEffectsFromRaw(t.blurEffects);
+            if (imageBlurEffects && imageBlurEffects.length > 0) {
+              baseItem.effects = imageBlurEffects;
+            }
           }
         }
         if (!baseItem.transform) {
@@ -2801,6 +2794,12 @@ export default function App() {
           });
           if (mask) {
             baseItem.mask = mask;
+          }
+        }
+        if (file.type === 'video') {
+          const videoBlurEffects = buildBlurEffectsFromRaw(renderVideoBlurEffects);
+          if (videoBlurEffects && videoBlurEffects.length > 0) {
+            baseItem.effects = videoBlurEffects;
           }
         }
       }
@@ -2989,8 +2988,7 @@ export default function App() {
           maskRight: maskRight !== undefined ? String(maskRight) : prev.video.maskRight,
           maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
           maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom
-        },
-        effects: Array.isArray(template.config.effects) ? template.config.effects : prev.effects
+        }
       }));
     }
 
@@ -3713,13 +3711,6 @@ export default function App() {
   const removeRenderStudioTrackFromTimeline = (track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number }) => {
     if (!track) return;
     if (!runPipelineProject) return;
-    if (track.type === 'effect') {
-      if (typeof track.index !== 'number') return;
-      removeRenderEffect(track.index);
-      setRenderStudioFocus('timeline');
-      setRenderStudioItemType(null);
-      return;
-    }
     const targetId =
       track.type === 'image'
         ? track.id
@@ -4556,19 +4547,7 @@ export default function App() {
             marginR: coerceNumber(renderParams.subtitle.marginR, 30),
             marginV: coerceNumber(renderParams.subtitle.marginV, 36),
             wrapStyle: coerceNumber(renderParams.subtitle.wrapStyle, 0)
-          },
-          effects: renderParams.effects
-            .map(effect => {
-              const left = Math.min(100, Math.max(0, coerceNumber(effect.left, 0) ?? 0));
-              const right = Math.min(100, Math.max(0, coerceNumber(effect.right, 0) ?? 0));
-              const top = Math.min(100, Math.max(0, coerceNumber(effect.top, 0) ?? 0));
-              const bottom = Math.min(100, Math.max(0, coerceNumber(effect.bottom, 0) ?? 0));
-              const sigma = Math.min(80, Math.max(0.5, coerceNumber(effect.sigma, 15) ?? 15));
-              const feather = Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, coerceNumber(effect.feather, 0) ?? 0));
-              if (left + right >= 100 || top + bottom >= 100) return null;
-              return { type: 'blur_region' as const, left, right, top, bottom, sigma, feather };
-            })
-            .filter((e): e is NonNullable<typeof e> => e !== null)
+          }
         };
         const renderConfigV2 = buildRenderConfigV2();
         if (renderConfigV2) {
@@ -4809,7 +4788,6 @@ export default function App() {
     showRenderTimelineSubtitleTrack,
     showRenderTimelineTextTrack,
     showRenderTimelineImageTrack,
-    showRenderTimelineEffectTracks,
     renderParams,
     showRenderTimelineVideoTrack,
     renderVideoDuration,
@@ -4840,10 +4818,15 @@ export default function App() {
     updateRenderParam,
     renderStudioInspectorOpen,
     setRenderStudioInspectorOpen,
-    removeRenderEffect,
-    addBlurRegionEffect,
-    updateRenderEffectDraft,
-    commitRenderEffectDraftValue,
+    renderVideoBlurEffects,
+    addRenderVideoBlurEffect,
+    updateRenderVideoBlurEffect,
+    commitRenderVideoBlurEffectValue,
+    removeRenderVideoBlurEffect,
+    addRenderImageBlurEffect,
+    updateRenderImageBlurEffect,
+    commitRenderImageBlurEffectValue,
+    removeRenderImageBlurEffect,
     coerceNumber,
     RENDER_BLUR_FEATHER_MAX,
     RENDER_PREVIEW_BLACK_DATA_URL,

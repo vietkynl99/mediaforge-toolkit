@@ -828,7 +828,60 @@ const buildRenderV2FilterGraph = async (
       }
       filters.push(`${chain}${label}`);
     }
-    filters.push(`${currentVideo}${label}overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'[v${visualIndex}o]`);
+    const itemBlurEffects = parseBlurRegionEffects(
+      Array.isArray(item.effects)
+        ? item.effects
+            .filter(effect => effect && effect.type === 'blur_region')
+            .map(effect => ({ type: 'blur_region', ...((effect.params ?? {}) as Record<string, unknown>) }))
+        : []
+    );
+    let overlayInputLabel = label;
+    if (itemBlurEffects.length > 0) {
+      let blurCurrentLabel = label;
+      itemBlurEffects.forEach((effect, effectIndex) => {
+        const x = effect.left;
+        const y = effect.top;
+        const w = 100 - effect.left - effect.right;
+        const h = 100 - effect.top - effect.bottom;
+        const sigma = effect.sigma;
+        const feather = effect.feather > 0 ? effect.feather : 0;
+        const lumExpr = blurFeatherGeqLum(feather);
+        const main = `ivm${visualIndex}_${effectIndex}`;
+        const tmp = `ivt${visualIndex}_${effectIndex}`;
+        const out = `ivo${visualIndex}_${effectIndex}`;
+        let blurChain: string;
+        if (!lumExpr) {
+          const bl = `ivb${visualIndex}_${effectIndex}`;
+          blurChain =
+            `${blurCurrentLabel}split=2[${main}][${tmp}];` +
+            `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,gblur=sigma=${sigma}[${bl}];` +
+            `[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`;
+        } else {
+          const co = `ivco${visualIndex}_${effectIndex}`;
+          const cb = `ivcb${visualIndex}_${effectIndex}`;
+          const gb = `ivgb${visualIndex}_${effectIndex}`;
+          const mk = `ivmk${visualIndex}_${effectIndex}`;
+          const pa = `ivpa${visualIndex}_${effectIndex}`;
+          const prgb = `ivprgb${visualIndex}_${effectIndex}`;
+          const mr = `ivmr${visualIndex}_${effectIndex}`;
+          const vor = `ivovl${visualIndex}_${effectIndex}`;
+          blurChain =
+            `${blurCurrentLabel}split=2[${main}][${tmp}];` +
+            `[${main}]format=rgb24[${mr}];` +
+            `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,split=2[${co}][${cb}];` +
+            `[${cb}]gblur=sigma=${sigma},format=bgra[${gb}];` +
+            `[${co}]format=gray,geq=lum='${lumExpr}'[${mk}];` +
+            `[${gb}][${mk}]alphamerge[${pa}];` +
+            `[${pa}]format=rgba[${prgb}];` +
+            `[${mr}][${prgb}]overlay=W*${x}/100:H*${y}/100:format=auto[${vor}];` +
+            `[${vor}]format=rgba[${out}]`;
+        }
+        filters.push(blurChain);
+        blurCurrentLabel = `[${out}]`;
+      });
+      overlayInputLabel = blurCurrentLabel;
+    }
+    filters.push(`${currentVideo}${overlayInputLabel}overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'[v${visualIndex}o]`);
     currentVideo = `[v${visualIndex}o]`;
     visualIndex += 1;
   }
