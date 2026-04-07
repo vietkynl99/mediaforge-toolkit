@@ -112,6 +112,8 @@ const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.t
 const PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const PREVIEW_MAX_SECONDS = 60;
 const EDGE_TTS_CMD = process.env.EDGE_TTS_CMD?.trim() || 'edge-tts';
+const EDGE_TTS_MAX_RETRIES = Number(process.env.EDGE_TTS_MAX_RETRIES ?? 5);
+const EDGE_TTS_RETRY_DELAY_MS = 1000;
 const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
 const TTS_PITCH_BASE_HZ = 200;
@@ -1971,6 +1973,60 @@ type TtsTaskResult = {
   overlapMode: 'overlap' | 'truncate';
 };
 
+const shouldRetryEdgeTtsError = (message: string) => {
+  return /429|rate limit|throttl|temporar|try again|server is busy|NoAudioReceived/i.test(message);
+};
+
+const runEdgeTtsWithRetry = async (
+  command: string,
+  args: string[],
+  onLog?: (chunk: string) => void,
+  contextLabel?: string
+) => {
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= EDGE_TTS_MAX_RETRIES; attempt += 1) {
+    const attemptLabel = contextLabel ? `${contextLabel} attempt ${attempt}/${EDGE_TTS_MAX_RETRIES}` : `attempt ${attempt}/${EDGE_TTS_MAX_RETRIES}`;
+    onLog?.(`EDGE-TTS ${attemptLabel}: ${[command, ...args].join(' ')}
+`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(command, args);
+        let errorOutput = '';
+        let stdOutput = '';
+        proc.stdout.on('data', data => {
+          stdOutput += data.toString();
+        });
+        proc.stderr.on('data', data => {
+          errorOutput += data.toString();
+        });
+        proc.on('error', reject);
+        proc.on('close', code => {
+          if (code !== 0) {
+            const details = [errorOutput, stdOutput].filter(Boolean).join('\n');
+            reject(new Error(details || `edge-tts exited with code ${code}`));
+            return;
+          }
+          resolve();
+        });
+      });
+      onLog?.(`EDGE-TTS ${attemptLabel} succeeded\n`);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = error instanceof Error ? error : new Error(message);
+      const retryable = shouldRetryEdgeTtsError(message);
+      onLog?.(`EDGE-TTS ${attemptLabel} failed: ${message}\n`);
+      if (!retryable || attempt >= EDGE_TTS_MAX_RETRIES) {
+        break;
+      }
+      const delay = EDGE_TTS_RETRY_DELAY_MS * (2 ** (attempt - 1));
+      onLog?.(`EDGE-TTS ${attemptLabel} retrying after ${delay}ms\n`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError ?? new Error('edge-tts failed after retries');
+};
+
 const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   voice?: string;
   rate?: number;
@@ -2028,26 +2084,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       ];
       const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
       options?.onLog?.(`COMMAND (tts cue ${i + 1}/${cues.length}): ${commandLine}\n`);
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn(EDGE_TTS_CMD, args);
-        let errorOutput = '';
-        let stdOutput = '';
-        proc.stdout.on('data', data => {
-          stdOutput += data.toString();
-        });
-        proc.stderr.on('data', data => {
-          errorOutput += data.toString();
-        });
-        proc.on('error', reject);
-        proc.on('close', code => {
-          if (code !== 0) {
-            const details = [errorOutput, stdOutput].filter(Boolean).join('\n');
-            reject(new Error(details || `edge-tts exited with code ${code}`));
-            return;
-          }
-          resolve();
-        });
-      });
+      await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`);
       cuePaths.push(cuePath);
       const duration = await runFfprobe(cuePath).catch(() => 0);
       audioDurations.push(duration);

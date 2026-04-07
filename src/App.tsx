@@ -6063,14 +6063,17 @@ export default function App() {
                                   });
                                   if (!response.ok) {
                                     const data = await response.json().catch(() => ({}));
-                                    throw new Error(data.error || 'TTS preview failed');
+                                    const message = data.error || data.details || 'TTS preview failed';
+                                    throw new Error(message);
                                   }
                                   const arrayBuffer = await response.arrayBuffer();
                                   if (previewTtsUrl) URL.revokeObjectURL(previewTtsUrl);
                                   const url = URL.createObjectURL(new Blob([arrayBuffer], { type: 'audio/mpeg' }));
                                   setPreviewTtsUrl(url);
                                 } catch (error) {
-                                  setPreviewTtsError(error instanceof Error ? error.message : 'TTS preview failed');
+                                  const message = error instanceof Error ? error.message : 'TTS preview failed';
+                                  setPreviewTtsError(message);
+                                  showToast(`TTS preview error: ${message}`, 'error');
                                 } finally {
                                   setPreviewTtsLoading(false);
                                 }
@@ -6881,12 +6884,7 @@ export default function App() {
                 }} />
               <div className="relative w-[min(700px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 shadow-2xl overflow-y-auto">
                 <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs text-zinc-500 uppercase tracking-widest">Run Pipeline</div>
-                    <div className="text-sm font-semibold text-zinc-100">
-                      {runPipelineHasDownload ? (downloadProjectName || 'New Project') : (runPipelineProject?.name ?? 'Project')}
-                    </div>
-                  </div>
+                  <div className="text-xs text-zinc-500 uppercase tracking-widest">Run Pipeline</div>
                   <button
                     onClick={() => {
                       setShowRunPipeline(false);

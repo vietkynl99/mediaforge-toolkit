@@ -63,6 +63,54 @@ const formatPitch = (value?: number) => {
   return `${signed}Hz`;
 };
 
+const EDGE_TTS_MAX_RETRIES = Number(process.env.EDGE_TTS_MAX_RETRIES ?? 5);
+const EDGE_TTS_RETRY_DELAY_MS = 700;
+
+const shouldRetryEdgeTtsError = (message: string) => {
+  return /429|rate limit|throttl|temporar|try again|server is busy|NoAudioReceived/i.test(message);
+};
+
+const runEdgeTtsWithRetry = async (command: string, args: string[]) => {
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= EDGE_TTS_MAX_RETRIES; attempt += 1) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(command, args);
+        let errorOutput = '';
+        let stdOutput = '';
+        proc.stdout.on('data', data => {
+          stdOutput += data.toString();
+        });
+        proc.stderr.on('data', data => {
+          errorOutput += data.toString();
+        });
+        proc.on('error', reject);
+        proc.on('close', code => {
+          if (code !== 0) {
+            const details = [errorOutput, stdOutput].filter(Boolean).join('\n');
+            reject(new Error(details || `edge-tts exited with code ${code}`));
+            return;
+          }
+          resolve();
+        });
+      });
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = error instanceof Error ? error : new Error(message);
+      const retryable = shouldRetryEdgeTtsError(message);
+      const attemptsLeft = EDGE_TTS_MAX_RETRIES - attempt;
+      console.warn(`[edge-tts] attempt ${attempt} failed${retryable ? ' (retryable)' : ''}:`, message);
+      if (!retryable || attemptsLeft <= 0) {
+        break;
+      }
+      const delay = EDGE_TTS_RETRY_DELAY_MS * (2 ** (attempt - 1));
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError ?? new Error('edge-tts failed after retries');
+};
+
 const listEdgeVoices = async () => {
   const command = process.env.EDGE_TTS_CMD?.trim() || 'edge-tts';
   const output = await new Promise<string>((resolve, reject) => {
@@ -222,26 +270,7 @@ ttsRouter.post('/', async (req, res) => {
         args.push(...withFlagValue('--rate', rate));
         args.push(...withFlagValue('--pitch', pitch));
         args.push(...withFlagValue('--volume', volume));
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn(command, args);
-          let errorOutput = '';
-          let stdOutput = '';
-          proc.stdout.on('data', data => {
-            stdOutput += data.toString();
-          });
-          proc.stderr.on('data', data => {
-            errorOutput += data.toString();
-          });
-          proc.on('error', reject);
-          proc.on('close', code => {
-            if (code !== 0) {
-              const details = [errorOutput, stdOutput].filter(Boolean).join('\n');
-              reject(new Error(details || `edge-tts exited with code ${code}`));
-              return;
-            }
-            resolve();
-          });
-        });
+        await runEdgeTtsWithRetry(command, args);
         cuePaths.push(cuePath);
       }
 
@@ -290,26 +319,7 @@ ttsRouter.post('/', async (req, res) => {
       args.push(...withFlagValue('--rate', rate));
       args.push(...withFlagValue('--pitch', pitch));
       args.push(...withFlagValue('--volume', volume));
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn(command, args);
-        let errorOutput = '';
-        let stdOutput = '';
-        proc.stdout.on('data', data => {
-          stdOutput += data.toString();
-        });
-        proc.stderr.on('data', data => {
-          errorOutput += data.toString();
-        });
-        proc.on('error', reject);
-        proc.on('close', code => {
-          if (code !== 0) {
-            const details = [errorOutput, stdOutput].filter(Boolean).join('\n');
-            reject(new Error(details || `edge-tts exited with code ${code}`));
-            return;
-          }
-          resolve();
-        });
-      });
+      await runEdgeTtsWithRetry(command, args);
     }
 
     if (outputRelativePath) {
