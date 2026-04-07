@@ -677,10 +677,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             ) : null}
                             {showRenderTimelineSubtitleTrack ? (
                               <div
-                                className="flex items-center min-w-0"
+                                className="flex items-center gap-1.5 min-w-0"
                                 style={{ height: renderSubtitleTrackHeight }}
                                 title={renderSubtitleFile ? `Subtitle · ${placeholderKeyByFileId[renderSubtitleFile.id] ?? 'subtitle'}` : 'Subtitle'}
                               >
+                                <Type size={14} className="text-zinc-500 shrink-0" />
                                 {renderSubtitleFile ? (
                                   <input
                                     type="text"
