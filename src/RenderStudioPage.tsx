@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileAudio, FileVideo, Menu, MousePointer2, Type, Image } from 'lucide-react';
+import { File, FileAudio, FileVideo, Menu, MousePointer2, Type, Image } from 'lucide-react';
 
 type RenderStudioPageProps = Record<string, any>;
 

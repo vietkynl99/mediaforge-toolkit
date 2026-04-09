@@ -3109,7 +3109,7 @@ export default function App() {
     const counts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
     const inputsMap: Record<string, string> = {};
     const trackLabelsOut: Record<string, string> = {};
-    const items: Array<Record<string, any>> = [];
+    const items: RenderConfigV2['items'] = [];
 
     const timelineResolution = renderParams.timeline.resolution || '1920x1080';
     const timelineFramerate = coerceNumber(renderParams.timeline.framerate, 30) ?? 30;
@@ -3189,7 +3189,7 @@ export default function App() {
       inputsMap[key] = file.relativePath;
       const labelFromUser = (renderTrackLabels[key] ?? '').trim();
       trackLabelsOut[key] = labelFromUser || file.name || key;
-      const baseItem: Record<string, any> = {
+      const baseItem: RenderConfigV2['items'][number] = {
         id: `${file.type}-${counts[file.type]}`,
         type: file.type,
         source: { ref: key },
@@ -3421,7 +3421,7 @@ export default function App() {
     const firstVideoItem = template.config.items.find(item => item.type === 'video') ?? null;
     if (firstVideoItem) {
       const transform = firstVideoItem.transform ?? {};
-      const crop = transform.crop ?? {};
+      const crop = (transform.crop ?? {}) as { x?: number; y?: number; w?: number; h?: number };
       const mask = firstVideoItem.mask;
       const scalePercent = (() => {
         const raw = typeof transform.scale === 'number' ? transform.scale : 1;
@@ -3475,7 +3475,7 @@ export default function App() {
           const targetId = selectedIds[index];
           if (!targetId) return;
           const transform = item.transform ?? {};
-          const crop = transform.crop ?? {};
+          const crop = (transform.crop ?? {}) as { x?: number; y?: number; w?: number; h?: number };
           const mask = item.mask;
           const scalePercent = (() => {
             const raw = typeof transform.scale === 'number' ? transform.scale : 1;
@@ -7777,7 +7777,8 @@ export default function App() {
                                   multiple
                                   value={renderInputFileIds}
                                   onChange={e => {
-                                    const selected = Array.from(e.target.selectedOptions).map(option => option.value);
+                                    const selectedOptions = Array.from(e.currentTarget.selectedOptions) as HTMLOptionElement[];
+                                    const selected = selectedOptions.map(option => option.value);
                                     setRenderInputFileIds(selected);
                                     const selectedFiles = runPipelineProject?.files.filter(file => selected.includes(file.id)) ?? [];
                                     const firstVideo = selectedFiles.find(file => file.type === 'video');

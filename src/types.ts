@@ -56,12 +56,19 @@ export interface MediaJob {
     pipelineId?: number;
     pipelineName?: string;
     projectName?: string;
+    inputPaths?: string[];
     inputRelativePath?: string;
     download?: {
       url?: string;
       mode?: 'all' | 'subs' | 'media';
       noPlaylist?: boolean;
       subLangs?: string;
+    };
+    render?: {
+      inputPaths?: string[];
+      videoPath?: string;
+      audioPath?: string;
+      subtitlePath?: string;
     };
     uvr?: {
       backend?: string;
