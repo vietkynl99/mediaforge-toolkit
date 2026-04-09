@@ -380,6 +380,29 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 isSelected ? selectedClass : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700'
                               } ${!onClick ? 'opacity-60 cursor-not-allowed' : ''}`}
                             >
+                              <div className="w-full h-14 rounded-md border border-zinc-800 bg-zinc-900/60 overflow-hidden flex items-center justify-center">
+                                {isImage && file.relativePath ? (
+                                  <img
+                                    src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}`}
+                                    alt={file.name}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                  />
+                                ) : isVideo && file.relativePath ? (
+                                  <video
+                                    src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}`}
+                                    className="w-full h-full object-cover"
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                  />
+                                ) : (
+                                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-zinc-500">
+                                    {isAudio ? <FileAudio size={14} /> : isSubtitle ? <Type size={14} /> : <File size={14} />}
+                                    <span>{isAudio ? 'Audio' : isSubtitle ? 'Subtitle' : 'File'}</span>
+                                  </div>
+                                )}
+                              </div>
                               <div className="flex items-center justify-between w-full">
                                 <div className={`h-7 w-7 rounded-md ${iconClass} flex items-center justify-center`}>
                                   {React.createElement(icon, { size: 14 })}
