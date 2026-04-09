@@ -2543,6 +2543,96 @@ app.delete('/api/vault/project', async (req, res) => {
   }
 });
 
+app.delete('/api/vault/file', async (req, res) => {
+  const relativePathRaw = typeof req.body?.relativePath === 'string' ? req.body.relativePath.trim() : '';
+  if (!relativePathRaw) {
+    res.status(400).json({ error: 'Missing relativePath' });
+    return;
+  }
+  const normalized = relativePathRaw.replace(/\\/g, '/');
+  const fullPath = resolveSafePath(normalized);
+  if (!fullPath) {
+    res.status(400).json({ error: 'Invalid file path' });
+    return;
+  }
+  let stats: { isFile: () => boolean };
+  try {
+    stats = await fs.stat(fullPath);
+  } catch {
+    res.status(404).json({ error: 'File not found' });
+    return;
+  }
+  if (!stats.isFile()) {
+    res.status(400).json({ error: 'Target is not a file' });
+    return;
+  }
+  try {
+    await fs.rm(fullPath, { force: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to delete file';
+    res.status(500).json({ error: message });
+    return;
+  }
+
+  const projectName = normalized.split('/')[0];
+  if (projectName) {
+    const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
+    const writeMetaFile = async (filename: 'uvr.json' | 'tts.json', data: Record<string, VaultFileDTO['uvr'] | VaultFileDTO['tts']>) => {
+      const metaDir = path.join(projectRoot, '.mediaforge');
+      const metaFile = path.join(metaDir, filename);
+      await fs.mkdir(metaDir, { recursive: true });
+      await fs.writeFile(metaFile, JSON.stringify(data, null, 2), 'utf-8');
+    };
+    try {
+      const [uvrMeta, ttsMeta] = await Promise.all([
+        readProjectUvrMeta(projectRoot),
+        readProjectTtsMeta(projectRoot)
+      ]);
+      let uvrChanged = false;
+      let ttsChanged = false;
+
+      if (uvrMeta[normalized]) {
+        delete uvrMeta[normalized];
+        uvrChanged = true;
+      }
+      Object.keys(uvrMeta).forEach(key => {
+        const entry = uvrMeta[key];
+        if (!entry?.outputs?.length) return;
+        const nextOutputs = entry.outputs.filter(output => output !== normalized);
+        if (nextOutputs.length !== entry.outputs.length) {
+          uvrMeta[key] = { ...entry, outputs: nextOutputs };
+          uvrChanged = true;
+        }
+      });
+
+      if (ttsMeta[normalized]) {
+        delete ttsMeta[normalized];
+        ttsChanged = true;
+      }
+      Object.keys(ttsMeta).forEach(key => {
+        const entry = ttsMeta[key];
+        if (!entry?.outputs?.length) return;
+        const nextOutputs = entry.outputs.filter(output => output !== normalized);
+        if (nextOutputs.length !== entry.outputs.length) {
+          ttsMeta[key] = { ...entry, outputs: nextOutputs };
+          ttsChanged = true;
+        }
+      });
+
+      if (uvrChanged) {
+        await writeMetaFile('uvr.json', uvrMeta);
+      }
+      if (ttsChanged) {
+        await writeMetaFile('tts.json', ttsMeta);
+      }
+    } catch {
+      // Ignore metadata cleanup failures; file deletion succeeded.
+    }
+  }
+
+  res.json({ ok: true, relativePath: normalized });
+});
+
 const UVR_WORKDIR = path.dirname(UVR_CLI_PATH);
 const YTDLP_BIN = process.env.YTDLP_PATH ?? 'yt-dlp';
 

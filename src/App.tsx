@@ -3770,6 +3770,48 @@ export default function App() {
     });
   };
 
+  const confirmModal = confirmState.open && (
+    <div className="fixed inset-0 z-[65] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+      <div className="absolute inset-0" onClick={() => setConfirmState(prev => ({ ...prev, open: false }))} />
+      <div className="relative w-[min(520px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-4 shadow-2xl">
+        <div>
+          <div className="text-lg font-semibold text-zinc-100 mt-2">{confirmState.title}</div>
+          {confirmState.description && (
+            <div className="text-sm text-zinc-500 mt-2">{confirmState.description}</div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-3">
+          <button
+            onClick={() => setConfirmState(prev => ({ ...prev, open: false }))}
+            className="px-4 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              const action = confirmActionRef.current;
+              confirmActionRef.current = null;
+              setConfirmState(prev => ({ ...prev, open: false }));
+              try {
+                await Promise.resolve(action?.());
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'Action failed';
+                showToast(message, 'error');
+              }
+            }}
+            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
+              confirmState.variant === 'danger'
+                ? 'bg-red-500 text-zinc-950 hover:bg-red-400'
+                : 'bg-lime-500 text-zinc-950 hover:bg-lime-400'
+            }`}
+          >
+            {confirmState.confirmLabel ?? 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   const openPipelinePreview = (pipeline: PipelineSummary) => {
     if (pipeline.kind !== 'task') return;
     const taskType = pipeline.primaryType ?? pipeline.id.slice(TASK_PIPELINE_PREFIX.length);
@@ -4249,12 +4291,42 @@ export default function App() {
     setRenderStudioFocus('item');
   };
 
+  const performDeleteVaultFile = async (file: VaultFile) => {
+    if (!file?.relativePath) return;
+    try {
+      const response = await fetch('/api/vault/file', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relativePath: file.relativePath })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Delete failed (${response.status})`);
+      }
+      showToast(`Deleted ${file.name}`, 'success');
+      setRenderInputFileIds(prev => prev.filter(id => id !== file.id));
+      setRenderImageOrderIds(prev => prev.filter(id => id !== file.id));
+      if (renderVideoId === file.id) setRenderVideoId(null);
+      if (renderAudioId === file.id) setRenderAudioId(null);
+      if (renderSubtitleId === file.id) setRenderSubtitleId(null);
+      if (renderStudioPreviewFileId === file.id) {
+        setRenderStudioPreviewFileId(null);
+        setRenderStudioFocus('timeline');
+        setRenderStudioItemType(null);
+      }
+      await loadVault();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to delete file';
+      showToast(message, 'error');
+    }
+  };
+
   const renderStudioContextMenus = (
     <>
       {renderStudioMediaBinContextMenu.open && renderStudioMediaBinContextMenu.file && (
         <div className="fixed inset-0 z-[70]" onClick={closeRenderStudioMediaBinContextMenu}>
           <div
-            className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[190px]"
+            className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 w-max max-w-[220px]"
             style={{ top: renderStudioMediaBinContextMenu.y, left: renderStudioMediaBinContextMenu.x }}
             onClick={(event) => event.stopPropagation()}
           >
@@ -4290,6 +4362,27 @@ export default function App() {
                 Already in timeline
               </div>
             )}
+            <button
+              className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
+              onClick={() => {
+                const target = renderStudioMediaBinContextMenu.file as VaultFile;
+                closeRenderStudioMediaBinContextMenu();
+                openConfirm(
+                  {
+                    title: `Delete "${target.name}"?`,
+                    description: 'This will remove the file from the project and Media Vault.',
+                    confirmLabel: 'Delete',
+                    variant: 'danger'
+                  },
+                  () => performDeleteVaultFile(target)
+                );
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <Trash2 size={12} />
+                Delete from project
+              </span>
+            </button>
           </div>
         </div>
       )}
@@ -5628,6 +5721,7 @@ export default function App() {
           <RenderStudioPage {...renderStudioProps} />
         </Suspense>
         {renderStudioContextMenus}
+        {confirmModal}
       </>
     );
   }
@@ -7423,47 +7517,7 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          {confirmState.open && (
-            <div className="fixed inset-0 z-[65] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-              <div className="absolute inset-0" onClick={() => setConfirmState(prev => ({ ...prev, open: false }))} />
-              <div className="relative w-[min(520px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-4 shadow-2xl">
-                <div>
-                  <div className="text-lg font-semibold text-zinc-100 mt-2">{confirmState.title}</div>
-                  {confirmState.description && (
-                    <div className="text-sm text-zinc-500 mt-2">{confirmState.description}</div>
-                  )}
-                </div>
-                <div className="flex items-center justify-end gap-3">
-                  <button
-                    onClick={() => setConfirmState(prev => ({ ...prev, open: false }))}
-                    className="px-4 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const action = confirmActionRef.current;
-                      confirmActionRef.current = null;
-                      setConfirmState(prev => ({ ...prev, open: false }));
-                      try {
-                        await Promise.resolve(action?.());
-                      } catch (error) {
-                        const message = error instanceof Error ? error.message : 'Action failed';
-                        showToast(message, 'error');
-                      }
-                    }}
-                    className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
-                      confirmState.variant === 'danger'
-                        ? 'bg-red-500 text-zinc-950 hover:bg-red-400'
-                        : 'bg-lime-500 text-zinc-950 hover:bg-lime-400'
-                    }`}
-                  >
-                    {confirmState.confirmLabel ?? 'Confirm'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          {confirmModal}
 
           {templateSaveOpen && (
             <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">

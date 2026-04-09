@@ -1087,82 +1087,83 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
 
                   <div className="border-l border-zinc-800 bg-zinc-900/70 p-4 flex flex-col gap-4 min-h-0">
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Inspector</div>
-                    <div className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 shrink-0">
-                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Template</div>
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                        <select
-                          value={runPipelineRenderTemplateId}
-                          onChange={e => handleRenderTemplateChange(e.target.value)}
-                          onContextMenu={event => {
-                            if (runPipelineRenderTemplateId === 'custom' || !selectedTemplate) return;
-                            event.preventDefault();
-                            deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
-                          }}
-                          className="min-h-[36px] flex-1 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
-                        >
-                          <option value="custom">Custom</option>
-                          {renderTemplates.map(template => {
-                            const isSelected = runPipelineRenderTemplateId === template.id;
-                            const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>
-                                {label}
-                              </option>
-                            );
-                          })}
-                        </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (templateMenuCloseRef.current) {
-                              window.clearTimeout(templateMenuCloseRef.current);
-                              templateMenuCloseRef.current = null;
-                            }
-                            setTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (templateMenuCloseRef.current) {
-                              window.clearTimeout(templateMenuCloseRef.current);
-                            }
-                            templateMenuCloseRef.current = window.setTimeout(() => {
-                              setTemplateMenuOpen(false);
-                              templateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                    {renderStudioFocus === 'timeline' && (
+                      <div className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 shrink-0">
+                        <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Template</div>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+                          <select
+                            value={runPipelineRenderTemplateId}
+                            onChange={e => handleRenderTemplateChange(e.target.value)}
+                            onContextMenu={event => {
+                              if (runPipelineRenderTemplateId === 'custom' || !selectedTemplate) return;
+                              event.preventDefault();
+                              deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
+                            }}
+                            className="min-h-[36px] flex-1 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
                           >
-                            <Menu size={14} />
-                          </button>
-                          {templateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTemplateMenuOpen(false);
-                                  if (selectedTemplate && !isCustomTemplate) {
-                                    saveRenderTemplateCurrent(selectedTemplate);
-                                  } else {
-                                    saveRenderTemplateQuick();
-                                  }
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  isCustomTemplate ? 'rounded-t-lg rounded-b-lg' : 'rounded-t-lg'
-                                }`}
-                              >
-                                Save
-                              </button>
-                              {!isCustomTemplate && (
+                            <option value="custom">Custom</option>
+                            {renderTemplates.map(template => {
+                              const isSelected = runPipelineRenderTemplateId === template.id;
+                              const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
+                              return (
+                                <option key={template.id} value={template.id}>
+                                  {label}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          <div
+                            className="relative shrink-0"
+                            onMouseEnter={() => {
+                              if (templateMenuCloseRef.current) {
+                                window.clearTimeout(templateMenuCloseRef.current);
+                                templateMenuCloseRef.current = null;
+                              }
+                              setTemplateMenuOpen(true);
+                            }}
+                            onMouseLeave={() => {
+                              if (templateMenuCloseRef.current) {
+                                window.clearTimeout(templateMenuCloseRef.current);
+                              }
+                              templateMenuCloseRef.current = window.setTimeout(() => {
+                                setTemplateMenuOpen(false);
+                                templateMenuCloseRef.current = null;
+                              }, 120);
+                            }}
+                            onFocusCapture={() => setTemplateMenuOpen(true)}
+                            onBlurCapture={event => {
+                              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                                setTemplateMenuOpen(false);
+                              }
+                            }}
+                          >
+                            <button
+                              type="button"
+                              aria-label="Template options"
+                              title="Template options"
+                              className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                            >
+                              <Menu size={14} />
+                            </button>
+                            {templateMenuOpen && (
+                              <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTemplateMenuOpen(false);
+                                    if (selectedTemplate && !isCustomTemplate) {
+                                      saveRenderTemplateCurrent(selectedTemplate);
+                                    } else {
+                                      saveRenderTemplateQuick();
+                                    }
+                                  }}
+                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                    isCustomTemplate ? 'rounded-t-lg rounded-b-lg' : 'rounded-t-lg'
+                                  }`}
+                                >
+                                  Save
+                                </button>
+                                {!isCustomTemplate && (
                                 <>
                                   <button
                                     type="button"
@@ -1205,10 +1206,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         </div>
                       </div>
                     </div>
+                    )}
                     {renderStudioFocus === 'timeline' ? (
                       <div className="flex flex-col gap-3 text-xs text-zinc-300 min-h-0 overflow-y-auto pr-1">
                         {activeInspectorSection === 'timeline' && (
-                        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                          <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                           <div
                             role="button"
                             tabIndex={0}
