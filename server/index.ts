@@ -3103,6 +3103,9 @@ app.post('/api/jobs/run', async (req, res) => {
   const ttsRate = typeof req.body?.rate === 'number' ? req.body.rate : undefined;
   const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
   const ttsVolume = typeof req.body?.volume === 'number' ? req.body.volume : undefined;
+  const inputPaths = Array.isArray(req.body?.inputPaths)
+    ? req.body.inputPaths.filter((value: unknown) => typeof value === 'string' && value.trim().length > 0)
+    : undefined;
   const renderConfigV2 = req.body?.renderConfigV2 as RenderConfigV2 | undefined;
   const renderInputPaths = Array.isArray(req.body?.renderInputPaths)
     ? req.body.renderInputPaths.filter((value: unknown) => typeof value === 'string' && value.trim().length > 0)
@@ -3338,6 +3341,7 @@ app.post('/api/jobs/run', async (req, res) => {
           pipelineName,
           projectName,
           inputRelativePath: inputPath,
+          inputPaths: inputPaths && inputPaths.length > 0 ? inputPaths : undefined,
           uvr: {
             backend,
             model,

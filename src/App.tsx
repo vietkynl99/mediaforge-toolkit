@@ -4295,9 +4295,13 @@ export default function App() {
     }
 
     const projectName = (jobParams.projectName ?? job.projectName)?.trim();
-    const inputRelativePath = typeof jobParams.inputRelativePath === 'string'
-      ? jobParams.inputRelativePath
-      : (typeof jobAny.__inputRelativePath === 'string' ? jobAny.__inputRelativePath : '');
+    const inputPaths = Array.isArray(jobParams.inputPaths)
+      ? jobParams.inputPaths.filter((value: unknown) => typeof value === 'string')
+      : [];
+    const inputRelativePath = inputPaths[0]
+      ?? (typeof jobParams.inputRelativePath === 'string'
+        ? jobParams.inputRelativePath
+        : (typeof jobAny.__inputRelativePath === 'string' ? jobAny.__inputRelativePath : ''));
     let projectMatch: VaultFolder | undefined;
     let fileMatch: VaultFile | undefined;
     if (inputRelativePath) {
@@ -4996,6 +5000,7 @@ export default function App() {
           }
         : {
             inputPath: runPipelineInput?.relativePath,
+            inputPaths: runPipelineInput?.relativePath ? [runPipelineInput.relativePath] : undefined,
             model: vrModel,
             backend: runPipelineBackend,
             outputFormat: vrOutputType
