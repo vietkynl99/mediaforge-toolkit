@@ -7,5 +7,5 @@ coverage/
 .env*
 !.env.example
 .codex
-server/data/pipelines.sqlite
+server/data/main_db.sqlite
 errorlog.txt

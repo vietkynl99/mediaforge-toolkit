@@ -270,7 +270,7 @@ const listSystemFonts = async (): Promise<string[]> =>
     });
   });
 
-const dbPath = path.join(process.cwd(), 'server', 'data', 'pipelines.sqlite');
+const dbPath = path.join(process.cwd(), 'server', 'data', 'main_db.sqlite');
 const dbDir = path.dirname(dbPath);
 await fs.mkdir(dbDir, { recursive: true });
 
