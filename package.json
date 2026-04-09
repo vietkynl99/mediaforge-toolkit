@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --port=55555 --host=0.0.0.0",
     "dev:server": "tsx server/index.ts",
+    "dev:register": "REGISTER_MODE=1 npm run dev:server",
     "dev:all": "concurrently --kill-others --names \"server,web\" --prefix-colors \"yellow,cyan\" \"npm run dev:server\" \"npm run dev\"",
+    "dev:all:register": "concurrently --kill-others --names \"server,web\" --prefix-colors \"yellow,cyan\" \"npm run dev:register\" \"npm run dev\"",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",

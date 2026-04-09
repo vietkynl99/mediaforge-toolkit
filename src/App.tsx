@@ -33,7 +33,8 @@ import {
   Upload,
   MousePointer2,
   Menu,
-  Save
+  Save,
+  LogOut
 } from 'lucide-react';
 import { TASK_ICONS, MediaJob, JobStatus } from './types';
 
@@ -211,6 +212,12 @@ type RenderTemplate = {
   name: string;
   updatedAt: string;
   config: RenderConfigV2;
+};
+
+type AuthUser = {
+  id: number | null;
+  username: string;
+  createdAt: string;
 };
 
 type TaskTemplate = {
@@ -1000,7 +1007,42 @@ const RENDER_PREVIEW_BLACK_DATA_URL =
 const RenderStudioPage = lazy(() => import('./RenderStudioPage'));
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const renderStudioPath = '/render-studio';
+  const buildRenderStudioUrl = (projectId?: string | null, templateId?: string | null) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project', projectId);
+    if (templateId && templateId !== 'custom') params.set('template', templateId);
+    const query = params.toString();
+    return `${renderStudioPath}${query ? `?${query}` : ''}`;
+  };
+  const tabPathMap: Record<string, string> = {
+    dashboard: '/dashboard',
+    forge: '/pipeline-forge',
+    vault: '/media-vault',
+    settings: '/settings',
+    logs: '/logs'
+  };
+  const getTabFromPath = (path: string) => {
+    const entry = Object.entries(tabPathMap).find(([, value]) => value === path);
+    return entry?.[0] ?? 'dashboard';
+  };
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window === 'undefined') return 'dashboard';
+    return getTabFromPath(window.location.pathname);
+  });
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('');
+  const [registerEnabled, setRegisterEnabled] = useState<boolean | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const getAuthViewFromPath = () => {
+    if (typeof window === 'undefined') return 'login';
+    return window.location.pathname === '/register' ? 'register' : 'login';
+  };
+  const [authView, setAuthView] = useState<'login' | 'register'>(getAuthViewFromPath);
   const [searchQuery, setSearchQuery] = useState('');
   const [jobs, setJobs] = useState<MediaJob[]>([]);
   const [jobNowMs, setJobNowMs] = useState(() => Date.now());
@@ -1150,7 +1192,12 @@ export default function App() {
   const [pipelineName, setPipelineName] = useState('New Pipeline');
   const [pipelineSaving, setPipelineSaving] = useState(false);
   const [showRunPipeline, setShowRunPipeline] = useState(false);
-  const [showRenderStudio, setShowRenderStudio] = useState(false);
+  const [showRenderStudio, setShowRenderStudio] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.pathname === renderStudioPath;
+  });
+  const renderStudioReturnPathRef = useRef('/dashboard');
+  const renderStudioQueryAppliedRef = useRef(false);
   const [renderPresetSaveMenuOpen, setRenderPresetSaveMenuOpen] = useState(false);
   const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
   const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(false);
@@ -1626,6 +1673,275 @@ export default function App() {
     })[0];
   const bestSingleFormat = bestMuxedFormat ?? bestVideoFormat ?? bestAudioFormat ?? null;
   const downloadAnalyzeSubtitleCount = downloadAnalyzeListSubs.length;
+
+  const handleLogin = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (!authUsername.trim() || !authPassword) {
+      setAuthError('Please enter both username and password.');
+      return;
+    }
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername, password: authPassword })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok || !data?.user) {
+        throw new Error(data?.error || 'Login failed.');
+      }
+      setAuthUser(data.user as AuthUser);
+      setAuthPassword('');
+      if (typeof window !== 'undefined') {
+        window.history.pushState({}, '', '/dashboard');
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Login failed.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleRegister = async (event?: React.FormEvent) => {
+    event?.preventDefault();
+    if (registerEnabled === false) {
+      return;
+    }
+    if (!authUsername.trim() || !authPassword) {
+      setAuthError('Please enter both username and password.');
+      return;
+    }
+    if (authPassword !== authConfirmPassword) {
+      setAuthError('Passwords do not match.');
+      return;
+    }
+    setAuthSubmitting(true);
+    setAuthError(null);
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername, password: authPassword })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.ok || !data?.user) {
+        throw new Error(data?.error || 'Register failed.');
+      }
+      setAuthPassword('');
+      setAuthConfirmPassword('');
+      navigateAuth('login');
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Register failed.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      const ok = window.confirm('Are you sure you want to log out?');
+      if (!ok) return;
+    }
+    fetch('/api/auth/logout', { method: 'POST' }).catch(() => null);
+    setAuthUser(null);
+    setAuthUsername('');
+    setAuthPassword('');
+    setAuthConfirmPassword('');
+    setAuthError(null);
+    navigateAuth('login');
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setAuthView(getAuthViewFromPath());
+      setAuthError(null);
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('popstate', handlePopState);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('popstate', handlePopState);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAuthConfig = async () => {
+      try {
+        const response = await fetch('/api/auth/config');
+        const data = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        setRegisterEnabled(Boolean(data?.registerEnabled));
+      } catch {
+        if (!cancelled) {
+          setRegisterEnabled(false);
+        }
+      }
+    };
+    loadAuthConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAuthUser = async () => {
+      try {
+        const response = await fetch('/api/auth/me');
+        const data = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (response.ok && data?.ok && data?.user) {
+          setAuthUser(data.user as AuthUser);
+        } else {
+          setAuthUser(null);
+        }
+        setAuthChecked(true);
+      } catch {
+        if (!cancelled) {
+          setAuthUser(null);
+          setAuthChecked(true);
+        }
+      }
+    };
+    loadAuthUser();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const navigateAuth = (view: 'login' | 'register') => {
+    if (typeof window === 'undefined') return;
+    const nextPath = view === 'register' ? '/register' : '/login';
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+    setAuthView(view);
+    setAuthConfirmPassword('');
+    setAuthError(null);
+  };
+
+  const navigateTab = (tab: string) => {
+    const nextPath = tabPathMap[tab] ?? '/dashboard';
+    if (typeof window !== 'undefined' && window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath);
+    }
+    setActiveTab(tab);
+  };
+
+  const setRenderStudioOpen = (open: boolean) => {
+    if (typeof window !== 'undefined') {
+      if (open) {
+        const currentPath = window.location.pathname;
+        if (currentPath !== renderStudioPath) {
+          renderStudioReturnPathRef.current = currentPath;
+          window.history.pushState({}, '', buildRenderStudioUrl(runPipelineProjectId, runPipelineRenderTemplateId));
+        }
+      } else {
+        const target = renderStudioReturnPathRef.current || '/dashboard';
+        if (window.location.pathname !== target) {
+          window.history.pushState({}, '', target);
+        }
+      }
+    }
+    if (!open) {
+      renderStudioQueryAppliedRef.current = false;
+    }
+    setShowRenderStudio(open);
+  };
+
+  useEffect(() => {
+    if (!authChecked) return;
+    if (authUser) return;
+    if (typeof window === 'undefined') return;
+    const path = window.location.pathname;
+    if (path !== '/login' && path !== '/register') {
+      navigateAuth('login');
+    }
+  }, [authChecked, authUser]);
+
+  useEffect(() => {
+    if (authView !== 'register') return;
+    if (registerEnabled === null) return;
+    if (registerEnabled) return;
+    navigateAuth('login');
+  }, [authView, registerEnabled]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (typeof window === 'undefined') return;
+    const path = window.location.pathname;
+    if (path === '/login' || path === '/register') {
+      window.history.replaceState({}, '', '/dashboard');
+      setActiveTab('dashboard');
+      return;
+    }
+    if (path === renderStudioPath) {
+      setShowRenderStudio(true);
+      renderStudioQueryAppliedRef.current = false;
+      return;
+    }
+    if (!Object.values(tabPathMap).includes(path)) {
+      window.history.replaceState({}, '', '/dashboard');
+      setActiveTab('dashboard');
+      return;
+    }
+    setActiveTab(getTabFromPath(path));
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser || !showRenderStudio) return;
+    if (typeof window === 'undefined') return;
+    if (renderStudioQueryAppliedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get('project');
+    const templateId = params.get('template');
+    if (projectId) {
+      setRunPipelineProjectId(projectId);
+    }
+    if (templateId) {
+      setRunPipelineRenderTemplateId(templateId);
+    }
+    renderStudioQueryAppliedRef.current = true;
+  }, [authUser, showRenderStudio]);
+
+  useEffect(() => {
+    if (!authUser || !showRenderStudio) return;
+    if (typeof window === 'undefined') return;
+    const nextUrl = buildRenderStudioUrl(runPipelineProjectId, runPipelineRenderTemplateId);
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (currentUrl !== nextUrl) {
+      window.history.replaceState({}, '', nextUrl);
+    }
+  }, [authUser, showRenderStudio, runPipelineProjectId, runPipelineRenderTemplateId]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    const handlePopState = () => {
+      if (typeof window === 'undefined') return;
+      const path = window.location.pathname;
+      if (path === renderStudioPath) {
+        setShowRenderStudio(true);
+        renderStudioQueryAppliedRef.current = false;
+        return;
+      }
+      setShowRenderStudio(false);
+      const nextTab = getTabFromPath(path);
+      setActiveTab(nextTab);
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('popstate', handlePopState);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('popstate', handlePopState);
+      }
+    };
+  }, [authUser]);
 
   const showToast = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     setToastType(type);
@@ -3461,7 +3777,10 @@ export default function App() {
 
   useEffect(() => {
     if (!runPipelineHasRender && showRenderStudio) {
-      setShowRenderStudio(false);
+      if (typeof window !== 'undefined' && window.location.pathname === renderStudioPath) {
+        return;
+      }
+      setRenderStudioOpen(false);
     }
   }, [runPipelineHasRender, showRenderStudio]);
 
@@ -3506,6 +3825,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const loadFonts = async () => {
+      if (!authUser) return;
       setSubtitleFontLoading(true);
       try {
         const response = await fetch('/api/fonts');
@@ -3527,7 +3847,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authUser]);
 
   const openPipelineEditor = async (pipeline: PipelineSummary) => {
     if (pipeline.kind !== 'saved') return;
@@ -3656,12 +3976,14 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!authUser) return;
     loadPipelines();
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
+    if (!authUser) return;
     loadParamPresets();
-  }, []);
+  }, [authUser]);
 
   const loadJobs = async () => {
     try {
@@ -3952,10 +4274,11 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!authUser) return;
     loadJobs();
     const interval = window.setInterval(loadJobs, 3000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(jobs.length / 10));
@@ -4031,10 +4354,11 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!authUser) return;
     if (runPipelineId) {
       loadPipelineDetail(runPipelineId);
     }
-  }, [runPipelineId]);
+  }, [runPipelineId, authUser]);
 
 
   useEffect(() => {
@@ -4048,6 +4372,7 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const loadRenderTemplates = async () => {
+      if (!authUser) return;
       try {
         const response = await fetch('/api/render-templates');
         if (!response.ok) throw new Error('Unable to load templates');
@@ -4065,7 +4390,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
     if (!runPipelineProject) return;
@@ -4474,6 +4799,7 @@ export default function App() {
 
   useEffect(() => {
     const loadModels = async () => {
+      if (!authUser) return;
       try {
         const response = await fetch('/api/tasks/vr/models');
         if (!response.ok) return;
@@ -4488,7 +4814,7 @@ export default function App() {
       }
     };
     loadModels();
-  }, []);
+  }, [authUser]);
 
   const runVrTask = async () => {
     if (!selectedForgeInput?.relativePath) {
@@ -4695,7 +5021,7 @@ export default function App() {
       await loadJobs();
       showToast('Pipeline queued', 'success');
       setShowRunPipeline(false);
-      setActiveTab('dashboard');
+      navigateTab('dashboard');
       return { conflict: false, done: true };
     };
 
@@ -4781,8 +5107,9 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!authUser) return;
     loadVault();
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -4820,7 +5147,7 @@ export default function App() {
     runPipelineProject,
     selectProjectDefaults,
     renderReady,
-    setShowRenderStudio,
+    setShowRenderStudio: setRenderStudioOpen,
     setActiveTab,
     runPipelineJob,
     runPipelineSubmitting,
@@ -5000,7 +5327,46 @@ export default function App() {
     };
   }, [selectedRenderTemplate, runPipelineRenderTemplateId]);
 
-  return (
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+        <div className="text-sm text-zinc-400">Checking session...</div>
+      </div>
+    );
+  }
+
+  if (authUser && showRenderStudio) {
+    if (!runPipelineHasRender) {
+      return (
+        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <div className="text-sm text-zinc-400">Render Studio is not available.</div>
+            <button
+              type="button"
+              onClick={() => setRenderStudioOpen(false)}
+              className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <Suspense
+        fallback={(
+          <div className="fixed inset-0 z-[60] bg-zinc-950 flex items-center justify-center">
+            <div className="text-xs text-zinc-400">Loading Render Studio...</div>
+          </div>
+        )}
+      >
+        <RenderStudioPage {...renderStudioProps} />
+      </Suspense>
+    );
+  }
+
+  return authUser ? (
     <div className="flex h-screen bg-zinc-950 text-zinc-300 font-sans selection:bg-lime-500/30 selection:text-lime-200">
       {/* Sidebar Navigation Rail */}
       <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} border-r border-zinc-800 flex flex-col p-4 gap-6 transition-all duration-300`}>
@@ -5020,21 +5386,21 @@ export default function App() {
             icon={LayoutDashboard} 
             label="Dashboard" 
             active={activeTab === 'dashboard'} 
-            onClick={() => setActiveTab('dashboard')} 
+            onClick={() => navigateTab('dashboard')} 
             collapsed={sidebarCollapsed}
           />
           <SidebarItem 
             icon={Hammer} 
             label="Pipeline Forge" 
             active={activeTab === 'forge'} 
-            onClick={() => setActiveTab('forge')} 
+            onClick={() => navigateTab('forge')} 
             collapsed={sidebarCollapsed}
           />
           <SidebarItem 
             icon={Database} 
             label="Media Vault" 
             active={activeTab === 'vault'} 
-            onClick={() => setActiveTab('vault')} 
+            onClick={() => navigateTab('vault')} 
             collapsed={sidebarCollapsed}
           />
           <div className="my-4 border-t border-zinc-800/50" />
@@ -5042,14 +5408,14 @@ export default function App() {
             icon={Settings} 
             label="Settings" 
             active={activeTab === 'settings'} 
-            onClick={() => setActiveTab('settings')} 
+            onClick={() => navigateTab('settings')} 
             collapsed={sidebarCollapsed}
           />
           <SidebarItem 
             icon={Terminal} 
             label="System Logs" 
             active={activeTab === 'logs'} 
-            onClick={() => setActiveTab('logs')} 
+            onClick={() => navigateTab('logs')} 
             collapsed={sidebarCollapsed}
           />
         </nav>
@@ -5100,6 +5466,14 @@ export default function App() {
             <button className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors">
               <Filter size={18} />
               Filter
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
+            >
+              <LogOut size={18} />
+              Logout
             </button>
             <button 
               onClick={() => {
@@ -6880,7 +7254,7 @@ export default function App() {
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
                 <div className="absolute inset-0" onClick={() => {
                   setShowRunPipeline(false);
-                  setShowRenderStudio(false);
+                  setRenderStudioOpen(false);
                 }} />
               <div className="relative w-[min(700px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 shadow-2xl overflow-y-auto">
                 <div className="flex items-center justify-between">
@@ -6888,7 +7262,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       setShowRunPipeline(false);
-                      setShowRenderStudio(false);
+                    setRenderStudioOpen(false);
                     }}
                     className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
                   >
@@ -7756,7 +8130,7 @@ export default function App() {
                 )}
                 {runPipelineHasRender && (
                   <button
-                    onClick={() => setShowRenderStudio(true)}
+                    onClick={() => setRenderStudioOpen(true)}
                     disabled={!runPipelineProject}
                     className="w-full px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300"
                   >
@@ -8076,6 +8450,102 @@ export default function App() {
           )}
         </div>
       </main>
+    </div>
+  ) : (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(700px_circle_at_15%_20%,rgba(132,204,22,0.12),transparent_60%),radial-gradient(600px_circle_at_85%_0%,rgba(16,185,129,0.16),transparent_55%)]" />
+      <div className="relative min-h-screen flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-md rounded-2xl border border-zinc-800/80 bg-zinc-950/80 backdrop-blur p-8 shadow-[0_0_60px_rgba(16,185,129,0.12)]">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-12 h-12 bg-lime-500 rounded-xl flex items-center justify-center text-zinc-950 font-black italic">MF</div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-lime-300/70">MediaForge Toolkit</p>
+              <h1 className="text-2xl font-semibold text-zinc-100">
+                {authView === 'login' ? 'Sign in' : 'Create account'}
+              </h1>
+            </div>
+          </div>
+          <p className="text-sm text-zinc-400 mb-6">
+            {authView === 'login'
+              ? 'Sign in to access MediaForge'
+              : 'Create a new account'}
+          </p>
+          <form className="space-y-4" onSubmit={authView === 'login' ? handleLogin : handleRegister}>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Username</label>
+              <input
+                value={authUsername}
+                onChange={(event) => setAuthUsername(event.target.value)}
+                placeholder="Enter username"
+                className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-lime-400/60"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Password</label>
+              <input
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                type="password"
+                placeholder="Enter password"
+                className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-lime-400/60"
+              />
+            </div>
+            {authView === 'register' && (
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Confirm password</label>
+                <input
+                  value={authConfirmPassword}
+                  onChange={(event) => setAuthConfirmPassword(event.target.value)}
+                  type="password"
+                  placeholder="Re-enter password"
+                  className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-lime-400/60"
+                />
+              </div>
+            )}
+            {authError && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                {authError}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={authSubmitting}
+              className="w-full rounded-xl bg-lime-500 px-4 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-lime-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {authSubmitting
+                ? authView === 'login'
+                  ? 'Signing in...'
+                  : 'Creating account...'
+                : authView === 'login'
+                  ? 'Sign in'
+                  : 'Create account'}
+            </button>
+          </form>
+          <div className="mt-4 flex items-center justify-between text-xs text-zinc-400">
+            {authView !== 'login' || registerEnabled !== false ? (
+              <span>
+                {authView === 'login' ? "Don't have an account?" : 'Already have an account?'}
+              </span>
+            ) : (
+              <span />
+            )}
+            {authView !== 'login' || registerEnabled !== false ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (authView === 'login' && registerEnabled === false) {
+                    return;
+                  }
+                  navigateAuth(authView === 'login' ? 'register' : 'login');
+                }}
+                className="text-lime-300 hover:text-lime-200 font-semibold"
+              >
+                {authView === 'login' ? 'Create account' : 'Sign in'}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

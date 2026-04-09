@@ -118,10 +118,123 @@ const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
 const TTS_PITCH_BASE_HZ = 200;
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
+const AUTH_SESSION_COOKIE = 'mf_session';
+const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
+const AUTH_SESSION_TTL_MS = Math.max(1, AUTH_SESSION_TTL_DAYS) * 24 * 60 * 60 * 1000;
 
 const app = express();
 const PORT = Number(process.env.VAULT_PORT ?? 3001);
+const REGISTER_MODE =
+  ['1', 'true', 'yes', 'on'].includes((process.env.REGISTER_MODE ?? '').toLowerCase());
 app.use(express.json({ limit: '2mb' }));
+
+type AuthSession = {
+  id: string;
+  userId: number;
+  username: string;
+  createdAt: string;
+  expiresAt: number;
+};
+
+const sessions = new Map<string, AuthSession>();
+
+const parseCookies = (header: string | undefined) => {
+  const out: Record<string, string> = {};
+  if (!header) return out;
+  header.split(';').forEach(part => {
+    const [rawKey, ...rest] = part.trim().split('=');
+    if (!rawKey) return;
+    const value = rest.join('=');
+    try {
+      out[rawKey] = decodeURIComponent(value);
+    } catch {
+      out[rawKey] = value;
+    }
+  });
+  return out;
+};
+
+const getSessionFromRequest = (req: express.Request) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionId = cookies[AUTH_SESSION_COOKIE];
+  if (!sessionId) return null;
+  const now = Date.now();
+  const cached = sessions.get(sessionId);
+  if (cached) {
+    if (cached.expiresAt <= now) {
+      sessions.delete(sessionId);
+      try {
+        db.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
+        schedulePersistDb();
+      } catch {
+        // ignore
+      }
+      return null;
+    }
+    return cached;
+  }
+  try {
+    const result = db.exec(
+      'SELECT id, user_id, username, created_at, expires_at FROM sessions WHERE id = ? LIMIT 1',
+      [sessionId]
+    );
+    const row = result[0]?.values?.[0];
+    if (!row) return null;
+    const [id, userId, username, createdAt, expiresAt] = row as [string, number, string, string, number];
+    if (!expiresAt || Number(expiresAt) <= now) {
+      db.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
+      schedulePersistDb();
+      return null;
+    }
+    const session: AuthSession = {
+      id,
+      userId,
+      username,
+      createdAt,
+      expiresAt: Number(expiresAt)
+    };
+    sessions.set(sessionId, session);
+    return session;
+  } catch {
+    return null;
+  }
+};
+
+const setSessionCookie = (res: express.Response, sessionId: string) => {
+  res.cookie(AUTH_SESSION_COOKIE, sessionId, {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: AUTH_SESSION_TTL_MS,
+    path: '/'
+  });
+};
+
+const clearSessionCookie = (res: express.Response) => {
+  res.clearCookie(AUTH_SESSION_COOKIE, { path: '/' });
+};
+
+app.use('/api', (req, res, next) => {
+  const path = req.path || '';
+  if (
+    path === '/auth/login' ||
+    path === '/auth/register' ||
+    path === '/auth/config' ||
+    path === '/auth/logout'
+  ) {
+    return next();
+  }
+  const session = getSessionFromRequest(req);
+  if (!session) {
+    const cookies = parseCookies(req.headers.cookie);
+    if (cookies[AUTH_SESSION_COOKIE]) {
+      clearSessionCookie(res);
+    }
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+  (req as any).authUser = session;
+  return next();
+});
+
 app.use('/api/tts', ttsRouter);
 
 let cachedFonts: string[] | null = null;
@@ -173,6 +286,12 @@ try {
   db = new SQL.Database();
 }
 
+try {
+  db.run('DELETE FROM sessions WHERE expires_at <= ?', [Date.now()]);
+} catch {
+  // ignore
+}
+
 db.run(
   `CREATE TABLE IF NOT EXISTS pipelines (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -201,6 +320,37 @@ db.run(
     params_json TEXT
   )`
 );
+
+db.run(
+  `CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`
+);
+
+db.run(
+  `CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`
+);
+
+try {
+  db.run('CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at)');
+} catch {
+  // ignore
+}
+
+try {
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users (username)');
+} catch {
+  // ignore
+}
 
 try {
   db.run('ALTER TABLE jobs ADD COLUMN params_json TEXT');
@@ -291,6 +441,41 @@ db.run('DROP TABLE IF EXISTS file_uvr');
 const persistDb = async () => {
   const data = db.export();
   await fs.writeFile(dbPath, Buffer.from(data));
+};
+
+const AUTH_PBKDF2_ITERATIONS = Number(process.env.AUTH_PBKDF2_ITERATIONS ?? 150000);
+const AUTH_PBKDF2_DIGEST = 'sha256';
+const AUTH_PBKDF2_KEYLEN = 32;
+
+const normalizeUsername = (value: string) => value.trim();
+
+const isValidUsername = (value: string) => /^\S{3,64}$/.test(value);
+
+const isValidPassword = (value: string) => value.length >= 6 && value.length <= 128;
+
+const hashPassword = (password: string) => {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto
+    .pbkdf2Sync(password, salt, AUTH_PBKDF2_ITERATIONS, AUTH_PBKDF2_KEYLEN, AUTH_PBKDF2_DIGEST)
+    .toString('hex');
+  return `pbkdf2$${AUTH_PBKDF2_ITERATIONS}$${salt}$${hash}`;
+};
+
+const verifyPassword = (password: string, stored: string) => {
+  const parts = stored.split('$');
+  if (parts.length !== 4) return false;
+  const [scheme, iterRaw, salt, hash] = parts;
+  if (scheme !== 'pbkdf2') return false;
+  const iterations = Number(iterRaw);
+  if (!Number.isFinite(iterations) || iterations <= 0) return false;
+  const derived = crypto
+    .pbkdf2Sync(password, salt, iterations, AUTH_PBKDF2_KEYLEN, AUTH_PBKDF2_DIGEST)
+    .toString('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(derived, 'hex'));
+  } catch {
+    return false;
+  }
 };
 
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
@@ -2404,6 +2589,112 @@ app.get('/api/fonts', async (_req, res) => {
   }
 });
 
+app.post('/api/auth/register', async (req, res) => {
+  if (!REGISTER_MODE) {
+    return res.status(403).json({ ok: false, error: 'Register disabled' });
+  }
+  const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const username = normalizeUsername(rawUsername);
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ ok: false, error: 'Invalid username' });
+  }
+  if (!isValidPassword(password)) {
+    return res.status(400).json({ ok: false, error: 'Invalid password' });
+  }
+
+  const existing = db.exec('SELECT id FROM users WHERE username = ? LIMIT 1', [username]);
+  if (existing[0]?.values?.length) {
+    return res.status(409).json({ ok: false, error: 'Username already exists' });
+  }
+
+  const createdAt = new Date().toISOString();
+  const passwordHash = hashPassword(password);
+  db.run('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)', [
+    username,
+    passwordHash,
+    createdAt
+  ]);
+  const idRow = db.exec('SELECT last_insert_rowid() as id');
+  const id = idRow[0]?.values?.[0]?.[0] ?? null;
+  await persistDb();
+  return res.json({ ok: true, user: { id, username, createdAt } });
+});
+
+app.get('/api/auth/config', (_req, res) => {
+  res.json({ registerEnabled: REGISTER_MODE });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const session = (req as any).authUser as AuthSession | undefined;
+  if (!session) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+  return res.json({
+    ok: true,
+    user: { id: session.userId, username: session.username, createdAt: session.createdAt }
+  });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionId = cookies[AUTH_SESSION_COOKIE];
+  if (sessionId) {
+    sessions.delete(sessionId);
+    try {
+      db.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
+      schedulePersistDb();
+    } catch {
+      // ignore
+    }
+  }
+  clearSessionCookie(res);
+  return res.json({ ok: true });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const username = normalizeUsername(rawUsername);
+  if (!isValidUsername(username) || !password) {
+    return res.status(400).json({ ok: false, error: 'Invalid credentials' });
+  }
+
+  const result = db.exec(
+    'SELECT id, username, password_hash, created_at FROM users WHERE username = ? LIMIT 1',
+    [username]
+  );
+  const row = result[0]?.values?.[0];
+  if (!row) {
+    return res.status(401).json({ ok: false, error: 'Invalid credentials' });
+  }
+  const [id, dbUsername, passwordHash, createdAt] = row as [number, string, string, string];
+  if (!verifyPassword(password, passwordHash)) {
+    return res.status(401).json({ ok: false, error: 'Invalid credentials' });
+  }
+  const sessionId = crypto.randomBytes(24).toString('hex');
+  const createdAtIso = new Date().toISOString();
+  const session = {
+    id: sessionId,
+    userId: id,
+    username: dbUsername,
+    createdAt,
+    expiresAt: Date.now() + AUTH_SESSION_TTL_MS
+  } as AuthSession;
+  sessions.set(sessionId, session);
+  try {
+    db.run(
+      'INSERT OR REPLACE INTO sessions (id, user_id, username, created_at, expires_at) VALUES (?, ?, ?, ?, ?)',
+      [sessionId, id, dbUsername, createdAt, session.expiresAt]
+    );
+    schedulePersistDb();
+  } catch {
+    // ignore
+  }
+  setSessionCookie(res, sessionId);
+  return res.json({ ok: true, user: { id, username: dbUsername, createdAt } });
+});
+
 app.get('/api/pipelines', async (_req, res) => {
   try {
     const result = db.exec('SELECT id, name, graph_json, created_at FROM pipelines ORDER BY id DESC');
@@ -4073,6 +4364,10 @@ app.post('/api/render-preview-v2', async (req, res) => {
     res.setHeader('X-Render-Preview-Error', safe);
   }
   res.send(previewBuf);
+});
+
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Not found' });
 });
 
 app.listen(PORT, () => {
