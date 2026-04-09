@@ -34,7 +34,8 @@ import {
   MousePointer2,
   Menu,
   Save,
-  LogOut
+  LogOut,
+  X
 } from 'lucide-react';
 import { TASK_ICONS, MediaJob, JobStatus } from './types';
 
@@ -1008,10 +1009,17 @@ const RenderStudioPage = lazy(() => import('./RenderStudioPage'));
 
 export default function App() {
   const renderStudioPath = '/render-studio';
-  const buildRenderStudioUrl = (projectId?: string | null, templateId?: string | null) => {
+  const buildRenderStudioUrl = (
+    projectId?: string | null,
+    templateId?: string | null,
+    pipelineId?: string | null,
+    projectName?: string | null
+  ) => {
     const params = new URLSearchParams();
-    if (projectId) params.set('project', projectId);
+    if (projectName) params.set('project', projectName);
+    if (projectId) params.set('projectId', projectId);
     if (templateId && templateId !== 'custom') params.set('template', templateId);
+    if (pipelineId) params.set('pipeline', pipelineId);
     const query = params.toString();
     return `${renderStudioPath}${query ? `?${query}` : ''}`;
   };
@@ -1198,6 +1206,8 @@ export default function App() {
   });
   const renderStudioReturnPathRef = useRef('/dashboard');
   const renderStudioQueryAppliedRef = useRef(false);
+  const renderStudioPendingProjectIdRef = useRef<string | null>(null);
+  const renderStudioPendingProjectNameRef = useRef<string | null>(null);
   const [renderPresetSaveMenuOpen, setRenderPresetSaveMenuOpen] = useState(false);
   const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
   const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(false);
@@ -1409,6 +1419,13 @@ export default function App() {
   const runPipelineHasRender = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
     ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'render'
     : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'render'));
+  const renderPipelineId = useMemo(() => {
+    const taskId = `${TASK_PIPELINE_PREFIX}render`;
+    const taskEntry = pipelineLibrary.find(item => item.id === taskId);
+    if (taskEntry) return taskEntry.id;
+    const saved = pipelineLibrary.find(item => item.primaryType === 'render');
+    return saved?.id ?? null;
+  }, [pipelineLibrary]);
   const renderSelectedInputs = runPipelineProject?.files.filter(file => renderInputFileIds.includes(file.id)) ?? [];
   const renderReady = (() => {
     if (renderConfigV2Override && runPipelineProject) {
@@ -1839,7 +1856,16 @@ export default function App() {
         const currentPath = window.location.pathname;
         if (currentPath !== renderStudioPath) {
           renderStudioReturnPathRef.current = currentPath;
-          window.history.pushState({}, '', buildRenderStudioUrl(runPipelineProjectId, runPipelineRenderTemplateId));
+          window.history.pushState(
+            {},
+            '',
+            buildRenderStudioUrl(
+              runPipelineProjectId,
+              runPipelineRenderTemplateId,
+              runPipelineId,
+              runPipelineProject?.name ?? null
+            )
+          );
         }
       } else {
         const target = renderStudioReturnPathRef.current || '/dashboard';
@@ -1850,6 +1876,8 @@ export default function App() {
     }
     if (!open) {
       renderStudioQueryAppliedRef.current = false;
+      renderStudioPendingProjectIdRef.current = null;
+      renderStudioPendingProjectNameRef.current = null;
     }
     setShowRenderStudio(open);
   };
@@ -1898,21 +1926,72 @@ export default function App() {
     if (typeof window === 'undefined') return;
     if (renderStudioQueryAppliedRef.current) return;
     const params = new URLSearchParams(window.location.search);
-    const projectId = params.get('project');
+    const projectId = params.get('projectId');
+    const projectName = params.get('project');
     const templateId = params.get('template');
-    if (projectId) {
-      setRunPipelineProjectId(projectId);
-    }
+    const pipelineId = params.get('pipeline');
+    if (projectId) renderStudioPendingProjectIdRef.current = projectId;
+    if (projectName) renderStudioPendingProjectNameRef.current = projectName;
     if (templateId) {
       setRunPipelineRenderTemplateId(templateId);
+    }
+    if (pipelineId) {
+      setRunPipelineId(pipelineId);
     }
     renderStudioQueryAppliedRef.current = true;
   }, [authUser, showRenderStudio]);
 
   useEffect(() => {
     if (!authUser || !showRenderStudio) return;
+    const pendingId = renderStudioPendingProjectIdRef.current;
+    const pendingName = renderStudioPendingProjectNameRef.current;
+    if (!pendingId && !pendingName) return;
+    const matchById = pendingId
+      ? vaultFolders.find(folder => folder.id === pendingId)
+      : null;
+    if (matchById) {
+      setRunPipelineProjectId(matchById.id);
+      renderStudioPendingProjectIdRef.current = null;
+      renderStudioPendingProjectNameRef.current = null;
+      return;
+    }
+    const matchByLegacyId = pendingName
+      ? vaultFolders.find(folder => folder.id === pendingName)
+      : null;
+    if (matchByLegacyId) {
+      setRunPipelineProjectId(matchByLegacyId.id);
+      renderStudioPendingProjectIdRef.current = null;
+      renderStudioPendingProjectNameRef.current = null;
+      return;
+    }
+    if (pendingName) {
+      const lowered = pendingName.trim().toLowerCase();
+      const matchByName = vaultFolders.find(folder => folder.name.toLowerCase() === lowered);
+      if (matchByName) {
+        setRunPipelineProjectId(matchByName.id);
+        renderStudioPendingProjectIdRef.current = null;
+        renderStudioPendingProjectNameRef.current = null;
+      }
+    }
+  }, [authUser, showRenderStudio, vaultFolders]);
+
+  useEffect(() => {
+    if (!authUser || !showRenderStudio) return;
+    if (runPipelineHasRender) return;
+    if (!renderPipelineId) return;
+    if (runPipelineId === renderPipelineId) return;
+    setRunPipelineId(renderPipelineId);
+  }, [authUser, showRenderStudio, runPipelineHasRender, renderPipelineId, runPipelineId]);
+
+  useEffect(() => {
+    if (!authUser || !showRenderStudio) return;
     if (typeof window === 'undefined') return;
-    const nextUrl = buildRenderStudioUrl(runPipelineProjectId, runPipelineRenderTemplateId);
+    const nextUrl = buildRenderStudioUrl(
+      runPipelineProjectId,
+      runPipelineRenderTemplateId,
+      runPipelineId,
+      runPipelineProject?.name ?? null
+    );
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     if (currentUrl !== nextUrl) {
       window.history.replaceState({}, '', nextUrl);
@@ -5336,6 +5415,48 @@ export default function App() {
   }
 
   if (authUser && showRenderStudio) {
+    if (vaultLoading || runPipelineLoading || pipelineLibrary.length === 0 || (!hasLoadedOnce && vaultFolders.length === 0)) {
+      return (
+        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+          <div className="text-sm text-zinc-400">Loading project...</div>
+        </div>
+      );
+    }
+
+    if (vaultFolders.length === 0) {
+      return (
+        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <div className="text-sm text-zinc-400">No projects available.</div>
+            <button
+              type="button"
+              onClick={() => setRenderStudioOpen(false)}
+              className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (!runPipelineProject) {
+      return (
+        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <div className="text-sm text-zinc-400">Select a project to continue.</div>
+            <button
+              type="button"
+              onClick={() => setRenderStudioOpen(false)}
+              className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (!runPipelineHasRender) {
       return (
         <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
@@ -5463,18 +5584,6 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors">
-              <Filter size={18} />
-              Filter
-            </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
-            >
-              <LogOut size={18} />
-              Logout
-            </button>
             <button 
               onClick={() => {
                 setRunPipelineProjectLocked(false);
@@ -5482,9 +5591,19 @@ export default function App() {
                 resetDownloadForm();
                 setShowRunPipeline(true);
               }}
+              title="+ New Job"
               className="flex items-center gap-2 px-4 py-2 bg-lime-500 text-zinc-950 rounded-lg font-bold text-sm hover:bg-lime-400 transition-colors shadow-lg shadow-lime-500/10"
             >
-              Run Pipeline
+              + New Job
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Logout"
+              className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
+              aria-label="Logout"
+            >
+              <LogOut size={18} />
             </button>
           </div>
         </header>
@@ -7258,16 +7377,35 @@ export default function App() {
                 }} />
               <div className="relative w-[min(700px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 shadow-2xl overflow-y-auto">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs text-zinc-500 uppercase tracking-widest">Run Pipeline</div>
-                  <button
-                    onClick={() => {
-                      setShowRunPipeline(false);
-                    setRenderStudioOpen(false);
-                    }}
-                    className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                  >
-                    Close
-                  </button>
+                  <div className="text-xs text-zinc-500 uppercase tracking-widest">New Job</div>
+                  <div className="flex items-center gap-2">
+                    {runPipelineHasRender && (
+                      <button
+                        onClick={() => setRenderStudioOpen(true)}
+                        disabled={!runPipelineProject}
+                        className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Preview
+                      </button>
+                    )}
+                    <button
+                      onClick={runPipelineJob}
+                      disabled={runPipelineSubmitting}
+                      className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {runPipelineSubmitting ? 'Queuing...' : 'Run'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowRunPipeline(false);
+                        setRenderStudioOpen(false);
+                      }}
+                      className="p-2 text-zinc-400 hover:text-zinc-100 border border-zinc-800 rounded-lg hover:border-zinc-700"
+                      aria-label="Close"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
@@ -8128,22 +8266,6 @@ export default function App() {
                     {downloadAnalyzeLoading ? 'Analyzing...' : 'Analyze URL'}
                   </button>
                 )}
-                {runPipelineHasRender && (
-                  <button
-                    onClick={() => setRenderStudioOpen(true)}
-                    disabled={!runPipelineProject}
-                    className="w-full px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300"
-                  >
-                    Preview
-                  </button>
-                )}
-                <button
-                  onClick={runPipelineJob}
-                  disabled={runPipelineSubmitting}
-                  className="w-full px-3 py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {runPipelineSubmitting ? 'Queuing...' : 'Run'}
-                </button>
               </div>
             </div>
           )}
