@@ -289,33 +289,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                     <div
                       role="button"
                       tabIndex={0}
-                      aria-expanded={renderStudioLeftMenuOpen}
-                      onClick={() => setRenderStudioLeftMenuOpen(prev => !prev)}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          setRenderStudioLeftMenuOpen(prev => !prev);
-                        }
-                      }}
-                      className="flex items-center justify-between text-[11px] text-zinc-400 uppercase tracking-widest cursor-pointer hover:text-zinc-200 transition-colors"
-                    >
-                      <span>Menu</span>
-                      <button
-                        type="button"
-                        onClick={event => {
-                          event.stopPropagation();
-                          setRenderStudioLeftMenuOpen(prev => !prev);
-                        }}
-                        className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
-                      >
-                        <Menu size={12} />
-                      </button>
-                    </div>
-                    {renderStudioLeftMenuOpen && (
-                      <>
-                    <div
-                      role="button"
-                      tabIndex={0}
                       aria-expanded={renderStudioMediaBinOpen}
                       onClick={() => setRenderStudioMediaBinOpen(prev => !prev)}
                       onKeyDown={event => {
@@ -426,63 +399,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           <div className="text-[11px] text-zinc-500">No files</div>
                         )}
                       </div>
-                    )}
-
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      aria-expanded={renderStudioProjectOpen}
-                      onClick={() => setRenderStudioProjectOpen(prev => !prev)}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          setRenderStudioProjectOpen(prev => !prev);
-                        }
-                      }}
-                      className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest pt-2 border-t border-zinc-800/60 cursor-pointer hover:text-zinc-300 transition-colors"
-                    >
-                      <span>Timeline</span>
-                      <button
-                        type="button"
-                        onClick={event => {
-                          event.stopPropagation();
-                          setRenderStudioProjectOpen(prev => !prev);
-                        }}
-                        className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
-                      >
-                        <Menu size={12} />
-                      </button>
-                    </div>
-                    {renderStudioProjectOpen && (
-                      <button
-                        type="button"
-                        onClick={selectProjectDefaults}
-                        className={`rounded-xl border bg-zinc-950/40 p-3 text-[11px] text-zinc-400 flex flex-col gap-2 text-left hover:border-zinc-700 ${
-                          renderStudioFocus === 'timeline' ? 'border-lime-500/50' : 'border-zinc-800'
-                        }`}
-                      >
-                        <div className="text-[10px] uppercase tracking-widest text-zinc-500">Timeline</div>
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-1 text-zinc-300">
-                            <FileVideo size={12} />
-                            <span>{renderVideoFile ? 1 : 0}</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-zinc-300">
-                            <FileAudio size={12} />
-                            <span>{renderAudioFile ? 1 : 0}</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-zinc-300">
-                            <Type size={12} />
-                            <span>{renderSubtitleFile ? 1 : 0}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between text-zinc-300 pt-1 border-t border-zinc-800/60">
-                          <span>Duration</span>
-                          <span>{formatDuration(renderTimelineDuration) ?? '00:00'}</span>
-                        </div>
-                      </button>
-                    )}
-                      </>
                     )}
                   </div>
 

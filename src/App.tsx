@@ -1210,7 +1210,7 @@ export default function App() {
   const renderStudioPendingProjectNameRef = useRef<string | null>(null);
   const [renderPresetSaveMenuOpen, setRenderPresetSaveMenuOpen] = useState(false);
   const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
-  const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(false);
+  const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(true);
   const [renderStudioProjectOpen, setRenderStudioProjectOpen] = useState(false);
   const [renderStudioInspectorOpen, setRenderStudioInspectorOpen] = useState<
     Record<'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'effects' | 'image', boolean>
