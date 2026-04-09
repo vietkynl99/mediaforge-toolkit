@@ -4315,6 +4315,37 @@ export default function App() {
       }
     }
 
+    const renderMeta = jobParams.render ?? {};
+    if (projectMatch) {
+      const renderInputPaths = Array.isArray(renderMeta.inputPaths)
+        ? renderMeta.inputPaths.filter((value: unknown) => typeof value === 'string')
+        : [];
+      if (renderInputPaths.length > 0) {
+        const nextIds = renderInputPaths
+          .map(path => projectMatch?.files.find(file => file.relativePath === path)?.id)
+          .filter((value): value is string => Boolean(value));
+        setRenderInputFileIds(nextIds);
+      } else {
+        setRenderInputFileIds([]);
+      }
+
+      const renderVideoPath = typeof renderMeta.videoPath === 'string' ? renderMeta.videoPath : undefined;
+      const renderAudioPath = typeof renderMeta.audioPath === 'string' ? renderMeta.audioPath : undefined;
+      const renderSubtitlePath = typeof renderMeta.subtitlePath === 'string' ? renderMeta.subtitlePath : undefined;
+      if (renderVideoPath) {
+        const match = projectMatch.files.find(file => file.relativePath === renderVideoPath);
+        if (match) setRenderVideoId(match.id);
+      }
+      if (renderAudioPath) {
+        const match = projectMatch.files.find(file => file.relativePath === renderAudioPath);
+        if (match) setRenderAudioId(match.id);
+      }
+      if (renderSubtitlePath) {
+        const match = projectMatch.files.find(file => file.relativePath === renderSubtitlePath);
+        if (match) setRenderSubtitleId(match.id);
+      }
+    }
+
     if (job.tasks.some(task => task.type.startsWith('download'))) {
       const url = jobParams.download?.url || (typeof jobAny.__downloadUrl === 'string' ? jobAny.__downloadUrl : job.fileName);
       setDownloadUrl(url || '');
@@ -4974,10 +5005,16 @@ export default function App() {
         const audioFile = runPipelineProject?.files.find(file => file.id === renderAudioId);
         const subtitleFile = runPipelineProject?.files.find(file => file.id === renderSubtitleId);
         const { w: playResX, h: playResY } = parseResolution(renderParams.timeline.resolution);
+        const renderInputPaths = runPipelineProject?.files
+          .filter(file => renderInputFileIds.includes(file.id))
+          .map(file => file.relativePath) ?? [];
         pipelinePayload.inputPath = videoFile?.relativePath ?? pipelinePayload.inputPath;
         pipelinePayload.videoPath = videoFile?.relativePath;
         pipelinePayload.audioPath = audioFile?.relativePath;
         pipelinePayload.subtitlePath = subtitleFile?.relativePath;
+        if (renderInputPaths.length > 0) {
+          pipelinePayload.renderInputPaths = renderInputPaths;
+        }
         pipelinePayload.renderParams = {
           timeline: {
             framerate: coerceNumber(renderParams.timeline.framerate, 30),

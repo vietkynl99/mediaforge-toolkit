@@ -3104,6 +3104,12 @@ app.post('/api/jobs/run', async (req, res) => {
   const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
   const ttsVolume = typeof req.body?.volume === 'number' ? req.body.volume : undefined;
   const renderConfigV2 = req.body?.renderConfigV2 as RenderConfigV2 | undefined;
+  const renderInputPaths = Array.isArray(req.body?.renderInputPaths)
+    ? req.body.renderInputPaths.filter((value: unknown) => typeof value === 'string' && value.trim().length > 0)
+    : undefined;
+  const renderVideoPath = typeof req.body?.videoPath === 'string' ? req.body.videoPath : undefined;
+  const renderAudioPath = typeof req.body?.audioPath === 'string' ? req.body.audioPath : undefined;
+  const renderSubtitlePath = typeof req.body?.subtitlePath === 'string' ? req.body.subtitlePath : undefined;
   const renderPreviewSecondsRaw = typeof req.body?.renderPreviewSeconds === 'number' ? req.body.renderPreviewSeconds : undefined;
   const renderPreviewSeconds = renderPreviewSecondsRaw !== undefined && Number.isFinite(renderPreviewSecondsRaw) && renderPreviewSecondsRaw > 0
     ? Math.min(3600, Math.round(renderPreviewSecondsRaw * 1000) / 1000)
@@ -3201,6 +3207,13 @@ app.post('/api/jobs/run', async (req, res) => {
         }
       }
 
+      const renderPayload: Record<string, any> = {};
+      if (renderConfigV2) renderPayload.configV2 = renderConfigV2;
+      if (renderInputPaths?.length) renderPayload.inputPaths = renderInputPaths;
+      if (renderVideoPath) renderPayload.videoPath = renderVideoPath;
+      if (renderAudioPath) renderPayload.audioPath = renderAudioPath;
+      if (renderSubtitlePath) renderPayload.subtitlePath = renderSubtitlePath;
+
       job = {
         id: jobId,
         name: pipelineName,
@@ -3235,7 +3248,7 @@ app.post('/api/jobs/run', async (req, res) => {
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
           },
-          render: renderConfigV2 ? { configV2: renderConfigV2 } : undefined
+          render: Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
       if (renderPreviewSeconds && job.params.render) {
@@ -3303,6 +3316,13 @@ app.post('/api/jobs/run', async (req, res) => {
         }
       }
 
+      const renderPayload: Record<string, any> = {};
+      if (renderConfigV2) renderPayload.configV2 = renderConfigV2;
+      if (renderInputPaths?.length) renderPayload.inputPaths = renderInputPaths;
+      if (renderVideoPath) renderPayload.videoPath = renderVideoPath;
+      if (renderAudioPath) renderPayload.audioPath = renderAudioPath;
+      if (renderSubtitlePath) renderPayload.subtitlePath = renderSubtitlePath;
+
       job = {
         id: jobId,
         name: pipelineName,
@@ -3331,7 +3351,7 @@ app.post('/api/jobs/run', async (req, res) => {
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
           },
-          render: renderConfigV2 ? { configV2: renderConfigV2 } : undefined
+          render: Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
       if (renderPreviewSeconds && job.params.render) {
