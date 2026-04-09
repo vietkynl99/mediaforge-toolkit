@@ -1306,6 +1306,7 @@ export default function App() {
   const [renderSubtitleCues, setRenderSubtitleCues] = useState<Array<{ start: number; end: number; text: string }>>([]);
   const [renderStudioFocus, setRenderStudioFocus] = useState<'timeline' | 'item'>('timeline');
   const [renderStudioItemType, setRenderStudioItemType] = useState<'video' | 'audio' | 'subtitle' | 'text' | 'image' | null>(null);
+  const [renderStudioPreviewFileId, setRenderStudioPreviewFileId] = useState<string | null>(null);
   const [renderTimelineViewportWidth, setRenderTimelineViewportWidth] = useState(0);
   const renderTimelineScrollRef = useRef<HTMLDivElement | null>(null);
   const prevShowRenderStudioForZoomRef = useRef(false);
@@ -4225,6 +4226,29 @@ export default function App() {
     setRenderStudioItemType(null);
   };
 
+  const previewRenderStudioMediaBinFile = (file: VaultFile) => {
+    if (!file || !file.id) return;
+    if (file.type === 'video') {
+      setRenderVideoId(file.id);
+      setRenderStudioItemType('video');
+      setRenderStudioPreviewFileId(file.id);
+    } else if (file.type === 'audio') {
+      setRenderAudioId(file.id);
+      setRenderStudioItemType('audio');
+      setRenderStudioPreviewFileId(file.id);
+    } else if (file.type === 'subtitle') {
+      setRenderSubtitleId(file.id);
+      setRenderStudioItemType('subtitle');
+      setRenderStudioPreviewFileId(file.id);
+    } else if (file.type === 'image') {
+      setRenderStudioItemType('image');
+      setRenderStudioPreviewFileId(file.id);
+    } else {
+      return;
+    }
+    setRenderStudioFocus('item');
+  };
+
   const renderStudioContextMenus = (
     <>
       {renderStudioMediaBinContextMenu.open && renderStudioMediaBinContextMenu.file && (
@@ -4234,6 +4258,18 @@ export default function App() {
             style={{ top: renderStudioMediaBinContextMenu.y, left: renderStudioMediaBinContextMenu.x }}
             onClick={(event) => event.stopPropagation()}
           >
+            <button
+              className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+              onClick={() => {
+                previewRenderStudioMediaBinFile(renderStudioMediaBinContextMenu.file as VaultFile);
+                closeRenderStudioMediaBinContextMenu();
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <MousePointer2 size={12} />
+                Preview file
+              </span>
+            </button>
             {!renderInputFileIds.includes(renderStudioMediaBinContextMenu.file.id) && (
               <button
                 className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
@@ -5344,6 +5380,8 @@ export default function App() {
     setRenderStudioFocus,
     renderStudioItemType,
     setRenderStudioItemType,
+    renderStudioPreviewFileId,
+    setRenderStudioPreviewFileId,
     openRenderStudioMediaBinContextMenu,
     openRenderStudioTimelineContextMenu,
     renderInputFileIds,

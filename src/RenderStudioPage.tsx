@@ -30,6 +30,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     setRenderStudioFocus,
     renderStudioItemType,
     setRenderStudioItemType,
+    renderStudioPreviewFileId,
+    setRenderStudioPreviewFileId,
     openRenderStudioMediaBinContextMenu,
     openRenderStudioTimelineContextMenu,
     renderInputFileIds,
@@ -178,6 +180,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     }
   };
   const renderTextTrackHeight = 24;
+  const previewImageFile = renderStudioPreviewFileId && runPipelineProject
+    ? runPipelineProject.files.find(file => file.id === renderStudioPreviewFileId && file.type === 'image')
+    : renderImageFiles[0];
+  const previewSubtitleFile = renderStudioPreviewFileId && runPipelineProject
+    ? runPipelineProject.files.find(file => file.id === renderStudioPreviewFileId && file.type === 'subtitle')
+    : renderSubtitleFile;
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('image:') ? 'image'
       : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
@@ -345,26 +353,18 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         const onClick = isVideo
                           ? () => {
                             setRenderVideoId(file.id);
-                            setRenderStudioFocus('item');
-                            setRenderStudioItemType('video');
                           }
                           : isAudio
                             ? () => {
                               setRenderAudioId(file.id);
-                              setRenderStudioFocus('item');
-                              setRenderStudioItemType('audio');
                             }
                             : isSubtitle
                               ? () => {
                                 setRenderSubtitleId(file.id);
-                                setRenderStudioFocus('item');
-                                setRenderStudioItemType('subtitle');
                               }
                               : isImage
                                 ? () => {
                                   setSelectedTrackKey(`image:${file.id}`);
-                                  setRenderStudioFocus('item');
-                                  setRenderStudioItemType('image');
                                 }
                                 : undefined;
                         const onContextMenu = onClick
@@ -434,6 +434,21 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                     </div>
                       <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
                         <div className="min-h-[180px] flex-1 rounded-2xl border border-zinc-800 bg-[radial-gradient(circle_at_top,#1f2937_0%,#0b0f12_55%,#050607_100%)] flex items-center justify-center text-zinc-400 text-sm overflow-hidden relative">
+                          {renderStudioFocus === 'item' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRenderStudioFocus('timeline');
+                                setRenderStudioItemType(null);
+                                setRenderStudioPreviewFileId(null);
+                                setRenderPreviewHold(false);
+                              }}
+                              className="absolute top-3 right-3 z-10 inline-flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-950/80 px-3 py-1.5 text-[11px] text-zinc-200 hover:border-lime-500/60 hover:text-lime-200 transition-colors"
+                            >
+                              <MousePointer2 size={12} />
+                              Preview timeline
+                            </button>
+                          )}
                           {renderStudioFocus === 'item' && renderStudioItemType === 'video' && renderVideoFile?.relativePath ? (
                             canBrowserPlayVideo(getVideoMimeType(renderVideoFile.name)) ? (
                               <video
@@ -467,6 +482,26 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               >
                                 <source src={`/api/vault/stream?path=${encodeURIComponent(renderAudioFile.relativePath)}`} />
                               </audio>
+                            </div>
+                          ) : renderStudioFocus === 'item' && renderStudioItemType === 'image' ? (
+                            previewImageFile?.relativePath ? (
+                              <img
+                                src={`/api/vault/stream?path=${encodeURIComponent(previewImageFile.relativePath)}`}
+                                alt={previewImageFile.name ?? 'Image preview'}
+                                className="w-full h-full object-contain bg-black"
+                                draggable={false}
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center gap-2 text-sm text-zinc-400 text-center">
+                                <Image size={22} className="text-zinc-500" />
+                                <div>No image selected.</div>
+                              </div>
+                            )
+                          ) : renderStudioFocus === 'item' && renderStudioItemType === 'subtitle' ? (
+                            <div className="flex flex-col items-center gap-2 text-sm text-zinc-400 text-center px-6">
+                              <Type size={22} className="text-zinc-500" />
+                              <div>{previewSubtitleFile?.name ?? 'Subtitle preview'}</div>
+                              <div className="text-[11px] text-zinc-500">Use timeline preview to see subtitles over video.</div>
                             </div>
                           ) : renderPreviewUrl ? (
                             <img
