@@ -4225,6 +4225,68 @@ export default function App() {
     setRenderStudioItemType(null);
   };
 
+  const renderStudioContextMenus = (
+    <>
+      {renderStudioMediaBinContextMenu.open && renderStudioMediaBinContextMenu.file && (
+        <div className="fixed inset-0 z-[70]" onClick={closeRenderStudioMediaBinContextMenu}>
+          <div
+            className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[190px]"
+            style={{ top: renderStudioMediaBinContextMenu.y, left: renderStudioMediaBinContextMenu.x }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {!renderInputFileIds.includes(renderStudioMediaBinContextMenu.file.id) && (
+              <button
+                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                onClick={() => {
+                  addRenderStudioFileToTimeline(renderStudioMediaBinContextMenu.file as VaultFile);
+                  closeRenderStudioMediaBinContextMenu();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <Plus size={12} />
+                  Add to timeline
+                </span>
+              </button>
+            )}
+            {renderInputFileIds.includes(renderStudioMediaBinContextMenu.file.id) && (
+              <div className="px-3 py-2 text-left text-xs text-zinc-500 flex items-center gap-2">
+                <CheckCircle2 size={12} />
+                Already in timeline
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {renderStudioTimelineContextMenu.open && renderStudioTimelineContextMenu.track && (
+        <div className="fixed inset-0 z-[70]" onClick={closeRenderStudioTimelineContextMenu}>
+          <div
+            className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[190px]"
+            style={{ top: renderStudioTimelineContextMenu.y, left: renderStudioTimelineContextMenu.x }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
+              onClick={() => {
+                removeRenderStudioTrackFromTimeline(renderStudioTimelineContextMenu.track as {
+                  type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect';
+                  id?: string;
+                  index?: number;
+                });
+                closeRenderStudioTimelineContextMenu();
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <Trash2 size={12} />
+                Remove from timeline
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   const downloadVaultFile = (file: VaultFile) => {
     if (!file.relativePath) return;
     const link = document.createElement('a');
@@ -5517,15 +5579,18 @@ export default function App() {
     }
 
     return (
-      <Suspense
-        fallback={(
-          <div className="fixed inset-0 z-[60] bg-zinc-950 flex items-center justify-center">
-            <div className="text-xs text-zinc-400">Loading Render Studio...</div>
-          </div>
-        )}
-      >
-        <RenderStudioPage {...renderStudioProps} />
-      </Suspense>
+      <>
+        <Suspense
+          fallback={(
+            <div className="fixed inset-0 z-[60] bg-zinc-950 flex items-center justify-center">
+              <div className="text-xs text-zinc-400">Loading Render Studio...</div>
+            </div>
+          )}
+        >
+          <RenderStudioPage {...renderStudioProps} />
+        </Suspense>
+        {renderStudioContextMenus}
+      </>
     );
   }
 
@@ -8554,64 +8619,7 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {renderStudioMediaBinContextMenu.open && renderStudioMediaBinContextMenu.file && (
-            <div className="fixed inset-0 z-[70]" onClick={closeRenderStudioMediaBinContextMenu}>
-              <div
-                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[190px]"
-                style={{ top: renderStudioMediaBinContextMenu.y, left: renderStudioMediaBinContextMenu.x }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                {!renderInputFileIds.includes(renderStudioMediaBinContextMenu.file.id) && (
-                  <button
-                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                    onClick={() => {
-                      addRenderStudioFileToTimeline(renderStudioMediaBinContextMenu.file as VaultFile);
-                      closeRenderStudioMediaBinContextMenu();
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Plus size={12} />
-                      Add to timeline
-                    </span>
-                  </button>
-                )}
-                {renderInputFileIds.includes(renderStudioMediaBinContextMenu.file.id) && (
-                  <div className="px-3 py-2 text-left text-xs text-zinc-500 flex items-center gap-2">
-                    <CheckCircle2 size={12} />
-                    Already in timeline
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {renderStudioTimelineContextMenu.open && renderStudioTimelineContextMenu.track && (
-            <div className="fixed inset-0 z-[70]" onClick={closeRenderStudioTimelineContextMenu}>
-              <div
-                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[190px]"
-                style={{ top: renderStudioTimelineContextMenu.y, left: renderStudioTimelineContextMenu.x }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
-                  onClick={() => {
-                    removeRenderStudioTrackFromTimeline(renderStudioTimelineContextMenu.track as {
-                      type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect';
-                      id?: string;
-                      index?: number;
-                    });
-                    closeRenderStudioTimelineContextMenu();
-                  }}
-                >
-                  <span className="flex items-center gap-2">
-                    <Trash2 size={12} />
-                    Remove from timeline
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
+          {showRenderStudio && renderStudioContextMenus}
         </div>
       </main>
     </div>
