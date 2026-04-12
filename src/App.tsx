@@ -494,6 +494,15 @@ const normalizeLoadedRenderEffects = (raw: unknown): RenderBlurRegionEffect[] | 
   return out;
 };
 
+const normalizeItemEffects = (effects: Array<{ type: string; params?: Record<string, unknown> }> | undefined) => {
+  if (!Array.isArray(effects) || effects.length === 0) return undefined;
+  const flattened = effects.map(effect => ({
+    type: effect.type,
+    ...(effect.params ?? {})
+  }));
+  return normalizeLoadedRenderEffects(flattened);
+};
+
 const StatusBadge = ({ status }: { status: JobStatus }) => {
   const configs = {
     queued: { icon: Clock, color: 'text-zinc-400 bg-zinc-400/10', label: 'Queued' },
@@ -1274,7 +1283,9 @@ export default function App() {
     maskBottom?: string;
     blurEffects?: RenderBlurRegionEffect[];
   }>>({});
-  const [renderVideoBlurEffects, setRenderVideoBlurEffects] = useState<RenderBlurRegionEffect[]>([]);
+  const [renderVideoTransforms, setRenderVideoTransforms] = useState<Record<string, {
+    blurEffects?: RenderBlurRegionEffect[];
+  }>>({});
   const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
   const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
   const [renderTemplates, setRenderTemplates] = useState<RenderTemplate[]>([]);
@@ -1531,17 +1542,49 @@ export default function App() {
     sigma: 20,
     feather: 0
   });
-  const addRenderVideoBlurEffect = () => {
-    setRenderVideoBlurEffects(prev => [...prev, defaultBlurRegionEffect()]);
+  const addRenderVideoBlurEffect = (fileId: string | null) => {
+    if (!fileId) return;
+    setRenderVideoTransforms(prev => {
+      const current = prev[fileId] ?? {};
+      return {
+        ...prev,
+        [fileId]: {
+          ...current,
+          blurEffects: [...(current.blurEffects ?? []), defaultBlurRegionEffect()]
+        }
+      };
+    });
   };
-  const updateRenderVideoBlurEffect = (index: number, patch: Partial<RenderBlurRegionEffect>) => {
-    setRenderVideoBlurEffects(prev => prev.map((effect, effectIndex) => (
-      effectIndex === index ? { ...effect, ...patch } : effect
-    )));
+  const updateRenderVideoBlurEffect = (fileId: string | null, index: number, patch: Partial<RenderBlurRegionEffect>) => {
+    if (!fileId) return;
+    setRenderVideoTransforms(prev => {
+      const current = prev[fileId] ?? {};
+      const effects = current.blurEffects ?? [];
+      return {
+        ...prev,
+        [fileId]: {
+          ...current,
+          blurEffects: effects.map((effect, effectIndex) => (
+            effectIndex === index ? { ...effect, ...patch } : effect
+          ))
+        }
+      };
+    });
   };
-  const commitRenderVideoBlurEffectValue = (_index: number, _key: keyof RenderBlurRegionEffect) => {};
-  const removeRenderVideoBlurEffect = (index: number) => {
-    setRenderVideoBlurEffects(prev => prev.filter((_, effectIndex) => effectIndex !== index));
+  const commitRenderVideoBlurEffectValue = (_fileId: string | null, _index: number, _key: keyof RenderBlurRegionEffect) => {};
+  const removeRenderVideoBlurEffect = (fileId: string | null, index: number) => {
+    if (!fileId) return;
+    setRenderVideoTransforms(prev => {
+      const current = prev[fileId] ?? {};
+      const effects = current.blurEffects ?? [];
+      return {
+        ...prev,
+        [fileId]: {
+          ...current,
+          blurEffects: effects.filter((_, effectIndex) => effectIndex !== index)
+        }
+      };
+    });
   };
   const addRenderImageBlurEffect = (fileId: string) => {
     if (!fileId) return;
@@ -2547,6 +2590,7 @@ export default function App() {
       try {
         const saved = await saveRenderTemplate({ name: label, config: templateConfig });
         setRenderTemplates(prev => ([saved, ...prev]));
+        setRunPipelineRenderTemplateId(saved.id);
         showToast('Saved render template.', 'success');
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to save template';
@@ -2778,7 +2822,7 @@ export default function App() {
     renderImageOrderIds,
     renderImageDurations,
     renderImageTransforms,
-    renderVideoBlurEffects,
+    renderVideoTransforms,
     renderTrackLabels,
     renderParams.timeline,
     renderParams.video,
@@ -2795,7 +2839,7 @@ export default function App() {
     renderConfigV2Override,
     runPipelineRenderTemplateId,
     renderParams,
-    renderVideoBlurEffects,
+    renderVideoTransforms,
     renderTrackLabels,
     renderImageTransforms,
     renderImageDurations,
@@ -3286,7 +3330,7 @@ export default function App() {
           }
         }
         if (file.type === 'video') {
-          const videoBlurEffects = buildBlurEffectsFromRaw(renderVideoBlurEffects);
+          const videoBlurEffects = buildBlurEffectsFromRaw(renderVideoTransforms[file.id]?.blurEffects);
           if (videoBlurEffects && videoBlurEffects.length > 0) {
             baseItem.effects = videoBlurEffects;
           }
@@ -3490,6 +3534,24 @@ export default function App() {
           maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom
         }
       }));
+    }
+
+    const videoItems = template.config.items.filter(item => item.type === 'video');
+    if (videoItems.length > 0) {
+      setRenderVideoTransforms(prev => {
+        const next = { ...prev };
+        videoItems.forEach(item => {
+          const refKey = item.source?.ref;
+          const targetId = refKey ? mapping[refKey] : null;
+          if (!targetId) return;
+          const blurEffects = normalizeItemEffects(item.effects) ?? [];
+          next[targetId] = {
+            ...(next[targetId] ?? {}),
+            blurEffects
+          };
+        });
+        return next;
+      });
     }
 
     const imageItems = template.config.items.filter(item => item.type === 'image');
@@ -5565,7 +5627,7 @@ export default function App() {
     updateRenderParam,
     renderStudioInspectorOpen,
     setRenderStudioInspectorOpen,
-    renderVideoBlurEffects,
+    renderVideoTransforms,
     addRenderVideoBlurEffect,
     updateRenderVideoBlurEffect,
     commitRenderVideoBlurEffectValue,
@@ -5748,6 +5810,54 @@ export default function App() {
         </Suspense>
         {renderStudioContextMenus}
         {confirmModal}
+        {templateSaveOpen && (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
+            <div className="absolute inset-0" onClick={() => setTemplateSaveOpen(false)} />
+            <div className="relative w-[min(520px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold text-zinc-100">Save Template</div>
+                <button
+                  onClick={() => setTemplateSaveOpen(false)}
+                  className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="text-xs text-zinc-500">
+                {templateSaveTaskType === 'render' ? 'Save Render template (inputs will be placeholders).' : 'Save task template.'}
+              </div>
+              {templateSaveError && (
+                <div className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-lg px-2.5 py-2">
+                  {templateSaveError}
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <label className="text-xs text-zinc-500 uppercase tracking-widest">Template Name</label>
+                <input
+                  value={templateSaveName}
+                  onChange={e => setTemplateSaveName(e.target.value)}
+                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none"
+                  placeholder="My template"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={() => setTemplateSaveOpen(false)}
+                  className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmSaveTemplate}
+                  disabled={Boolean(templateSaveError)}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     );
   }

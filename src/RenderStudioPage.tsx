@@ -95,7 +95,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     commitRenderParamDraftOnEnter,
     updateRenderParam,
     setRenderStudioInspectorOpen,
-    renderVideoBlurEffects,
+    renderVideoTransforms,
     addRenderVideoBlurEffect,
     updateRenderVideoBlurEffect,
     commitRenderVideoBlurEffectValue,
@@ -132,6 +132,10 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const [selectedTrackKey, setSelectedTrackKey] = React.useState<string | null>(null);
   const timelineScrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const selectedImageId = selectedTrackKey?.startsWith('image:') ? selectedTrackKey.slice('image:'.length) : null;
+  const activeVideoId = renderVideoId ?? null;
+  const renderVideoBlurEffects = activeVideoId
+    ? (renderVideoTransforms?.[activeVideoId]?.blurEffects ?? [])
+    : [];
   const imageInspectorFiles = selectedImageId
     ? renderImageFiles.filter(file => file.id === selectedImageId)
     : renderImageFiles;
@@ -1693,7 +1697,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur</div>
                                       <button
                                         type="button"
-                                        onClick={addRenderVideoBlurEffect}
+                                        onClick={() => addRenderVideoBlurEffect(activeVideoId)}
                                         className="text-[10px] rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:border-zinc-600"
                                       >
                                         + Blur region
@@ -1709,7 +1713,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               <span className="text-[10px] uppercase tracking-widest text-zinc-500">Region #{idx + 1}</span>
                                               <button
                                                 type="button"
-                                                onClick={() => removeRenderVideoBlurEffect(idx)}
+                                                onClick={() => removeRenderVideoBlurEffect(activeVideoId, idx)}
                                                 className="text-[10px] text-red-400 hover:text-red-300"
                                               >
                                                 Remove
@@ -1725,12 +1729,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                   max="100"
                                                   value={effect.left}
                                                   onFocus={holdPreview}
-                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'left'))}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'left'))}
                                                   onChange={e => {
                                                     const v = coerceNumber(e.target.value, effect.left) ?? effect.left;
-                                                    updateRenderVideoBlurEffect(idx, { left: v });
+                                                    updateRenderVideoBlurEffect(activeVideoId, idx, { left: v });
                                                   }}
-                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'left'))}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'left'))}
                                                   className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                                 />
                                               </div>
@@ -1743,12 +1747,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                   max="100"
                                                   value={effect.right}
                                                   onFocus={holdPreview}
-                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'right'))}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'right'))}
                                                   onChange={e => {
                                                     const v = coerceNumber(e.target.value, effect.right) ?? effect.right;
-                                                    updateRenderVideoBlurEffect(idx, { right: v });
+                                                    updateRenderVideoBlurEffect(activeVideoId, idx, { right: v });
                                                   }}
-                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'right'))}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'right'))}
                                                   className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                                 />
                                               </div>
@@ -1761,12 +1765,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                   max="100"
                                                   value={effect.top}
                                                   onFocus={holdPreview}
-                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'top'))}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'top'))}
                                                   onChange={e => {
                                                     const v = coerceNumber(e.target.value, effect.top) ?? effect.top;
-                                                    updateRenderVideoBlurEffect(idx, { top: v });
+                                                    updateRenderVideoBlurEffect(activeVideoId, idx, { top: v });
                                                   }}
-                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'top'))}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'top'))}
                                                   className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                                 />
                                               </div>
@@ -1779,12 +1783,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                   max="100"
                                                   value={effect.bottom}
                                                   onFocus={holdPreview}
-                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(idx, 'bottom'))}
+                                                  onKeyDown={releasePreviewOnEnter(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'bottom'))}
                                                   onChange={e => {
                                                     const v = coerceNumber(e.target.value, effect.bottom) ?? effect.bottom;
-                                                    updateRenderVideoBlurEffect(idx, { bottom: v });
+                                                    updateRenderVideoBlurEffect(activeVideoId, idx, { bottom: v });
                                                   }}
-                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'bottom'))}
+                                                  onBlur={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'bottom'))}
                                                   className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                                 />
                                               </div>
@@ -1805,10 +1809,10 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                 onChange={e => {
                                                   const v = Number(e.target.value);
                                                   if (!Number.isFinite(v)) return;
-                                                  updateRenderVideoBlurEffect(idx, { sigma: Math.min(80, Math.max(0.5, v)) });
+                                                  updateRenderVideoBlurEffect(activeVideoId, idx, { sigma: Math.min(80, Math.max(0.5, v)) });
                                                 }}
-                                                onMouseUp={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'sigma'))}
-                                                onTouchEnd={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'sigma'))}
+                                                onMouseUp={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'sigma'))}
+                                                onTouchEnd={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'sigma'))}
                                                 className="w-full accent-lime-400 cursor-pointer"
                                               />
                                             </div>
@@ -1828,12 +1832,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                 onChange={e => {
                                                   const v = Number(e.target.value);
                                                   if (!Number.isFinite(v)) return;
-                                                  updateRenderVideoBlurEffect(idx, {
+                                                  updateRenderVideoBlurEffect(activeVideoId, idx, {
                                                     feather: Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, Math.round(v)))
                                                   });
                                                 }}
-                                                onMouseUp={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'feather'))}
-                                                onTouchEnd={() => releasePreview(() => commitRenderVideoBlurEffectValue(idx, 'feather'))}
+                                                onMouseUp={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'feather'))}
+                                                onTouchEnd={() => releasePreview(() => commitRenderVideoBlurEffectValue(activeVideoId, idx, 'feather'))}
                                                 className="w-full accent-lime-400 cursor-pointer"
                                               />
                                             </div>
