@@ -1286,6 +1286,7 @@ export default function App() {
   const [renderTemplateApplyOpen, setRenderTemplateApplyOpen] = useState(false);
   const [renderTemplateApplyTarget, setRenderTemplateApplyTarget] = useState<RenderTemplate | null>(null);
   const [renderTemplateApplyMap, setRenderTemplateApplyMap] = useState<Record<string, string>>({});
+  const lastAutoTemplateApplyKeyRef = useRef<string | null>(null);
   const [runPipelineRenderTemplateId, setRunPipelineRenderTemplateId] = useState('custom');
   const [templateSaveOpen, setTemplateSaveOpen] = useState(false);
   const [templateSaveTaskType, setTemplateSaveTaskType] = useState<'render' | 'download' | 'uvr' | 'tts'>('render');
@@ -2570,14 +2571,7 @@ export default function App() {
     setTemplateSaveOpen(false);
   };
 
-  const handleRenderTemplateChange = (value: string) => {
-    setRunPipelineRenderTemplateId(value);
-    if (value === 'custom') {
-      setRenderConfigV2Override(null);
-      return;
-    }
-    const template = renderTemplates.find(t => t.id === value);
-    if (!template) return;
+  const buildRenderTemplateApplyMap = (template: RenderTemplate) => {
     const inputs = Object.keys(template.config.inputsMap ?? {});
     const typeOfKey = (key: string) => {
       if (key.startsWith('video')) return 'video';
@@ -2586,16 +2580,6 @@ export default function App() {
       if (key.startsWith('image')) return 'image';
       return null;
     };
-    const templateCounts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
-    let hasUnknownKey = false;
-    inputs.forEach((key) => {
-      const type = typeOfKey(key);
-      if (!type) {
-        hasUnknownKey = true;
-        return;
-      }
-      templateCounts[type] += 1;
-    });
     const availableFiles = runPipelineProject?.files ?? [];
     const filesByType = {
       video: availableFiles.filter(file => file.type === 'video'),
@@ -2614,10 +2598,44 @@ export default function App() {
         indices[type] += 1;
       }
     });
+    return mapping;
+  };
+
+  const handleRenderTemplateChange = (value: string) => {
+    setRunPipelineRenderTemplateId(value);
+    if (value === 'custom') {
+      setRenderConfigV2Override(null);
+      return;
+    }
+    const template = renderTemplates.find(t => t.id === value);
+    if (!template) return;
+    const mapping = buildRenderTemplateApplyMap(template);
     setRenderTemplateApplyTarget(template);
     setRenderTemplateApplyMap(mapping);
     applyRenderTemplate(template, mapping);
   };
+
+  useEffect(() => {
+    if (!showRenderStudio) return;
+    if (runPipelineRenderTemplateId === 'custom') return;
+    if (renderConfigV2Override) return;
+    if (!runPipelineProject) return;
+    const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
+    if (!template) return;
+    const key = `${runPipelineProject.id}:${template.id}`;
+    if (lastAutoTemplateApplyKeyRef.current === key) return;
+    const mapping = buildRenderTemplateApplyMap(template);
+    setRenderTemplateApplyTarget(template);
+    setRenderTemplateApplyMap(mapping);
+    applyRenderTemplate(template, mapping);
+    lastAutoTemplateApplyKeyRef.current = key;
+  }, [
+    showRenderStudio,
+    runPipelineRenderTemplateId,
+    renderConfigV2Override,
+    runPipelineProject,
+    renderTemplates
+  ]);
 
   const applySubtitleStylePreset = (preset: SubtitleStylePreset) => {
     setRenderParams(prev => ({
@@ -3409,6 +3427,13 @@ export default function App() {
     setRenderTrackLabels(template.config.timeline?.trackLabels ?? {});
     const selectedIds = Object.values(mapping).filter(Boolean);
     setRenderInputFileIds(selectedIds);
+    const imageIdsInOrder = Object.keys(template.config.inputsMap ?? {})
+      .filter(key => key.startsWith('image'))
+      .map(key => mapping[key])
+      .filter((id): id is string => Boolean(id));
+    if (imageIdsInOrder.length > 0) {
+      setRenderImageOrderIds(imageIdsInOrder);
+    }
     const selectedFiles = runPipelineProject?.files.filter(file => selectedIds.includes(file.id)) ?? [];
     const firstVideo = selectedFiles.find(file => file.type === 'video');
     const firstImage = selectedFiles.find(file => file.type === 'image');
@@ -4707,6 +4732,7 @@ export default function App() {
 
   useEffect(() => {
     if (!runPipelineProject || !runPipelineHasRender) return;
+    if (runPipelineRenderTemplateId !== 'custom') return;
     const firstVideo = runPipelineProject.files.find(file => file.type === 'video');
     const firstAudio = runPipelineProject.files.find(file => file.type === 'audio');
     const firstSubtitle = runPipelineProject.files.find(file => file.type === 'subtitle');
@@ -4718,7 +4744,7 @@ export default function App() {
       [firstVideo?.id, firstAudio?.id, firstSubtitle?.id].filter(Boolean) as string[]
     );
     setRenderImageOrderIds(imageIds);
-  }, [runPipelineProject?.id, runPipelineHasRender]);
+  }, [runPipelineProject?.id, runPipelineHasRender, runPipelineRenderTemplateId]);
 
   useEffect(() => {
     setRenderInputFileIds(prev => {
