@@ -1330,7 +1330,7 @@ export default function App() {
     scrollLeft: 0,
     moved: false
   });
-  const [renderParams, setRenderParams] = useState({
+  const DEFAULT_RENDER_PARAMS = {
     timeline: {
       framerate: '30',
       resolution: '1920x1080'
@@ -1373,7 +1373,8 @@ export default function App() {
       gop: '',
       tune: ''
     }
-  });
+  };
+  const [renderParams, setRenderParams] = useState(DEFAULT_RENDER_PARAMS);
   const runAgainPrefillRef = useRef(false);
   const [paramPresets, setParamPresets] = useState<Array<{
     id: number;
@@ -1486,6 +1487,19 @@ export default function App() {
     );
     setRenderStudioFocus('timeline');
     setRenderStudioItemType(null);
+  };
+  const resetRenderToDefault = () => {
+    setRunPipelineRenderTemplateId('custom');
+    setRenderConfigV2Override(null);
+    setRenderTrackLabels({});
+    setRenderImageTransforms({});
+    setRenderVideoTransforms({});
+    setRenderImageDurations({});
+    setRenderImageOrderIds([]);
+    setRenderInputFileIds([]);
+    setRenderTextTrackEnabled(false);
+    setRenderParams(DEFAULT_RENDER_PARAMS);
+    selectProjectDefaults();
   };
   const renderVideoDuration = renderVideoFile?.durationSeconds ?? parseDurationToSeconds(renderVideoFile?.duration);
   const renderAudioDuration = renderAudioFile?.durationSeconds ?? parseDurationToSeconds(renderAudioFile?.duration);

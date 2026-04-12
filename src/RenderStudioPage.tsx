@@ -15,6 +15,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const {
     runPipelineProject,
     selectProjectDefaults,
+    resetRenderToDefault,
     renderReady,
     setShowRenderStudio,
     setActiveTab,
@@ -1155,18 +1156,27 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   type="button"
                                   onClick={() => {
                                     setTemplateMenuOpen(false);
-                                    if (selectedTemplate && !isCustomTemplate) {
-                                      saveRenderTemplateCurrent(selectedTemplate);
-                                    } else {
-                                      saveRenderTemplateQuick();
-                                    }
+                                    resetRenderToDefault();
                                   }}
                                   className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    isCustomTemplate ? 'rounded-t-lg rounded-b-lg' : 'rounded-t-lg'
+                                    isCustomTemplate ? 'rounded-lg' : 'rounded-t-lg'
                                   }`}
                                 >
-                                  Save
+                                  Reset to default
                                 </button>
+                                {!isCustomTemplate && isRenderTemplateDirty && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!selectedTemplate) return;
+                                      setTemplateMenuOpen(false);
+                                      saveRenderTemplateCurrent(selectedTemplate);
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                  >
+                                    Save
+                                  </button>
+                                )}
                                 {!isCustomTemplate && (
                                 <>
                                   <button
