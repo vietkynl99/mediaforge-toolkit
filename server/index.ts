@@ -121,6 +121,7 @@ const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
 const AUTH_SESSION_TTL_MS = Math.max(1, AUTH_SESSION_TTL_DAYS) * 24 * 60 * 60 * 1000;
+const PREVIEW_SEEK_WINDOW_SECONDS = 1;
 
 const app = express();
 const PORT = Number(process.env.VAULT_PORT ?? 3001);
@@ -917,13 +918,27 @@ const buildRenderV2FilterGraph = async (
     : Math.max(defaultDuration, outputDurationFromItems);
 
   const inputArgs: string[] = [];
+  const inputEntries: Array<{
+    type: RenderItemV2['type'];
+    args: string[];
+    item: RenderItemV2;
+    timing?: { start: number; duration: number; trimStart: number };
+  }> = [];
   inputs.forEach(entry => {
+    const args: string[] = [];
+    const timing = itemTiming.find(t => t.entry === entry);
     if (entry.type === 'image') {
-      const timing = itemTiming.find(t => t.entry === entry);
       const duration = timing?.duration ?? outputDuration;
-      inputArgs.push('-loop', '1', '-t', String(duration));
+      args.push('-loop', '1', '-t', String(duration));
     }
-    inputArgs.push('-i', entry.path);
+    args.push('-i', entry.path);
+    inputArgs.push(...args);
+    inputEntries.push({
+      type: entry.type,
+      args,
+      item: entry.item,
+      timing
+    });
   });
 
   const filters: string[] = [];
@@ -1193,6 +1208,7 @@ const buildRenderV2FilterGraph = async (
 
   return {
     inputArgs,
+    inputEntries,
     filterComplex,
     videoLabel: currentVideo,
     audioMap,
@@ -4153,127 +4169,6 @@ const blurFeatherGeqLum = (featherPct: number) => {
   return `255*(1+(${t})-abs(1-(${t})))/2`;
 };
 
-/** Inset % from each edge → crop/overlay; order: effects then subtitles then scale. */
-const buildRenderPreviewFilterComplex = (
-  subtitlePath: string | undefined,
-  effects: BlurRegionEffect[],
-  assOriginalSize?: { w: number; h: number }
-) => {
-  const segments: string[] = [];
-  let current = '0:v';
-
-  effects.forEach((e, index) => {
-    const x = e.left;
-    const y = e.top;
-    const w = 100 - e.left - e.right;
-    const h = 100 - e.top - e.bottom;
-    const main = `mfx${index}`;
-    const tmp = `tfx${index}`;
-    const out = `vfx${index}`;
-    const sigma = e.sigma;
-    const feather = e.feather > 0 ? e.feather : 0;
-    const lumExpr = blurFeatherGeqLum(feather);
-
-    let chain: string;
-    if (!lumExpr) {
-      const bl = `bfx${index}`;
-      chain =
-        `[${current}]split=2[${main}][${tmp}];` +
-        `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,gblur=sigma=${sigma}[${bl}];` +
-        `[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`;
-    } else {
-      const co = `corig${index}`;
-      const cb = `cblur${index}`;
-      const gb = `gbfx${index}`;
-      const mk = `msk${index}`;
-      const pa = `pafx${index}`;
-      const prgb = `prgb${index}`;
-      const mr = `mrgb${index}`;
-      const vor = `vovl${index}`;
-      /**
-       * Blur must stay RGB before alphamerge: yuv420p + alphamerge loses chroma (B&W preview).
-       * bgra → alphamerge → rgba keeps patch color; main must be rgb24 before overlay with rgba,
-       * then yuv420p — overlaying RGBA onto YUV main still drops chroma in some ffmpeg paths.
-       */
-      chain =
-        `[${current}]split=2[${main}][${tmp}];` +
-        `[${main}]format=rgb24[${mr}];` +
-        `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,split=2[${co}][${cb}];` +
-        `[${cb}]gblur=sigma=${sigma},format=bgra[${gb}];` +
-        `[${co}]format=gray,geq=lum='${lumExpr}'[${mk}];` +
-        `[${gb}][${mk}]alphamerge[${pa}];` +
-        `[${pa}]format=rgba[${prgb}];` +
-        `[${mr}][${prgb}]overlay=W*${x}/100:H*${y}/100:format=auto[${vor}];` +
-        `[${vor}]format=yuv420p[${out}]`;
-    }
-    segments.push(chain);
-    current = out;
-  });
-
-  if (subtitlePath) {
-    segments.push(`[${current}]${buildSubtitlesVideoFilter(subtitlePath, assOriginalSize)}[subout]`);
-    current = 'subout';
-  }
-
-  segments.push(`[${current}]scale=720:-1[out]`);
-
-  return segments.join(';');
-};
-
-const runFfmpegFrameAt = async (
-  input: string,
-  output: string,
-  seconds: number,
-  subtitlePath?: string,
-  effects?: BlurRegionEffect[],
-  assOriginalSize?: { w: number; h: number }
-) =>
-  new Promise<void>(async (resolve, reject) => {
-    const ffmpegPath = await getFfmpegPath();
-    const safeSeconds = Math.max(0, seconds);
-    const blurEffects = effects ?? [];
-    const useComplex = blurEffects.length > 0;
-
-    /**
-     * Preview ưu tiên tốc độ, nhưng nếu có subtitle thì phải seek sau input
-     * để PTS khớp thời gian subtitle.
-     */
-    const burnSubs = Boolean(subtitlePath);
-    const args: string[] = ['-y'];
-    if (!burnSubs) {
-      args.push('-ss', safeSeconds.toFixed(3));
-    }
-    args.push('-i', input);
-    if (burnSubs) {
-      args.push('-ss', safeSeconds.toFixed(3));
-    }
-    args.push('-frames:v', '1', '-q:v', '3');
-
-    if (useComplex) {
-      args.push(
-        '-filter_complex',
-        buildRenderPreviewFilterComplex(subtitlePath, blurEffects, assOriginalSize),
-        '-map',
-        '[out]'
-      );
-    } else {
-      const filters: string[] = [];
-      if (subtitlePath) {
-        filters.push(buildSubtitlesVideoFilter(subtitlePath, assOriginalSize));
-      }
-      filters.push('scale=720:-1');
-      args.push('-vf', filters.join(','));
-    }
-    args.push(output);
-
-    const proc = spawn(ffmpegPath, args, { stdio: 'ignore' });
-    proc.on('error', reject);
-    proc.on('close', code => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited with code ${code}`));
-    });
-  });
-
 app.get('/api/vault/thumb', async (req, res) => {
   const relPath = typeof req.query.path === 'string' ? req.query.path : '';
   if (!relPath) {
@@ -4307,109 +4202,6 @@ app.get('/api/vault/thumb', async (req, res) => {
   }
 });
 
-app.get('/api/render-preview', async (req, res) => {
-  const videoRel = typeof req.query.videoPath === 'string' ? req.query.videoPath : '';
-  const subtitleRel = typeof req.query.subtitlePath === 'string' ? req.query.subtitlePath : '';
-  const effectsJson = typeof req.query.effects === 'string' ? req.query.effects : '';
-  const at = typeof req.query.at === 'string' ? Number(req.query.at) : 0;
-  if (!videoRel) {
-    res.status(400).json({ error: 'Missing videoPath' });
-    return;
-  }
-
-  const videoPath = resolveSafePath(videoRel);
-  if (!videoPath || !isVideoFile(videoPath)) {
-    res.status(400).json({ error: 'Invalid video path' });
-    return;
-  }
-
-  let subtitlePath: string | undefined;
-  if (subtitleRel) {
-    const resolved = resolveSafePath(subtitleRel);
-    if (!resolved || !isSubtitleFile(resolved)) {
-      res.status(400).json({ error: 'Invalid subtitle path' });
-      return;
-    }
-    subtitlePath = resolved;
-  }
-
-  let parsedEffects: BlurRegionEffect[] = [];
-  if (effectsJson) {
-    try {
-      const raw = JSON.parse(effectsJson) as unknown;
-      parsedEffects = parseBlurRegionEffects(raw);
-    } catch {
-      res.status(400).json({ error: 'Invalid effects JSON' });
-      return;
-    }
-  }
-
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-preview-'));
-  const outputPath = path.join(tmpDir, 'frame.jpg');
-  const subtitleStyleJson = typeof req.query.subtitleStyle === 'string' ? req.query.subtitleStyle : '';
-  let previewBuf: Buffer = RENDER_PREVIEW_BLACK_JPEG;
-  let previewError: string | null = null;
-  try {
-    let atSeconds = Number.isFinite(at) ? Math.max(0, at) : 0;
-    /** Timeline có thể dài hơn video (audio/sub dài hơn); seek quá cuối file → ffmpeg không tạo frame. */
-    try {
-      const stats = await fs.stat(videoPath);
-      let videoDur = (await getDurationSeconds(videoPath, 'video', stats)) ?? 0;
-      if (videoDur <= 0) {
-        videoDur = await runFfprobe(videoPath).catch(() => 0);
-      }
-      if (videoDur > 0) {
-        const end = Math.max(0, videoDur - 0.05);
-        atSeconds = Math.min(atSeconds, end);
-      }
-    } catch {
-      /* giữ atSeconds */
-    }
-
-    let effectiveSubtitlePath = subtitlePath;
-    let assOriginalSize: { w: number; h: number } | undefined;
-    if (subtitlePath) {
-      let stylePayload: unknown = {};
-      if (subtitleStyleJson.trim()) {
-        try {
-          stylePayload = JSON.parse(subtitleStyleJson) as unknown;
-        } catch {
-          res.status(400).json({ error: 'Invalid subtitleStyle JSON' });
-          return;
-        }
-      }
-      const style = parseAssRenderStyle(stylePayload);
-      const assOut = path.join(tmpDir, 'render-burn.ass');
-      try {
-        await writeStyledAssFile(subtitlePath, style, assOut);
-        effectiveSubtitlePath = assOut;
-        assOriginalSize = { w: style.playResX, h: style.playResY };
-      } catch {
-        /** Không parse được cue (vd. .sub) → dùng file gốc. */
-        effectiveSubtitlePath = subtitlePath;
-      }
-    }
-
-    await runFfmpegFrameAt(videoPath, outputPath, atSeconds, effectiveSubtitlePath, parsedEffects, assOriginalSize);
-    previewBuf = await fs.readFile(outputPath);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Render preview failed';
-    console.error('render-preview: failed', message);
-    previewError = message;
-    previewBuf = RENDER_PREVIEW_BLACK_JPEG;
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
-  }
-
-  res.setHeader('Content-Type', 'image/jpeg');
-  res.setHeader('Cache-Control', 'no-store');
-  if (previewError) {
-    const safe = previewError.replace(/[\r\n]/g, ' ').slice(0, 500);
-    res.setHeader('X-Render-Preview-Error', safe);
-  }
-  res.send(previewBuf);
-});
-
 app.post('/api/render-preview-v2', async (req, res) => {
   const config = req.body?.config as RenderConfigV2 | undefined;
   const at = typeof req.body?.at === 'number' ? req.body.at : 0;
@@ -4430,12 +4222,30 @@ app.post('/api/render-preview-v2', async (req, res) => {
     const ffmpegPath = await getFfmpegPath();
     const hasTimedText = config.items.some(item => item.type === 'subtitle' || item.type === 'text');
     const args: string[] = ['-y'];
-    if (!hasTimedText) {
-      args.push('-ss', String(atSeconds));
-    }
-    args.push(...graph.inputArgs);
+    const inputArgs: string[] = [];
+    graph.inputEntries.forEach(entry => {
+      if (entry.type === 'video') {
+        const start = entry.timing?.start ?? 0;
+        const trimStart = entry.timing?.trimStart ?? 0;
+        let seek = atSeconds - start + trimStart;
+        if (!Number.isFinite(seek)) seek = atSeconds;
+        if (seek < 0) seek = 0;
+        if (hasTimedText) {
+          const coarse = Math.max(0, seek - PREVIEW_SEEK_WINDOW_SECONDS);
+          inputArgs.push('-ss', coarse.toFixed(3));
+        } else {
+          inputArgs.push('-ss', seek.toFixed(3));
+        }
+      }
+      inputArgs.push(...entry.args);
+    });
     if (hasTimedText) {
-      // Accurate seek for subtitles/text to keep PTS aligned.
+      // Keep timestamps so subtitles stay aligned; still seek output for accuracy.
+      args.push('-copyts');
+    }
+    args.push(...inputArgs);
+    if (hasTimedText) {
+      // Accurate seek on output timeline for subtitles/text.
       args.push('-ss', String(atSeconds));
     }
     args.push(
