@@ -1217,6 +1217,7 @@ export default function App() {
   const renderStudioQueryAppliedRef = useRef(false);
   const renderStudioPendingProjectIdRef = useRef<string | null>(null);
   const renderStudioPendingProjectNameRef = useRef<string | null>(null);
+  const lastRenderProjectIdRef = useRef<string | null>(null);
   const [renderPresetSaveMenuOpen, setRenderPresetSaveMenuOpen] = useState(false);
   const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
   const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(true);
@@ -1297,6 +1298,7 @@ export default function App() {
   const [renderTemplateApplyOpen, setRenderTemplateApplyOpen] = useState(false);
   const [renderTemplateApplyTarget, setRenderTemplateApplyTarget] = useState<RenderTemplate | null>(null);
   const [renderTemplateApplyMap, setRenderTemplateApplyMap] = useState<Record<string, string>>({});
+  const [renderTemplateApplyMapById, setRenderTemplateApplyMapById] = useState<Record<string, Record<string, string>>>({});
   const lastAutoTemplateApplyKeyRef = useRef<string | null>(null);
   const [runPipelineRenderTemplateId, setRunPipelineRenderTemplateId] = useState('custom');
   const [templateSaveOpen, setTemplateSaveOpen] = useState(false);
@@ -2509,7 +2511,7 @@ export default function App() {
     const stillMissing = Object.keys(template.config.inputsMap).filter(key => !mapping[key]);
     if (stillMissing.length > 0) {
       setRenderTemplateApplyTarget(template);
-      setRenderTemplateApplyMap(mapping);
+      commitRenderTemplateApplyMap(template.id, mapping);
       setRenderTemplateApplyOpen(true);
       return;
     }
@@ -2645,6 +2647,15 @@ export default function App() {
     return mapping;
   };
 
+  const commitRenderTemplateApplyMap = (templateId: string | null, mapping: Record<string, string>) => {
+    setRenderTemplateApplyMap(mapping);
+    if (!templateId) return;
+    setRenderTemplateApplyMapById(prev => ({
+      ...prev,
+      [templateId]: mapping
+    }));
+  };
+
   const handleRenderTemplateChange = (value: string) => {
     setRunPipelineRenderTemplateId(value);
     if (value === 'custom') {
@@ -2653,9 +2664,9 @@ export default function App() {
     }
     const template = renderTemplates.find(t => t.id === value);
     if (!template) return;
-    const mapping = buildRenderTemplateApplyMap(template);
+    const mapping = renderTemplateApplyMapById[template.id] ?? buildRenderTemplateApplyMap(template);
     setRenderTemplateApplyTarget(template);
-    setRenderTemplateApplyMap(mapping);
+    commitRenderTemplateApplyMap(template.id, mapping);
     applyRenderTemplate(template, mapping);
   };
 
@@ -2668,9 +2679,9 @@ export default function App() {
     if (!template) return;
     const key = `${runPipelineProject.id}:${template.id}`;
     if (lastAutoTemplateApplyKeyRef.current === key) return;
-    const mapping = buildRenderTemplateApplyMap(template);
+    const mapping = renderTemplateApplyMapById[template.id] ?? buildRenderTemplateApplyMap(template);
     setRenderTemplateApplyTarget(template);
-    setRenderTemplateApplyMap(mapping);
+    commitRenderTemplateApplyMap(template.id, mapping);
     applyRenderTemplate(template, mapping);
     lastAutoTemplateApplyKeyRef.current = key;
   }, [
@@ -2678,7 +2689,8 @@ export default function App() {
     runPipelineRenderTemplateId,
     renderConfigV2Override,
     runPipelineProject,
-    renderTemplates
+    renderTemplates,
+    renderTemplateApplyMapById
   ]);
 
   const applySubtitleStylePreset = (preset: SubtitleStylePreset) => {
@@ -4795,6 +4807,19 @@ export default function App() {
   useEffect(() => {
     if (!runPipelineProject || !runPipelineHasRender) return;
     if (runPipelineRenderTemplateId !== 'custom') return;
+    const projectId = runPipelineProject.id;
+    const projectChanged = lastRenderProjectIdRef.current !== projectId;
+    lastRenderProjectIdRef.current = projectId;
+    if (!projectChanged) {
+      const hasExistingSelection = (
+        renderInputFileIds.length > 0
+        || Boolean(renderVideoId)
+        || Boolean(renderAudioId)
+        || Boolean(renderSubtitleId)
+        || renderImageOrderIds.length > 0
+      );
+      if (hasExistingSelection) return;
+    }
     const firstVideo = runPipelineProject.files.find(file => file.type === 'video');
     const firstAudio = runPipelineProject.files.find(file => file.type === 'audio');
     const firstSubtitle = runPipelineProject.files.find(file => file.type === 'subtitle');
@@ -6619,7 +6644,8 @@ export default function App() {
                               <button
                                 onClick={() => {
                                   setRenderTemplateApplyTarget(template);
-                                  setRenderTemplateApplyMap({});
+                                  const mapping = renderTemplateApplyMapById[template.id] ?? {};
+                                  commitRenderTemplateApplyMap(template.id, mapping);
                                   setRenderTemplateApplyOpen(true);
                                 }}
                                 className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
@@ -6721,7 +6747,10 @@ export default function App() {
                             <div className="w-28 text-xs text-zinc-400 font-mono">{key}</div>
                             <select
                               value={renderTemplateApplyMap[key] ?? ''}
-                              onChange={e => setRenderTemplateApplyMap(prev => ({ ...prev, [key]: e.target.value }))}
+                              onChange={e => {
+                                const next = { ...renderTemplateApplyMap, [key]: e.target.value };
+                                commitRenderTemplateApplyMap(renderTemplateApplyTarget?.id ?? null, next);
+                              }}
                               className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                             >
                               <option value="">Select file</option>
@@ -7986,7 +8015,7 @@ export default function App() {
                                                 value={renderTemplateApplyMap[placeholder.key] ?? ''}
                                                 onChange={e => {
                                                   const next = { ...renderTemplateApplyMap, [placeholder.key]: e.target.value };
-                                                  setRenderTemplateApplyMap(next);
+                                                  commitRenderTemplateApplyMap(selectedRenderTemplate?.id ?? null, next);
                                                   if (selectedRenderTemplate) {
                                                     applyRenderTemplate(selectedRenderTemplate, next);
                                                   }
