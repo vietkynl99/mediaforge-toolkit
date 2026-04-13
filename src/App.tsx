@@ -156,6 +156,9 @@ type RenderSubtitleAssState = {
   positionMode: string;
   positionX: string;
   positionY: string;
+  textAutoMoveEnabled?: string;
+  textAutoMoveInterval?: string;
+  textAutoMovePositions?: string;
   singleText?: string;
   singleTextStart?: string;
   singleTextEnd?: string;
@@ -252,6 +255,9 @@ const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
   positionMode: 'anchor',
   positionX: '50',
   positionY: '50',
+  textAutoMoveEnabled: '0',
+  textAutoMoveInterval: '0',
+  textAutoMovePositions: '',
   singleText: '',
   singleTextStart: '0',
   singleTextEnd: ''
@@ -276,8 +282,21 @@ const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
   wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle,
   positionMode: DEFAULT_RENDER_SUBTITLE_ASS.positionMode,
   positionX: DEFAULT_RENDER_SUBTITLE_ASS.positionX,
-  positionY: DEFAULT_RENDER_SUBTITLE_ASS.positionY
+  positionY: DEFAULT_RENDER_SUBTITLE_ASS.positionY,
+  textAutoMoveEnabled: DEFAULT_RENDER_SUBTITLE_ASS.textAutoMoveEnabled,
+  textAutoMoveInterval: DEFAULT_RENDER_SUBTITLE_ASS.textAutoMoveInterval,
+  textAutoMovePositions: DEFAULT_RENDER_SUBTITLE_ASS.textAutoMovePositions
 };
+
+const RENDER_TEXT_PARAM_FIELDS = new Set([
+  'singleText',
+  'singleTextStart',
+  'singleTextEnd',
+  'textOpacity',
+  'textAutoMoveEnabled',
+  'textAutoMoveInterval',
+  'textAutoMovePositions'
+]);
 
 type SubtitleStylePreset = {
   id: string;
@@ -1373,6 +1392,7 @@ export default function App() {
       fadeOut: '0'
     },
     subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
+    text: { ...DEFAULT_RENDER_SUBTITLE_ASS },
     render: {
       codec: 'h264',
       preset: 'fast',
@@ -1510,15 +1530,15 @@ export default function App() {
   };
   const renderVideoDuration = renderVideoFile?.durationSeconds ?? parseDurationToSeconds(renderVideoFile?.duration);
   const renderAudioDuration = renderAudioFile?.durationSeconds ?? parseDurationToSeconds(renderAudioFile?.duration);
-  const singleTextValue = String(renderParams.subtitle.singleText ?? '').trim();
-  const singleTextStart = coerceNumber(renderParams.subtitle.singleTextStart, 0) ?? 0;
+  const singleTextValue = String(renderParams.text.singleText ?? '').trim();
+  const singleTextStart = coerceNumber(renderParams.text.singleTextStart, 0) ?? 0;
   const singleTextFallbackEnd = renderVideoDuration ?? renderAudioDuration ?? 5;
-  const singleTextEnd = coerceNumber(renderParams.subtitle.singleTextEnd, singleTextFallbackEnd) ?? singleTextFallbackEnd;
+  const singleTextEnd = coerceNumber(renderParams.text.singleTextEnd, singleTextFallbackEnd) ?? singleTextFallbackEnd;
   const singleTextDuration = singleTextValue ? Math.max(0.01, singleTextEnd - singleTextStart) : 0;
   const singleTextTrackEnd = singleTextValue ? singleTextStart + singleTextDuration : 0;
   const renderSubtitleDuration = renderSubtitleFile?.durationSeconds
     ?? parseDurationToSeconds(renderSubtitleFile?.duration);
-  const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string, value: any) => {
+  const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string, value: any) => {
     setRenderParams(prev => ({
       ...prev,
       [section]: {
@@ -1534,7 +1554,7 @@ export default function App() {
     setRenderParamsDraft(renderParams);
   }, [renderParams]);
 
-  const updateRenderParamDraft = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string, value: any) => {
+  const updateRenderParamDraft = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string, value: any) => {
     setRenderParamsDraft(prev => ({
       ...prev,
       [section]: {
@@ -1544,12 +1564,12 @@ export default function App() {
     }));
   };
 
-  const commitRenderParamDraftValue = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string) => {
+  const commitRenderParamDraftValue = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string) => {
     const value = (renderParamsDraft as any)?.[section]?.[key];
     updateRenderParam(section, key, value);
   };
 
-  const commitRenderParamDraftOnEnter = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', key: string) =>
+  const commitRenderParamDraftOnEnter = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string) =>
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === 'Enter') {
         commitRenderParamDraftValue(section, key);
@@ -2247,8 +2267,9 @@ export default function App() {
     for (const [key, value] of Object.entries(presetParams)) {
       if (!key.includes('.')) continue;
       const [section, field] = key.split('.');
-      if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle') continue;
-      const sectionObj = (renderParams as any)[section];
+      if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle' && section !== 'text') continue;
+      const resolvedSection = section === 'subtitle' && RENDER_TEXT_PARAM_FIELDS.has(field) ? 'text' : section;
+      const sectionObj = (renderParams as any)[resolvedSection];
       if (!sectionObj || !(field in sectionObj)) continue;
       if (normalizePresetValue(sectionObj[field]) !== normalizePresetValue(value)) return true;
     }
@@ -2298,11 +2319,15 @@ export default function App() {
       Object.entries(params).forEach(([key, value]) => {
         if (!key.includes('.')) return;
         const [section, field] = key.split('.');
-        if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle' && section !== 'render') return;
+        if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle' && section !== 'text' && section !== 'render') return;
         if (value === undefined || value === null) return;
         if (section === 'audio' && (field === 'normalize' || field === 'pan' || field === 'channelMode')) return;
         if (section === 'audio' && field === 'mute') {
           updateRenderParam('audio', 'mute', Boolean(value));
+          return;
+        }
+        if (section === 'subtitle' && RENDER_TEXT_PARAM_FIELDS.has(field)) {
+          updateRenderParam('text', field, String(value));
           return;
         }
         if (section === 'video' && (field === 'maskLeft' || field === 'maskRight' || field === 'maskTop' || field === 'maskBottom')) {
@@ -2312,7 +2337,7 @@ export default function App() {
           legacyMask[field] = String(value);
           return;
         }
-        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle' | 'render', field, String(value));
+        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', field, String(value));
       });
       if (!hasNewMaskInsets && Object.keys(legacyMask).length > 0) {
         const x = coerceNumber(legacyMask.maskX, 0) ?? 0;
@@ -2714,27 +2739,27 @@ export default function App() {
     renderTemplateApplyMapById
   ]);
 
-  const applySubtitleStylePreset = (preset: SubtitleStylePreset) => {
+  const applySubtitleStylePreset = (preset: SubtitleStylePreset, section: 'subtitle' | 'text' = 'subtitle') => {
     setRenderParams(prev => ({
       ...prev,
-      subtitle: {
-        ...prev.subtitle,
+      [section]: {
+        ...(prev as any)[section],
         ...BASE_SUBTITLE_STYLE,
         ...preset.style,
-        opacity: prev.subtitle.opacity,
-        textOpacity: prev.subtitle.textOpacity,
-        fontName: prev.subtitle.fontName,
-        fontSize: prev.subtitle.fontSize
+        opacity: (prev as any)[section].opacity,
+        textOpacity: (prev as any)[section].textOpacity,
+        fontName: (prev as any)[section].fontName,
+        fontSize: (prev as any)[section].fontSize
       }
     }));
   };
 
-  const isSubtitlePresetActive = (preset: SubtitleStylePreset) => {
+  const isSubtitlePresetActive = (preset: SubtitleStylePreset, section: 'subtitle' | 'text' = 'subtitle') => {
     const merged = { ...BASE_SUBTITLE_STYLE, ...preset.style };
     return (Object.keys(merged) as Array<keyof RenderSubtitleAssState>).every(key => {
       if (key === 'fontName' || key === 'fontSize') return true;
       if (key === 'opacity' || key === 'textOpacity') return true;
-      const current = renderParams.subtitle[key];
+      const current = (renderParams as any)[section]?.[key];
       const next = merged[key];
       if (next === undefined) return true;
       return String(current) === String(next);
@@ -2863,7 +2888,8 @@ export default function App() {
     renderParams.timeline,
     renderParams.video,
     renderParams.audio,
-    renderParams.subtitle
+    renderParams.subtitle,
+    renderParams.text
   ]);
 
   useEffect(() => {
@@ -3127,7 +3153,7 @@ export default function App() {
         { name: 'subtitle.primaryColor', desc: 'Primary fill #RRGGBB', type: 'string', default: '#ffffff' },
         { name: 'subtitle.outlineColor', desc: 'Outline #RRGGBB', type: 'string', default: '#000000' },
         { name: 'subtitle.opacity', desc: 'Subtitle opacity (%)', type: 'number', default: 100 },
-        { name: 'subtitle.textOpacity', desc: 'Text track opacity (%)', type: 'number', default: 100 },
+        { name: 'text.textOpacity', desc: 'Text track opacity (%)', type: 'number', default: 100 },
         { name: 'subtitle.bold', desc: '1 = bold', type: 'string', default: '0' },
         { name: 'subtitle.italic', desc: '1 = italic', type: 'string', default: '0' },
         { name: 'subtitle.spacing', desc: 'Character spacing', type: 'number', default: 0 },
@@ -3137,7 +3163,10 @@ export default function App() {
         { name: 'subtitle.marginL', desc: 'MarginL px (PlayRes)', type: 'number', default: 30 },
         { name: 'subtitle.marginR', desc: 'MarginR px (PlayRes)', type: 'number', default: 30 },
         { name: 'subtitle.marginV', desc: 'MarginV px (PlayRes)', type: 'number', default: 36 },
-        { name: 'subtitle.wrapStyle', desc: 'Script WrapStyle 0–3', type: 'number', default: 0 }
+        { name: 'subtitle.wrapStyle', desc: 'Script WrapStyle 0–3', type: 'number', default: 0 },
+        { name: 'text.textAutoMoveEnabled', desc: 'Text track auto move enabled (1/0)', type: 'string', default: '0' },
+        { name: 'text.textAutoMoveInterval', desc: 'Text track auto move interval (s)', type: 'number', default: 0 },
+        { name: 'text.textAutoMovePositions', desc: 'Text track auto move positions (x,y % list)', type: 'string', default: '' }
       ]
     }
   ]), []);
@@ -3192,13 +3221,37 @@ export default function App() {
       out[`audio.${k}`] = typeof v === 'boolean' ? v : String(v);
     });
     Object.entries(renderParams.subtitle).forEach(([k, v]) => {
+      if (RENDER_TEXT_PARAM_FIELDS.has(k)) return;
       out[`subtitle.${k}`] = typeof v === 'boolean' ? v : String(v);
+    });
+    Object.entries(renderParams.text).forEach(([k, v]) => {
+      out[`text.${k}`] = typeof v === 'boolean' ? v : String(v);
     });
     Object.entries(renderParams.render ?? {}).forEach(([k, v]) => {
       out[`render.${k}`] = typeof v === 'boolean' ? v : String(v);
     });
     return out;
   };
+
+  function parseAutoMovePositions(raw: string): Array<{ x: number; y: number }> {
+    if (!raw || typeof raw !== 'string') return [];
+    return raw
+      .split(/[\n;]+/)
+      .map(item => item.trim())
+      .filter(Boolean)
+      .map(item => {
+        const parts = item.split(/[, ]+/).filter(Boolean);
+        if (parts.length < 2) return null;
+        const x = coerceNumber(parts[0], NaN);
+        const y = coerceNumber(parts[1], NaN);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return {
+          x: Math.max(0, Math.min(100, x)),
+          y: Math.max(0, Math.min(100, y))
+        };
+      })
+      .filter(Boolean) as Array<{ x: number; y: number }>;
+  }
 
   function buildRenderConfigV2(): RenderConfigV2 {
     if (renderConfigV2Override) return renderConfigV2Override;
@@ -3217,6 +3270,27 @@ export default function App() {
       const numeric = coerceNumber(value, fallbackPercent) ?? fallbackPercent;
       return numeric > 2 ? numeric / 100 : numeric;
     };
+    const subtitleBaseStyle = { ...renderParams.subtitle } as Record<string, any>;
+    delete subtitleBaseStyle.textAutoMoveEnabled;
+    delete subtitleBaseStyle.textAutoMoveInterval;
+    delete subtitleBaseStyle.textAutoMovePositions;
+    delete subtitleBaseStyle.singleText;
+    delete subtitleBaseStyle.singleTextStart;
+    delete subtitleBaseStyle.singleTextEnd;
+    delete subtitleBaseStyle.textOpacity;
+    const {
+      textAutoMoveEnabled,
+      textAutoMoveInterval,
+      textAutoMovePositions,
+      singleText,
+      singleTextStart,
+      singleTextEnd,
+      textOpacity,
+      ...textBaseStyle
+    } = renderParams.text;
+    const parsedAutoMovePositions = parseAutoMovePositions(textAutoMovePositions ?? '');
+    const parsedAutoMoveInterval = coerceNumber(textAutoMoveInterval, 0) ?? 0;
+    const autoMoveEnabled = String(textAutoMoveEnabled ?? '0') === '1';
 
     const buildMaskFromParams = (
       maskType?: string,
@@ -3386,43 +3460,53 @@ export default function App() {
 
       if (file.type === 'subtitle') {
         baseItem.subtitleStyle = {
-          fontName: renderParams.subtitle.fontName || 'Arial',
-          fontSize: coerceNumber(renderParams.subtitle.fontSize, 48),
-          primaryColor: renderParams.subtitle.primaryColor,
-          outlineColor: renderParams.subtitle.outlineColor,
-          opacity: coerceNumber(renderParams.subtitle.opacity, 100),
-          bold: renderParams.subtitle.bold === '1',
-          italic: renderParams.subtitle.italic === '1',
-          spacing: coerceNumber(renderParams.subtitle.spacing, 0),
-          outline: coerceNumber(renderParams.subtitle.outline, 2),
-          shadow: coerceNumber(renderParams.subtitle.shadow, 2),
-          alignment: coerceNumber(renderParams.subtitle.alignment, 2),
-          marginL: coerceNumber(renderParams.subtitle.marginL, 30),
-          marginR: coerceNumber(renderParams.subtitle.marginR, 30),
-          marginV: coerceNumber(renderParams.subtitle.marginV, 36),
-          wrapStyle: coerceNumber(renderParams.subtitle.wrapStyle, 0)
+          fontName: subtitleBaseStyle.fontName || 'Arial',
+          fontSize: coerceNumber(subtitleBaseStyle.fontSize, 48),
+          primaryColor: subtitleBaseStyle.primaryColor,
+          outlineColor: subtitleBaseStyle.outlineColor,
+          opacity: coerceNumber(subtitleBaseStyle.opacity, 100),
+          bold: subtitleBaseStyle.bold === '1',
+          italic: subtitleBaseStyle.italic === '1',
+          spacing: 0,
+          outline: coerceNumber(subtitleBaseStyle.outline, 2),
+          shadow: coerceNumber(subtitleBaseStyle.shadow, 2),
+          alignment: coerceNumber(subtitleBaseStyle.alignment, 2),
+          marginL: coerceNumber(subtitleBaseStyle.marginL, 30),
+          marginR: coerceNumber(subtitleBaseStyle.marginR, 30),
+          marginV: coerceNumber(subtitleBaseStyle.marginV, 36),
+          wrapStyle: 0,
+          positionMode: subtitleBaseStyle.positionMode,
+          positionX: coerceNumber(subtitleBaseStyle.positionX, 50),
+          positionY: coerceNumber(subtitleBaseStyle.positionY, 50)
         };
       }
 
       items.push(baseItem);
     });
 
-    const singleText = String(renderParams.subtitle.singleText ?? '').trim();
-    if (singleText) {
-      const start = coerceNumber(renderParams.subtitle.singleTextStart, 0) ?? 0;
+    const singleTextValue = String(singleText ?? '').trim();
+    if (singleTextValue) {
+      const start = coerceNumber(singleTextStart, 0) ?? 0;
       const fallbackEnd = renderTimelineDuration > 0 ? renderTimelineDuration : start + 5;
-      const end = coerceNumber(renderParams.subtitle.singleTextEnd, fallbackEnd) ?? fallbackEnd;
+      const end = coerceNumber(singleTextEnd, fallbackEnd) ?? fallbackEnd;
       const safeEnd = Math.max(start + 0.01, end);
+      const textSubtitleStyle: Record<string, unknown> = {
+        ...textBaseStyle,
+        opacity: coerceNumber(textOpacity, 100),
+        spacing: 0,
+        wrapStyle: 0
+      };
+      if (autoMoveEnabled && parsedAutoMoveInterval > 0 && parsedAutoMovePositions.length >= 2) {
+        textSubtitleStyle.autoMoveInterval = parsedAutoMoveInterval;
+        textSubtitleStyle.autoMovePositions = parsedAutoMovePositions;
+      }
       items.push({
         id: 'text-1',
         type: 'text',
         source: {},
         timeline: { start, duration: safeEnd - start },
-        text: { value: singleText, start, end: safeEnd },
-        subtitleStyle: {
-          ...(renderParams.subtitle ?? {}),
-          opacity: coerceNumber(renderParams.subtitle.textOpacity, 100)
-        }
+        text: { value: singleTextValue, start, end: safeEnd },
+        subtitleStyle: textSubtitleStyle
       });
       const textLabel = (renderTrackLabels.text ?? '').trim();
       trackLabelsOut.text = textLabel || 'Text';
@@ -3437,10 +3521,10 @@ export default function App() {
       },
       renderOptions: {
         codec: renderParams.render?.codec === 'h265' ? 'h265' : 'h264',
-        preset: renderParams.render?.preset || 'fast',
-        crf: coerceNumber(renderParams.render?.crf, 21) ?? 21,
-        gop: coerceNumber(renderParams.render?.gop, 0) ?? 0,
-        tune: renderParams.render?.tune || ''
+        preset: 'fast',
+        crf: 21,
+        gop: 0,
+        tune: ''
       },
       inputsMap,
       items
@@ -4500,6 +4584,19 @@ export default function App() {
               </div>
             )}
             <button
+              className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+              onClick={() => {
+                const target = renderStudioMediaBinContextMenu.file as VaultFile;
+                closeRenderStudioMediaBinContextMenu();
+                downloadVaultFile(target);
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <Download size={12} />
+                Download
+              </span>
+            </button>
+            <button
               className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
               onClick={() => {
                 const target = renderStudioMediaBinContextMenu.file as VaultFile;
@@ -5141,9 +5238,9 @@ export default function App() {
       setRenderTextTrackEnabled(true);
       setRenderParams(prev => ({
         ...prev,
-        subtitle: {
-          ...prev.subtitle,
-          singleText: text.value ?? prev.subtitle.singleText,
+        text: {
+          ...prev.text,
+          singleText: text.value ?? prev.text.singleText,
           singleTextStart: String(start),
           singleTextEnd: String(end)
         }
@@ -5151,11 +5248,57 @@ export default function App() {
     }
     if (firstTextItem?.subtitleStyle) {
       const style = firstTextItem.subtitleStyle as Record<string, any>;
+      const autoMoveInterval = coerceNumber(style.autoMoveInterval, undefined);
+      const autoMovePositionsRaw = Array.isArray(style.autoMovePositions) ? style.autoMovePositions : [];
+      const autoMovePositions = autoMovePositionsRaw
+        .map(entry => {
+          if (!entry) return null;
+          if (Array.isArray(entry)) {
+            if (entry.length < 2) return null;
+            const x = coerceNumber(entry[0], NaN);
+            const y = coerceNumber(entry[1], NaN);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+            return `${x},${y}`;
+          }
+          if (typeof entry === 'object') {
+            const obj = entry as Record<string, unknown>;
+            const x = coerceNumber(obj.x, NaN);
+            const y = coerceNumber(obj.y, NaN);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+            return `${x},${y}`;
+          }
+          return null;
+        })
+        .filter(Boolean)
+        .join('\n');
       setRenderParams(prev => ({
         ...prev,
-        subtitle: {
-          ...prev.subtitle,
-          textOpacity: style.opacity !== undefined ? String(style.opacity) : prev.subtitle.textOpacity
+        text: {
+          ...prev.text,
+          fontName: style.fontName ?? prev.text.fontName,
+          fontSize: style.fontSize !== undefined ? String(style.fontSize) : prev.text.fontSize,
+          primaryColor: style.primaryColor ?? prev.text.primaryColor,
+          outlineColor: style.outlineColor ?? prev.text.outlineColor,
+          opacity: style.opacity !== undefined ? String(style.opacity) : prev.text.opacity,
+          bold: style.bold === true || style.bold === '1' ? '1' : (style.bold === false ? '0' : prev.text.bold),
+          italic: style.italic === true || style.italic === '1' ? '1' : (style.italic === false ? '0' : prev.text.italic),
+          spacing: style.spacing !== undefined ? String(style.spacing) : prev.text.spacing,
+          outline: style.outline !== undefined ? String(style.outline) : prev.text.outline,
+          shadow: style.shadow !== undefined ? String(style.shadow) : prev.text.shadow,
+          alignment: style.alignment !== undefined ? String(style.alignment) : prev.text.alignment,
+          marginL: style.marginL !== undefined ? String(style.marginL) : prev.text.marginL,
+          marginR: style.marginR !== undefined ? String(style.marginR) : prev.text.marginR,
+          marginV: style.marginV !== undefined ? String(style.marginV) : prev.text.marginV,
+          wrapStyle: style.wrapStyle !== undefined ? String(style.wrapStyle) : prev.text.wrapStyle,
+          positionMode: style.positionMode ?? prev.text.positionMode,
+          positionX: style.positionX !== undefined ? String(style.positionX) : prev.text.positionX,
+          positionY: style.positionY !== undefined ? String(style.positionY) : prev.text.positionY,
+          textOpacity: style.opacity !== undefined ? String(style.opacity) : prev.text.textOpacity,
+          textAutoMoveEnabled: (autoMoveInterval && autoMovePositions)
+            ? '1'
+            : prev.text.textAutoMoveEnabled,
+          textAutoMoveInterval: typeof autoMoveInterval === 'number' ? String(autoMoveInterval) : prev.text.textAutoMoveInterval,
+          textAutoMovePositions: autoMovePositions || prev.text.textAutoMovePositions
         }
       }));
     }
@@ -5624,14 +5767,14 @@ export default function App() {
             outlineColor: renderParams.subtitle.outlineColor,
             bold: renderParams.subtitle.bold === '1',
             italic: renderParams.subtitle.italic === '1',
-            spacing: coerceNumber(renderParams.subtitle.spacing, 0),
+            spacing: 0,
             outline: coerceNumber(renderParams.subtitle.outline, 2),
             shadow: coerceNumber(renderParams.subtitle.shadow, 2),
             alignment: coerceNumber(renderParams.subtitle.alignment, 2),
             marginL: coerceNumber(renderParams.subtitle.marginL, 30),
             marginR: coerceNumber(renderParams.subtitle.marginR, 30),
             marginV: coerceNumber(renderParams.subtitle.marginV, 36),
-            wrapStyle: coerceNumber(renderParams.subtitle.wrapStyle, 0)
+            wrapStyle: 0
           }
         };
         const renderConfigV2 = buildRenderConfigV2();
@@ -5941,6 +6084,7 @@ export default function App() {
     isRenderTemplateDirty,
     renderConfigV2Override,
     setRenderConfigV2Override,
+    setImportPopupOpen,
     subtitleFontOptions,
     subtitleFontLoading,
     SUBTITLE_STYLE_PRESETS,

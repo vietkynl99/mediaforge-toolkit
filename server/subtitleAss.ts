@@ -26,6 +26,8 @@ export type AssRenderStyle = {
   positionMode: string;
   positionX: number;
   positionY: number;
+  autoMoveInterval: number;
+  autoMovePositions: Array<{ x: number; y: number }>;
   playResX: number;
   playResY: number;
 };
@@ -56,6 +58,32 @@ export const parseAssRenderStyle = (raw: unknown): AssRenderStyle => {
   const rawY = num(o.positionY, 50);
   const positionX = clamp(Math.round((rawX / 100) * playResX), 0, playResX);
   const positionY = clamp(Math.round((rawY / 100) * playResY), 0, playResY);
+  const autoMoveInterval = clamp(num(o.autoMoveInterval, 0), 0, 3600);
+  const rawPositions = Array.isArray(o.autoMovePositions) ? o.autoMovePositions : [];
+  const autoMovePositions = rawPositions
+    .map(item => {
+      if (!item) return null;
+      if (Array.isArray(item)) {
+        if (item.length < 2) return null;
+        const x = num(item[0], NaN);
+        const y = num(item[1], NaN);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return { x, y };
+      }
+      if (typeof item === 'object') {
+        const oItem = item as Record<string, unknown>;
+        const x = num(oItem.x, NaN);
+        const y = num(oItem.y, NaN);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return { x, y };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .map(pos => ({
+      x: clamp(Math.round((pos as { x: number; y: number }).x / 100 * playResX), 0, playResX),
+      y: clamp(Math.round((pos as { x: number; y: number }).y / 100 * playResY), 0, playResY)
+    })) as Array<{ x: number; y: number }>;
   return {
     fontName: str(o.fontName, 'Arial').replace(/,/g, ' ').trim() || 'Arial',
     fontSize: clamp(Math.round(num(o.fontSize, 48)), 6, 200),
@@ -75,6 +103,8 @@ export const parseAssRenderStyle = (raw: unknown): AssRenderStyle => {
     positionMode,
     positionX,
     positionY,
+    autoMoveInterval,
+    autoMovePositions,
     playResX,
     playResY
   };
@@ -164,16 +194,35 @@ export const buildAssDocument = (cues: SubtitleCue[], style: AssRenderStyle): st
   const posOverride = style.positionMode === 'position'
     ? `{\\pos(${style.positionX},${style.positionY})}`
     : '';
-  const dialogue = cues
-    .map(c => {
-      const start = Math.max(0, c.start + shift);
-      const end = Math.max(start + 0.01, c.end + shift);
-      const t0 = formatAssTime(start);
-      const t1 = formatAssTime(end);
-      const tx = escapeAssDialogueText(c.text);
-      return `Dialogue: 0,${t0},${t1},Default,,0,0,0,,${posOverride}${tx}`;
-    })
-    .join('\n');
+  const autoMoveEnabled = style.autoMoveInterval > 0 && style.autoMovePositions.length >= 2;
+  const dialogueLines: string[] = [];
+  const pushDialogue = (start: number, end: number, tag: string, text: string) => {
+    const t0 = formatAssTime(start);
+    const t1 = formatAssTime(end);
+    dialogueLines.push(`Dialogue: 0,${t0},${t1},Default,,0,0,0,,${tag}${text}`);
+  };
+  cues.forEach(c => {
+    const start = Math.max(0, c.start + shift);
+    const end = Math.max(start + 0.01, c.end + shift);
+    const tx = escapeAssDialogueText(c.text);
+    if (!autoMoveEnabled) {
+      pushDialogue(start, end, posOverride, tx);
+      return;
+    }
+    const interval = style.autoMoveInterval;
+    const duration = Math.max(0.01, end - start);
+    const steps = Math.max(1, Math.ceil(duration / interval));
+    for (let i = 0; i < steps; i += 1) {
+      const segStart = start + i * interval;
+      if (segStart >= end) break;
+      const segEnd = Math.min(end, segStart + interval);
+      const from = style.autoMovePositions[i % style.autoMovePositions.length];
+      const to = style.autoMovePositions[(i + 1) % style.autoMovePositions.length];
+      const moveTag = `{\\move(${from.x},${from.y},${to.x},${to.y})}`;
+      pushDialogue(segStart, segEnd, moveTag, tx);
+    }
+  });
+  const dialogue = dialogueLines.join('\n');
 
   return (
     `[Script Info]\n` +
