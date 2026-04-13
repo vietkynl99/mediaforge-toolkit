@@ -2388,7 +2388,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onFocus={holdPreview}
                                     onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'opacity'))}
                                     onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'opacity'))}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    className="h-9 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   />
                                 </div>
                                 <div className="flex flex-col gap-1">
@@ -2421,10 +2421,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       onFocus={holdPreview}
                                       onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'outline'))}
                                       onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'outline'))}
-                                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      className="flex-1 h-9 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                     />
                                   </div>
                                 </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
                                 <div className="flex flex-col gap-1">
                                   <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow</label>
                                   <input
@@ -2435,7 +2437,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onFocus={holdPreview}
                                     onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'shadow'))}
                                     onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'shadow'))}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    className="h-9 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   />
                                 </div>
                               </div>
@@ -2805,7 +2807,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onFocus={holdPreview}
                                     onBlur={() => releasePreview(() => commitRenderParamDraftValue('text', 'textOpacity'))}
                                     onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('text', 'textOpacity'))}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    className="h-9 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   />
                                 </div>
                                 <div className="flex flex-col gap-1">
@@ -2838,10 +2840,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       onFocus={holdPreview}
                                       onBlur={() => releasePreview(() => commitRenderParamDraftValue('text', 'outline'))}
                                       onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('text', 'outline'))}
-                                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      className="flex-1 h-9 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                     />
                                   </div>
                                 </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
                                 <div className="flex flex-col gap-1">
                                   <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Shadow</label>
                                   <input
@@ -2852,7 +2856,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onFocus={holdPreview}
                                     onBlur={() => releasePreview(() => commitRenderParamDraftValue('text', 'shadow'))}
                                     onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('text', 'shadow'))}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    className="h-9 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   />
                                 </div>
                               </div>
