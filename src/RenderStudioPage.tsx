@@ -1,5 +1,5 @@
 import React from 'react';
-import { File, FileAudio, FileVideo, Menu, MousePointer2, Type, Image } from 'lucide-react';
+import { File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image } from 'lucide-react';
 
 type RenderStudioPageProps = Record<string, any>;
 
@@ -36,6 +36,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     openRenderStudioMediaBinContextMenu,
     openRenderStudioTimelineContextMenu,
     renderInputFileIds,
+    setRenderInputFileIds,
+    renderTemplateApplyMap,
+    onRenderTemplatePlaceholderFile,
     renderVideoId,
     setRenderVideoId,
     renderAudioId,
@@ -144,6 +147,25 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const templateMenuCloseRef = React.useRef<number | null>(null);
   const selectedTemplate = renderTemplates.find(template => template.id === runPipelineRenderTemplateId) ?? null;
   const isCustomTemplate = !selectedTemplate || runPipelineRenderTemplateId === 'custom';
+  const inputRefPlaceholderType = React.useCallback((key: string) => {
+    if (key.startsWith('video')) return 'video' as const;
+    if (key.startsWith('audio')) return 'audio' as const;
+    if (key.startsWith('subtitle')) return 'subtitle' as const;
+    if (key.startsWith('image')) return 'image' as const;
+    return null;
+  }, []);
+  const projectMediaFilesByKind = React.useMemo(() => {
+    const files = runPipelineProject?.files ?? [];
+    return {
+      video: files.filter((f: { type: string }) => f.type === 'video'),
+      audio: files.filter((f: { type: string }) => f.type === 'audio'),
+      subtitle: files.filter((f: { type: string }) => f.type === 'subtitle'),
+      image: files.filter((f: { type: string }) => f.type === 'image'),
+      all: files.filter((f: { type: string }) => ['video', 'audio', 'subtitle', 'image'].includes(f.type))
+    };
+  }, [runPipelineProject?.files]);
+  const truncatePlaceholderFileName = (name: string, max = 44) =>
+    (name.length <= max ? name : `${name.slice(0, max - 1)}…`);
   const [addTrackMenuOpen, setAddTrackMenuOpen] = React.useState(false);
   const addTrackMenuCloseRef = React.useRef<number | null>(null);
   const [renderConfirmOpen, setRenderConfirmOpen] = React.useState(false);
@@ -1095,133 +1117,389 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                     {renderStudioFocus === 'timeline' && (
                       <div className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3 shrink-0">
                         <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Template</div>
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-                          <select
-                            value={runPipelineRenderTemplateId}
-                            onChange={e => handleRenderTemplateChange(e.target.value)}
-                            onContextMenu={event => {
-                              if (runPipelineRenderTemplateId === 'custom' || !selectedTemplate) return;
-                              event.preventDefault();
-                              deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
-                            }}
-                            className="min-h-[36px] flex-1 min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
-                          >
-                            <option value="custom">Custom</option>
-                            {renderTemplates.map(template => {
-                              const isSelected = runPipelineRenderTemplateId === template.id;
-                              const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
-                              return (
-                                <option key={template.id} value={template.id}>
-                                  {label}
-                                </option>
-                              );
-                            })}
-                          </select>
-                          <div
-                            className="relative shrink-0"
-                            onMouseEnter={() => {
-                              if (templateMenuCloseRef.current) {
-                                window.clearTimeout(templateMenuCloseRef.current);
-                                templateMenuCloseRef.current = null;
-                              }
-                              setTemplateMenuOpen(true);
-                            }}
-                            onMouseLeave={() => {
-                              if (templateMenuCloseRef.current) {
-                                window.clearTimeout(templateMenuCloseRef.current);
-                              }
-                              templateMenuCloseRef.current = window.setTimeout(() => {
-                                setTemplateMenuOpen(false);
-                                templateMenuCloseRef.current = null;
-                              }, 120);
-                            }}
-                            onFocusCapture={() => setTemplateMenuOpen(true)}
-                            onBlurCapture={event => {
-                              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                                setTemplateMenuOpen(false);
-                              }
-                            }}
-                          >
-                            <button
-                              type="button"
-                              aria-label="Template options"
-                              title="Template options"
-                              className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                        <div className="flex flex-col gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={runPipelineRenderTemplateId}
+                              onChange={e => handleRenderTemplateChange(e.target.value)}
+                              onContextMenu={event => {
+                                if (runPipelineRenderTemplateId === 'custom' || !selectedTemplate) return;
+                                event.preventDefault();
+                                deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
+                              }}
+                              className="min-h-[36px] flex-1 min-w-[12rem] rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
                             >
-                              <Menu size={14} />
-                            </button>
-                            {templateMenuOpen && (
-                              <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTemplateMenuOpen(false);
-                                    resetRenderToDefault();
-                                  }}
-                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    isCustomTemplate ? 'rounded-lg' : 'rounded-t-lg'
-                                  }`}
-                                >
-                                  Reset to default
-                                </button>
-                                {!isCustomTemplate && isRenderTemplateDirty && (
+                              <option value="custom">Custom</option>
+                              {renderTemplates.map(template => {
+                                const isSelected = runPipelineRenderTemplateId === template.id;
+                                const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
+                                return (
+                                  <option key={template.id} value={template.id}>
+                                    {label}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                            <div
+                              className="relative shrink-0"
+                              onMouseEnter={() => {
+                                if (templateMenuCloseRef.current) {
+                                  window.clearTimeout(templateMenuCloseRef.current);
+                                  templateMenuCloseRef.current = null;
+                                }
+                                setTemplateMenuOpen(true);
+                              }}
+                              onMouseLeave={() => {
+                                if (templateMenuCloseRef.current) {
+                                  window.clearTimeout(templateMenuCloseRef.current);
+                                }
+                                templateMenuCloseRef.current = window.setTimeout(() => {
+                                  setTemplateMenuOpen(false);
+                                  templateMenuCloseRef.current = null;
+                                }, 120);
+                              }}
+                              onFocusCapture={() => setTemplateMenuOpen(true)}
+                              onBlurCapture={event => {
+                                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                                  setTemplateMenuOpen(false);
+                                }
+                              }}
+                            >
+                              <button
+                                type="button"
+                                aria-label="Template options"
+                                title="Template options"
+                                className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                              >
+                                <Menu size={14} />
+                              </button>
+                              {templateMenuOpen && (
+                                <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      if (!selectedTemplate) return;
                                       setTemplateMenuOpen(false);
-                                      saveRenderTemplateCurrent(selectedTemplate);
+                                      resetRenderToDefault();
                                     }}
-                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                    className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                      isCustomTemplate ? 'rounded-lg' : 'rounded-t-lg'
+                                    }`}
                                   >
-                                    Save
+                                    Reset to default
                                   </button>
-                                )}
-                                {!isCustomTemplate && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setTemplateMenuOpen(false);
-                                      saveRenderTemplateQuick();
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                  >
-                                    Save As
-                                  </button>
-                                  {isRenderTemplateDirty && (
+                                  {!isCustomTemplate && isRenderTemplateDirty && (
                                     <button
                                       type="button"
                                       onClick={() => {
                                         if (!selectedTemplate) return;
                                         setTemplateMenuOpen(false);
-                                        restoreRenderTemplateCurrent(selectedTemplate);
+                                        saveRenderTemplateCurrent(selectedTemplate);
                                       }}
                                       className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
                                     >
-                                      Restore
+                                      Save
                                     </button>
                                   )}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (!selectedTemplate) return;
-                                      setTemplateMenuOpen(false);
-                                      deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                  >
-                                    Delete
-                                  </button>
-                                </>
+                                  {!isCustomTemplate && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setTemplateMenuOpen(false);
+                                          saveRenderTemplateQuick();
+                                        }}
+                                        className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                      >
+                                        Save As
+                                      </button>
+                                      {isRenderTemplateDirty && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (!selectedTemplate) return;
+                                            setTemplateMenuOpen(false);
+                                            restoreRenderTemplateCurrent(selectedTemplate);
+                                          }}
+                                          className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                        >
+                                          Restore
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!selectedTemplate) return;
+                                          setTemplateMenuOpen(false);
+                                          deleteRenderTemplateWithConfirm(selectedTemplate.id, selectedTemplate.name);
+                                        }}
+                                        className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                                      >
+                                        Delete
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               )}
                             </div>
-                          )}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-zinc-800/70 bg-zinc-950/50 p-2">
+                          <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Placeholders</div>
+                          <div className="flex flex-col gap-2 text-[10px] text-zinc-400">
+                            {renderTextTrackEnabled && (
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
+                                  <Type size={14} />
+                                </span>
+                                <span
+                                  className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300 uppercase tracking-widest"
+                                  title="text"
+                                >
+                                  text
+                                </span>
+                                <span className="flex-1 min-w-0 text-[10px] text-zinc-600 border border-zinc-800/80 rounded px-2 py-1 bg-zinc-900/40">
+                                  Text track (no media file)
+                                </span>
+                              </div>
+                            )}
+                            {!isCustomTemplate && selectedTemplate
+                              ? Object.keys(selectedTemplate.config.inputsMap ?? {}).map(refKey => {
+                                  const slotType = inputRefPlaceholderType(refKey);
+                                  const files =
+                                    slotType != null
+                                      ? projectMediaFilesByKind[slotType]
+                                      : projectMediaFilesByKind.all;
+                                  const saved =
+                                    (selectedTemplate.config.timeline?.trackLabels?.[refKey] ?? '').trim();
+                                  const displayName = saved || refKey;
+                                  const selectedId = renderTemplateApplyMap?.[refKey] ?? '';
+                                  const selectedFile = files.find(f => f.id === selectedId);
+                                  const icon =
+                                    slotType === 'video' ? (
+                                      <FileVideo size={14} className="text-zinc-500" aria-hidden />
+                                    ) : slotType === 'audio' ? (
+                                      <FileAudio size={14} className="text-zinc-500" aria-hidden />
+                                    ) : slotType === 'subtitle' ? (
+                                      <FileText size={14} className="text-zinc-500" aria-hidden />
+                                    ) : slotType === 'image' ? (
+                                      <Image size={14} className="text-zinc-500" aria-hidden />
+                                    ) : (
+                                      <File size={14} className="text-zinc-500" aria-hidden />
+                                    );
+                                  return (
+                                    <div key={`tpl-ph-${refKey}`} className="flex items-center gap-2 min-w-0">
+                                      <span className="shrink-0 w-7 flex justify-center">{icon}</span>
+                                      <span
+                                        className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300 uppercase tracking-widest"
+                                        title={refKey}
+                                      >
+                                        {displayName}
+                                      </span>
+                                      <select
+                                        value={selectedId}
+                                        onChange={e => {
+                                          if (!onRenderTemplatePlaceholderFile) return;
+                                          onRenderTemplatePlaceholderFile(refKey, e.target.value);
+                                        }}
+                                        title={selectedFile?.name ?? ''}
+                                        className="flex-1 min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                      >
+                                        <option value="">Select file…</option>
+                                        {files.map(file => (
+                                          <option key={file.id} value={file.id} title={file.name}>
+                                            {truncatePlaceholderFileName(file.name)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  );
+                                })
+                              : null}
+                            {isCustomTemplate && renderSubtitleFile && (() => {
+                              const key = placeholderKeyByFileId[renderSubtitleFile.id] ?? 'subtitle';
+                              return (
+                                <div key="tpl-ph-subtitle" className="flex items-center gap-2 min-w-0">
+                                  <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
+                                    <FileText size={14} />
+                                  </span>
+                                  <span
+                                    className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300 uppercase tracking-widest"
+                                    title={key}
+                                  >
+                                    {key}
+                                  </span>
+                                  <select
+                                    value={renderSubtitleId ?? ''}
+                                    onChange={e => {
+                                      const newId = e.target.value;
+                                      if (!newId) return;
+                                      const prevId = renderSubtitleId;
+                                      setRenderSubtitleId(newId);
+                                      setRenderInputFileIds(prev => {
+                                        const without = prevId ? prev.filter(id => id !== prevId) : prev;
+                                        return without.includes(newId) ? without : [...without, newId];
+                                      });
+                                    }}
+                                    title={renderSubtitleFile.name}
+                                    className="flex-1 min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                  >
+                                    {projectMediaFilesByKind.subtitle.map(file => (
+                                      <option key={file.id} value={file.id} title={file.name}>
+                                        {truncatePlaceholderFileName(file.name)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()}
+                            {isCustomTemplate && renderVideoFile && (() => {
+                              const key = placeholderKeyByFileId[renderVideoFile.id] ?? 'video';
+                              return (
+                                <div key="tpl-ph-video" className="flex items-center gap-2 min-w-0">
+                                  <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
+                                    <FileVideo size={14} />
+                                  </span>
+                                  <span
+                                    className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300 uppercase tracking-widest"
+                                    title={key}
+                                  >
+                                    {key}
+                                  </span>
+                                  <select
+                                    value={renderVideoId ?? ''}
+                                    onChange={e => {
+                                      const newId = e.target.value;
+                                      if (!newId) return;
+                                      const prevId = renderVideoId;
+                                      setRenderVideoId(newId);
+                                      setRenderInputFileIds(prev => {
+                                        const without = prevId ? prev.filter(id => id !== prevId) : prev;
+                                        return without.includes(newId) ? without : [...without, newId];
+                                      });
+                                    }}
+                                    title={renderVideoFile.name}
+                                    className="flex-1 min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                  >
+                                    {projectMediaFilesByKind.video.map(file => (
+                                      <option key={file.id} value={file.id} title={file.name}>
+                                        {truncatePlaceholderFileName(file.name)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()}
+                            {isCustomTemplate && renderAudioFile && (() => {
+                              const key = placeholderKeyByFileId[renderAudioFile.id] ?? 'audio';
+                              return (
+                                <div key="tpl-ph-audio" className="flex items-center gap-2 min-w-0">
+                                  <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
+                                    <FileAudio size={14} />
+                                  </span>
+                                  <span
+                                    className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300 uppercase tracking-widest"
+                                    title={key}
+                                  >
+                                    {key}
+                                  </span>
+                                  <select
+                                    value={renderAudioId ?? ''}
+                                    onChange={e => {
+                                      const newId = e.target.value;
+                                      if (!newId) return;
+                                      const prevId = renderAudioId;
+                                      setRenderAudioId(newId);
+                                      setRenderInputFileIds(prev => {
+                                        const without = prevId ? prev.filter(id => id !== prevId) : prev;
+                                        return without.includes(newId) ? without : [...without, newId];
+                                      });
+                                    }}
+                                    title={renderAudioFile.name}
+                                    className="flex-1 min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                  >
+                                    {projectMediaFilesByKind.audio.map(file => (
+                                      <option key={file.id} value={file.id} title={file.name}>
+                                        {truncatePlaceholderFileName(file.name)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              );
+                            })()}
+                            {isCustomTemplate && renderImageFiles.length > 0
+                              ? renderImageFiles.map((file, idx) => {
+                                  const key = placeholderKeyByFileId[file.id] ?? `image${idx + 1}`;
+                                  return (
+                                    <div key={`tpl-ph-img-${file.id}`} className="flex items-center gap-2 min-w-0">
+                                      <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
+                                        <Image size={14} />
+                                      </span>
+                                      <span
+                                        className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300 uppercase tracking-widest"
+                                        title={key}
+                                      >
+                                        {key}
+                                      </span>
+                                      <select
+                                        value={file.id}
+                                        onChange={e => {
+                                          const newId = e.target.value;
+                                          if (!newId || newId === file.id) return;
+                                          const prevFileId = file.id;
+                                          setRenderImageOrderIds(prev =>
+                                            prev.map(id => (id === prevFileId ? newId : id))
+                                          );
+                                          setRenderInputFileIds(prev => {
+                                            const without = prev.filter(id => id !== prevFileId);
+                                            return without.includes(newId) ? without : [...without, newId];
+                                          });
+                                          setRenderImageDurations(prev => {
+                                            if (!prev[prevFileId]) return prev;
+                                            const next = { ...prev };
+                                            next[newId] = next[prevFileId];
+                                            delete next[prevFileId];
+                                            return next;
+                                          });
+                                          setRenderImageTransforms(prev => {
+                                            if (!prev[prevFileId]) return prev;
+                                            const next = { ...prev };
+                                            next[newId] = next[prevFileId];
+                                            delete next[prevFileId];
+                                            return next;
+                                          });
+                                        }}
+                                        title={file.name}
+                                        className="flex-1 min-w-0 bg-zinc-900/80 border border-zinc-700/60 rounded px-2 py-1 text-[10px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
+                                      >
+                                        {projectMediaFilesByKind.image.map(f => (
+                                          <option key={f.id} value={f.id} title={f.name}>
+                                            {truncatePlaceholderFileName(f.name)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  );
+                                })
+                              : null}
+                            {!renderTextTrackEnabled &&
+                              !isCustomTemplate &&
+                              selectedTemplate &&
+                              Object.keys(selectedTemplate.config.inputsMap ?? {}).length === 0 && (
+                                <div className="text-[10px] text-zinc-500">No placeholders in this template.</div>
+                              )}
+                            {isCustomTemplate &&
+                              !renderTextTrackEnabled &&
+                              !renderSubtitleFile &&
+                              !renderVideoFile &&
+                              !renderAudioFile &&
+                              renderImageFiles.length === 0 && (
+                                <div className="text-[10px] text-zinc-500">No placeholders available yet.</div>
+                              )}
+                          </div>
                         </div>
                       </div>
-                    </div>
                     )}
-                    {renderStudioFocus === 'timeline' ? (
+                  {renderStudioFocus === 'timeline' ? (
                       <div className="flex flex-col gap-3 text-xs text-zinc-300 min-h-0 overflow-y-auto pr-1">
                         {activeInspectorSection === 'timeline' && (
                           <div className="rounded-xl border border-zinc-800 bg-zinc-950/40">
@@ -2135,6 +2413,23 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               </div>
                               <div className="grid grid-cols-1 gap-2">
                                 <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Opacity (%)</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="1"
+                                    value={renderParamsDraft.subtitle.opacity}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'opacity', e.target.value)}
+                                    onFocus={holdPreview}
+                                    onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'opacity'))}
+                                    onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'opacity'))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
                                   <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Primary</label>
                                   <input
                                     type="color"
@@ -2516,6 +2811,23 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onFocus={holdPreview}
                                     onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'fontSize'))}
                                     onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'fontSize'))}
+                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Opacity (%)</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="1"
+                                    value={renderParamsDraft.subtitle.textOpacity}
+                                    onChange={e => updateRenderParamDraft('subtitle', 'textOpacity', e.target.value)}
+                                    onFocus={holdPreview}
+                                    onBlur={() => releasePreview(() => commitRenderParamDraftValue('subtitle', 'textOpacity'))}
+                                    onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('subtitle', 'textOpacity'))}
                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   />
                                 </div>

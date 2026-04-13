@@ -141,6 +141,8 @@ type RenderSubtitleAssState = {
   fontSize: string;
   primaryColor: string;
   outlineColor: string;
+  opacity: string;
+  textOpacity: string;
   bold: string;
   italic: string;
   spacing: string;
@@ -235,6 +237,8 @@ const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
   fontSize: '48',
   primaryColor: '#ffffff',
   outlineColor: '#000000',
+  opacity: '100',
+  textOpacity: '100',
   bold: '0',
   italic: '0',
   spacing: '0',
@@ -258,6 +262,8 @@ const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
   fontSize: DEFAULT_RENDER_SUBTITLE_ASS.fontSize,
   primaryColor: DEFAULT_RENDER_SUBTITLE_ASS.primaryColor,
   outlineColor: DEFAULT_RENDER_SUBTITLE_ASS.outlineColor,
+  opacity: DEFAULT_RENDER_SUBTITLE_ASS.opacity,
+  textOpacity: DEFAULT_RENDER_SUBTITLE_ASS.textOpacity,
   bold: DEFAULT_RENDER_SUBTITLE_ASS.bold,
   italic: DEFAULT_RENDER_SUBTITLE_ASS.italic,
   spacing: DEFAULT_RENDER_SUBTITLE_ASS.spacing,
@@ -1300,6 +1306,7 @@ export default function App() {
   const [renderTemplateApplyMap, setRenderTemplateApplyMap] = useState<Record<string, string>>({});
   const [renderTemplateApplyMapById, setRenderTemplateApplyMapById] = useState<Record<string, Record<string, string>>>({});
   const lastAutoTemplateApplyKeyRef = useRef<string | null>(null);
+  const lastRenderConfigSyncRef = useRef<RenderConfigV2 | null>(null);
   const [runPipelineRenderTemplateId, setRunPipelineRenderTemplateId] = useState('custom');
   const [templateSaveOpen, setTemplateSaveOpen] = useState(false);
   const [templateSaveTaskType, setTemplateSaveTaskType] = useState<'render' | 'download' | 'uvr' | 'tts'>('render');
@@ -2714,6 +2721,8 @@ export default function App() {
         ...prev.subtitle,
         ...BASE_SUBTITLE_STYLE,
         ...preset.style,
+        opacity: prev.subtitle.opacity,
+        textOpacity: prev.subtitle.textOpacity,
         fontName: prev.subtitle.fontName,
         fontSize: prev.subtitle.fontSize
       }
@@ -2724,6 +2733,7 @@ export default function App() {
     const merged = { ...BASE_SUBTITLE_STYLE, ...preset.style };
     return (Object.keys(merged) as Array<keyof RenderSubtitleAssState>).every(key => {
       if (key === 'fontName' || key === 'fontSize') return true;
+      if (key === 'opacity' || key === 'textOpacity') return true;
       const current = renderParams.subtitle[key];
       const next = merged[key];
       if (next === undefined) return true;
@@ -3116,6 +3126,8 @@ export default function App() {
         { name: 'subtitle.fontSize', desc: 'Font size (px at PlayRes)', type: 'number', default: 72 },
         { name: 'subtitle.primaryColor', desc: 'Primary fill #RRGGBB', type: 'string', default: '#ffffff' },
         { name: 'subtitle.outlineColor', desc: 'Outline #RRGGBB', type: 'string', default: '#000000' },
+        { name: 'subtitle.opacity', desc: 'Subtitle opacity (%)', type: 'number', default: 100 },
+        { name: 'subtitle.textOpacity', desc: 'Text track opacity (%)', type: 'number', default: 100 },
         { name: 'subtitle.bold', desc: '1 = bold', type: 'string', default: '0' },
         { name: 'subtitle.italic', desc: '1 = italic', type: 'string', default: '0' },
         { name: 'subtitle.spacing', desc: 'Character spacing', type: 'number', default: 0 },
@@ -3378,6 +3390,7 @@ export default function App() {
           fontSize: coerceNumber(renderParams.subtitle.fontSize, 48),
           primaryColor: renderParams.subtitle.primaryColor,
           outlineColor: renderParams.subtitle.outlineColor,
+          opacity: coerceNumber(renderParams.subtitle.opacity, 100),
           bold: renderParams.subtitle.bold === '1',
           italic: renderParams.subtitle.italic === '1',
           spacing: coerceNumber(renderParams.subtitle.spacing, 0),
@@ -3406,7 +3419,10 @@ export default function App() {
         source: {},
         timeline: { start, duration: safeEnd - start },
         text: { value: singleText, start, end: safeEnd },
-        subtitleStyle: { ...(renderParams.subtitle ?? {}) }
+        subtitleStyle: {
+          ...(renderParams.subtitle ?? {}),
+          opacity: coerceNumber(renderParams.subtitle.textOpacity, 100)
+        }
       });
       const textLabel = (renderTrackLabels.text ?? '').trim();
       trackLabelsOut.text = textLabel || 'Text';
@@ -3582,10 +3598,16 @@ export default function App() {
 
     const imageItems = template.config.items.filter(item => item.type === 'image');
     if (imageItems.length > 0) {
+      const imageIdsByRef = Object.keys(template.config.inputsMap ?? {})
+        .filter(key => key.startsWith('image'))
+        .map(key => mapping[key])
+        .filter((id): id is string => Boolean(id));
       setRenderImageTransforms(prev => {
         const next = { ...prev };
-        imageItems.forEach((item, index) => {
-          const targetId = selectedIds[index];
+        let fallbackIndex = 0;
+        imageItems.forEach((item) => {
+          const refKey = item.source?.ref;
+          const targetId = refKey ? mapping[refKey] : imageIdsByRef[fallbackIndex++];
           if (!targetId) return;
           const transform = item.transform ?? {};
           const crop = (transform.crop ?? {}) as { x?: number; y?: number; w?: number; h?: number };
@@ -3598,6 +3620,7 @@ export default function App() {
           const maskTop = mask ? mask.y : undefined;
           const maskRight = mask ? Math.max(0, 100 - (mask.x + mask.w)) : undefined;
           const maskBottom = mask ? Math.max(0, 100 - (mask.y + mask.h)) : undefined;
+          const blurEffects = normalizeItemEffects(item.effects) ?? next[targetId]?.blurEffects;
           next[targetId] = {
             ...(next[targetId] ?? {}),
             x: String(transform.x ?? next[targetId]?.x ?? '50'),
@@ -3614,7 +3637,8 @@ export default function App() {
             maskLeft: maskLeft !== undefined ? String(maskLeft) : (next[targetId]?.maskLeft ?? '0'),
             maskRight: maskRight !== undefined ? String(maskRight) : (next[targetId]?.maskRight ?? '0'),
             maskTop: maskTop !== undefined ? String(maskTop) : (next[targetId]?.maskTop ?? '0'),
-            maskBottom: maskBottom !== undefined ? String(maskBottom) : (next[targetId]?.maskBottom ?? '0')
+            maskBottom: maskBottom !== undefined ? String(maskBottom) : (next[targetId]?.maskBottom ?? '0'),
+            blurEffects
           };
         });
         return next;
@@ -4913,12 +4937,229 @@ export default function App() {
           maskLeft: maskLeft ?? '0',
           maskRight: maskRight ?? '0',
           maskTop: maskTop ?? '0',
-          maskBottom: maskBottom ?? '0'
+          maskBottom: maskBottom ?? '0',
+          blurEffects: existing.blurEffects
         };
       });
       return next;
     });
   }, [renderInputFileIds, runPipelineProject?.id]);
+
+  useEffect(() => {
+    if (!renderConfigV2Override || !runPipelineProject) return;
+    if (lastRenderConfigSyncRef.current === renderConfigV2Override) return;
+    lastRenderConfigSyncRef.current = renderConfigV2Override;
+    const inputsMap = renderConfigV2Override.inputsMap ?? {};
+    const fileByPath = new Map(
+      runPipelineProject.files
+        .filter(file => Boolean(file.relativePath))
+        .map(file => [file.relativePath, file])
+    );
+    const imageIdsByRef = Object.keys(inputsMap)
+      .filter(key => key.startsWith('image'))
+      .map(key => inputsMap[key])
+      .filter((value): value is string => Boolean(value))
+      .map(pathValue => fileByPath.get(pathValue)?.id)
+      .filter((id): id is string => Boolean(id));
+    if (imageIdsByRef.length > 0) {
+      setRenderImageOrderIds(imageIdsByRef);
+    }
+    const trackLabels = renderConfigV2Override.timeline?.trackLabels;
+    if (trackLabels && typeof trackLabels === 'object') {
+      setRenderTrackLabels(trackLabels);
+    }
+    const nextTransforms: Record<string, any> = {};
+    const nextImageDurations: Record<string, string> = {};
+    const items = renderConfigV2Override.items ?? [];
+    const firstVideoItem = items.find(item => item.type === 'video') ?? null;
+    const firstAudioItem = items.find(item => item.type === 'audio') ?? null;
+    const firstSubtitleItem = items.find(item => item.type === 'subtitle') ?? null;
+    const firstTextItem = items.find(item => item.type === 'text') ?? null;
+    (renderConfigV2Override.items ?? []).forEach(item => {
+      if (item.type !== 'image') return;
+      const refKey = item.source?.ref;
+      const pathValue = refKey ? inputsMap[refKey] : undefined;
+      const fileId = pathValue ? fileByPath.get(pathValue)?.id : null;
+      if (!fileId) return;
+      const transform = item.transform ?? {};
+      const crop = (transform.crop ?? {}) as { x?: number; y?: number; w?: number; h?: number };
+      const mask = item.mask;
+      const scalePercent = (() => {
+        const raw = typeof transform.scale === 'number' ? transform.scale : 1;
+        return Math.round(raw * 100);
+      })();
+      const maskLeft = mask ? mask.x : undefined;
+      const maskTop = mask ? mask.y : undefined;
+      const maskRight = mask ? Math.max(0, 100 - (mask.x + mask.w)) : undefined;
+      const maskBottom = mask ? Math.max(0, 100 - (mask.y + mask.h)) : undefined;
+      const blurEffects = normalizeItemEffects(item.effects);
+      nextTransforms[fileId] = {
+        x: String(transform.x ?? '50'),
+        y: String(transform.y ?? '50'),
+        scale: String(scalePercent),
+        rotation: String(transform.rotation ?? '0'),
+        opacity: String(transform.opacity ?? '100'),
+        fit: transform.fit ?? 'contain',
+        cropX: String(crop.x ?? '0'),
+        cropY: String(crop.y ?? '0'),
+        cropW: String(crop.w ?? '100'),
+        cropH: String(crop.h ?? '100'),
+        maskType: mask ? mask.type : 'none',
+        maskLeft: maskLeft !== undefined ? String(maskLeft) : '0',
+        maskRight: maskRight !== undefined ? String(maskRight) : '0',
+        maskTop: maskTop !== undefined ? String(maskTop) : '0',
+        maskBottom: maskBottom !== undefined ? String(maskBottom) : '0',
+        blurEffects: blurEffects ?? undefined
+      };
+      const durationValue = item.timeline?.duration;
+      if (typeof durationValue === 'number' && Number.isFinite(durationValue)) {
+        nextImageDurations[fileId] = String(durationValue);
+      }
+    });
+    if (Object.keys(nextTransforms).length > 0) {
+      setRenderImageTransforms(prev => ({ ...prev, ...nextTransforms }));
+    }
+    if (Object.keys(nextImageDurations).length > 0) {
+      setRenderImageDurations(prev => ({ ...prev, ...nextImageDurations }));
+    }
+    if (firstVideoItem) {
+      const transform = firstVideoItem.transform ?? {};
+      const crop = (transform.crop ?? {}) as { x?: number; y?: number; w?: number; h?: number };
+      const mask = firstVideoItem.mask;
+      const scalePercent = (() => {
+        const raw = typeof transform.scale === 'number' ? transform.scale : 1;
+        return Math.round(raw * 100);
+      })();
+      const maskLeft = mask ? mask.x : undefined;
+      const maskTop = mask ? mask.y : undefined;
+      const maskRight = mask ? Math.max(0, 100 - (mask.x + mask.w)) : undefined;
+      const maskBottom = mask ? Math.max(0, 100 - (mask.y + mask.h)) : undefined;
+      setRenderParams(prev => ({
+        ...prev,
+        timeline: {
+          ...prev.timeline,
+          framerate: String(renderConfigV2Override.timeline?.framerate ?? prev.timeline.framerate),
+          resolution: String(renderConfigV2Override.timeline?.resolution ?? prev.timeline.resolution)
+        },
+        render: {
+          ...prev.render,
+          codec: (renderConfigV2Override.renderOptions?.codec ?? prev.render.codec) as string,
+          preset: (renderConfigV2Override.renderOptions?.preset ?? prev.render.preset) as string,
+          crf: String(renderConfigV2Override.renderOptions?.crf ?? prev.render.crf ?? '21'),
+          gop: String(renderConfigV2Override.renderOptions?.gop ?? prev.render.gop ?? ''),
+          tune: String(renderConfigV2Override.renderOptions?.tune ?? prev.render.tune ?? '')
+        },
+        video: {
+          ...prev.video,
+          fit: transform.fit ?? prev.video.fit,
+          positionX: String(transform.x ?? prev.video.positionX),
+          positionY: String(transform.y ?? prev.video.positionY),
+          scale: String(scalePercent),
+          rotation: String(transform.rotation ?? prev.video.rotation),
+          opacity: String(transform.opacity ?? prev.video.opacity),
+          cropX: String(crop.x ?? prev.video.cropX),
+          cropY: String(crop.y ?? prev.video.cropY),
+          cropW: String(crop.w ?? prev.video.cropW),
+          cropH: String(crop.h ?? prev.video.cropH),
+          maskType: mask ? mask.type : prev.video.maskType,
+          maskLeft: maskLeft !== undefined ? String(maskLeft) : prev.video.maskLeft,
+          maskRight: maskRight !== undefined ? String(maskRight) : prev.video.maskRight,
+          maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
+          maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom
+        }
+      }));
+      const videoBlurEffects = normalizeItemEffects(firstVideoItem.effects);
+      if (videoBlurEffects && renderVideoId) {
+        setRenderVideoTransforms(prev => ({
+          ...prev,
+          [renderVideoId]: {
+            ...(prev[renderVideoId] ?? {}),
+            blurEffects: videoBlurEffects
+          }
+        }));
+      }
+    } else {
+      setRenderParams(prev => ({
+        ...prev,
+        timeline: {
+          ...prev.timeline,
+          framerate: String(renderConfigV2Override.timeline?.framerate ?? prev.timeline.framerate),
+          resolution: String(renderConfigV2Override.timeline?.resolution ?? prev.timeline.resolution)
+        },
+        render: {
+          ...prev.render,
+          codec: (renderConfigV2Override.renderOptions?.codec ?? prev.render.codec) as string,
+          preset: (renderConfigV2Override.renderOptions?.preset ?? prev.render.preset) as string,
+          crf: String(renderConfigV2Override.renderOptions?.crf ?? prev.render.crf ?? '21'),
+          gop: String(renderConfigV2Override.renderOptions?.gop ?? prev.render.gop ?? ''),
+          tune: String(renderConfigV2Override.renderOptions?.tune ?? prev.render.tune ?? '')
+        }
+      }));
+    }
+    if (firstAudioItem?.audioMix) {
+      setRenderParams(prev => ({
+        ...prev,
+        audio: {
+          ...prev.audio,
+          gainDb: String(firstAudioItem.audioMix?.gainDb ?? prev.audio.gainDb),
+          mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute),
+          fadeIn: String(firstAudioItem.audioMix?.fadeIn ?? prev.audio.fadeIn),
+          fadeOut: String(firstAudioItem.audioMix?.fadeOut ?? prev.audio.fadeOut)
+        }
+      }));
+    }
+    if (firstSubtitleItem?.subtitleStyle) {
+      const style = firstSubtitleItem.subtitleStyle as Record<string, any>;
+      setRenderParams(prev => ({
+        ...prev,
+        subtitle: {
+          ...prev.subtitle,
+          fontName: style.fontName ?? prev.subtitle.fontName,
+          fontSize: style.fontSize !== undefined ? String(style.fontSize) : prev.subtitle.fontSize,
+          primaryColor: style.primaryColor ?? prev.subtitle.primaryColor,
+          outlineColor: style.outlineColor ?? prev.subtitle.outlineColor,
+          opacity: style.opacity !== undefined ? String(style.opacity) : prev.subtitle.opacity,
+          bold: style.bold === true || style.bold === '1' ? '1' : (style.bold === false ? '0' : prev.subtitle.bold),
+          italic: style.italic === true || style.italic === '1' ? '1' : (style.italic === false ? '0' : prev.subtitle.italic),
+          spacing: style.spacing !== undefined ? String(style.spacing) : prev.subtitle.spacing,
+          outline: style.outline !== undefined ? String(style.outline) : prev.subtitle.outline,
+          shadow: style.shadow !== undefined ? String(style.shadow) : prev.subtitle.shadow,
+          alignment: style.alignment !== undefined ? String(style.alignment) : prev.subtitle.alignment,
+          marginL: style.marginL !== undefined ? String(style.marginL) : prev.subtitle.marginL,
+          marginR: style.marginR !== undefined ? String(style.marginR) : prev.subtitle.marginR,
+          marginV: style.marginV !== undefined ? String(style.marginV) : prev.subtitle.marginV,
+          wrapStyle: style.wrapStyle !== undefined ? String(style.wrapStyle) : prev.subtitle.wrapStyle
+        }
+      }));
+    }
+    if (firstTextItem?.text) {
+      const text = firstTextItem.text;
+      const start = typeof text.start === 'number' ? text.start : 0;
+      const end = typeof text.end === 'number'
+        ? text.end
+        : (typeof firstTextItem.timeline?.duration === 'number' ? start + firstTextItem.timeline.duration : start + 5);
+      setRenderTextTrackEnabled(true);
+      setRenderParams(prev => ({
+        ...prev,
+        subtitle: {
+          ...prev.subtitle,
+          singleText: text.value ?? prev.subtitle.singleText,
+          singleTextStart: String(start),
+          singleTextEnd: String(end)
+        }
+      }));
+    }
+    if (firstTextItem?.subtitleStyle) {
+      const style = firstTextItem.subtitleStyle as Record<string, any>;
+      setRenderParams(prev => ({
+        ...prev,
+        subtitle: {
+          ...prev.subtitle,
+          textOpacity: style.opacity !== undefined ? String(style.opacity) : prev.subtitle.textOpacity
+        }
+      }));
+    }
+  }, [renderConfigV2Override, runPipelineProject?.id]);
 
     const normalizeRenderVideoMaskInsets = (video: Record<string, any>) => {
       const hasInsets = (
@@ -5605,6 +5846,15 @@ export default function App() {
     openRenderStudioMediaBinContextMenu,
     openRenderStudioTimelineContextMenu,
     renderInputFileIds,
+    setRenderInputFileIds,
+    renderTemplateApplyMap,
+    onRenderTemplatePlaceholderFile: (placeholderKey: string, fileId: string) => {
+      const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
+      if (!template || runPipelineRenderTemplateId === 'custom') return;
+      const next = { ...renderTemplateApplyMap, [placeholderKey]: fileId };
+      commitRenderTemplateApplyMap(template.id, next);
+      applyRenderTemplate(template, next);
+    },
     renderVideoId,
     setRenderVideoId,
     renderAudioId,

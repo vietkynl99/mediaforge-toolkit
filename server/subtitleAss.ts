@@ -9,6 +9,7 @@ export type AssRenderStyle = {
   fontSize: number;
   primaryColor: string;
   outlineColor: string;
+  opacity: number;
   bold: boolean;
   italic: boolean;
   spacing: number;
@@ -60,6 +61,7 @@ export const parseAssRenderStyle = (raw: unknown): AssRenderStyle => {
     fontSize: clamp(Math.round(num(o.fontSize, 48)), 6, 200),
     primaryColor: str(o.primaryColor, '#ffffff'),
     outlineColor: str(o.outlineColor, '#000000'),
+    opacity: clamp(num(o.opacity, 100), 0, 100),
     bold: boolish(o.bold, false),
     italic: boolish(o.italic, false),
     spacing: clamp(Math.round(num(o.spacing, 0)), -99, 99),
@@ -138,10 +140,10 @@ export const escapeAssDialogueText = (text: string) => {
 };
 
 export const buildAssDocument = (cues: SubtitleCue[], style: AssRenderStyle): string => {
-  const primary = assColor(style.primaryColor, 100);
-  const secondary = assColor('#ffffff', 100);
-  const outlineC = assColor(style.outlineColor, 100);
-  const backC = assColor('#000000', 100);
+  const primary = assColor(style.primaryColor, style.opacity);
+  const secondary = assColor('#ffffff', style.opacity);
+  const outlineC = assColor(style.outlineColor, style.opacity);
+  const backC = assColor('#000000', style.opacity);
 
   const bold = style.bold ? -1 : 0;
   const italic = style.italic ? -1 : 0;
