@@ -1655,16 +1655,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               {renderVideoFile ? (
                                 <>
                                   <div className="flex items-center gap-2 text-sm text-zinc-100">
-                                    <FileVideo size={14} />
-                                    <span className="truncate font-semibold">{renderVideoFile.name}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <span>Duration</span>
-                                    <span className="text-zinc-300">{formatDuration(renderVideoDuration) ?? '--'}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <span>Size</span>
-                                    <span className="text-zinc-300">{renderVideoFile.size ?? renderVideoFile.sizeBytes ?? '--'}</span>
+                                    <span className="text-[11px] truncate font-semibold">{renderVideoFile.name}</span>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2 pt-1">
                                     <div className="flex flex-col gap-1">
@@ -2180,16 +2171,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               {renderAudioFile ? (
                                 <>
                                   <div className="flex items-center gap-2 text-sm text-zinc-100">
-                                    <FileAudio size={14} />
-                                    <span className="truncate font-semibold">{renderAudioFile.name}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <span>Duration</span>
-                                    <span className="text-zinc-300">{formatDuration(renderAudioDuration) ?? '--'}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <span>Size</span>
-                                    <span className="text-zinc-300">{renderAudioFile.size ?? renderAudioFile.sizeBytes ?? '--'}</span>
+                                    <span className="text-[11px] truncate font-semibold">{renderAudioFile.name}</span>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
@@ -2290,15 +2272,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 <>
                                   <div className="flex items-center gap-2 text-sm text-zinc-100">
                                     <Type size={14} />
-                                    <span className="truncate font-semibold">{renderSubtitleFile.name}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <span>Duration</span>
-                                    <span className="text-zinc-300">{formatDuration(renderSubtitleDuration) ?? '--'}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                                    <span>Cues</span>
-                                    <span className="text-zinc-300">{renderSubtitleCues.length}</span>
+                                    <span className="text-[11px] truncate font-semibold">{renderSubtitleFile.name}</span>
                                   </div>
                                 </>
                               ) : (
