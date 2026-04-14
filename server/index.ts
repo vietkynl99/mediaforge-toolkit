@@ -56,6 +56,7 @@ type RenderConfigV2 = {
     resolution: string;
     framerate: number;
     duration?: number;
+    start?: number;
     backgroundColor?: string;
     trackLabels?: Record<string, string>;
     imageMatchDuration?: Record<string, boolean>;
@@ -881,6 +882,7 @@ const buildRenderV2FilterGraph = async (
   const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
   const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
   const background = normalizeFfmpegColor(config.timeline.backgroundColor || '#000000');
+  const outputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
 
   const visualItems = config.items.filter(item => item.type === 'video' || item.type === 'image');
   const audioItems = config.items.filter(item => item.type === 'audio');
@@ -901,22 +903,24 @@ const buildRenderV2FilterGraph = async (
   }
 
   const defaultDuration = 5;
-  const itemTiming = inputs.map(entry => {
-    const start = Math.max(0, entry.item.timeline?.start ?? 0);
-    const trimStart = Math.max(0, entry.item.timeline?.trimStart ?? 0);
-    const trimEnd = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
+  const rawItemTiming = inputs.map(entry => {
+    const startRaw = Math.max(0, entry.item.timeline?.start ?? 0);
+    const trimStartRaw = Math.max(0, entry.item.timeline?.trimStart ?? 0);
+    const trimEndRaw = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
     const baseDuration = entry.duration && entry.duration > 0
-      ? Math.max(0.1, entry.duration - trimStart - trimEnd)
+      ? Math.max(0.1, entry.duration - trimStartRaw - trimEndRaw)
       : defaultDuration;
-    const duration = Number.isFinite(entry.item.timeline?.duration)
+    const durationRaw = Number.isFinite(entry.item.timeline?.duration)
       ? Math.max(0.1, Number(entry.item.timeline?.duration))
       : baseDuration;
-    return { entry, start, duration, trimStart };
+    const endRaw = startRaw + durationRaw;
+    return { entry, startRaw, durationRaw, trimStartRaw, endRaw };
   });
-  const outputDurationFromItems = itemTiming.reduce((max, t) => Math.max(max, t.start + t.duration), 0);
+
+  const outputDurationFromItems = rawItemTiming.reduce((max, t) => Math.max(max, t.endRaw - outputStart), 0);
   const outputDuration = Number.isFinite(config.timeline.duration)
     ? Math.max(0.1, Number(config.timeline.duration))
-    : Math.max(defaultDuration, outputDurationFromItems);
+    : Math.max(0.1, outputDurationFromItems);
 
   const inputArgs: string[] = [];
   const inputEntries: Array<{
@@ -925,12 +929,27 @@ const buildRenderV2FilterGraph = async (
     item: RenderItemV2;
     timing?: { start: number; duration: number; trimStart: number };
   }> = [];
-  inputs.forEach(entry => {
+
+  const finalItemTiming: Array<{ entry: any; start: number; duration: number; trimStart: number }> = [];
+
+  inputs.forEach((entry, idx) => {
     const args: string[] = [];
-    const timing = itemTiming.find(t => t.entry === entry);
+    const rawT = rawItemTiming[idx];
+    
+    if (rawT.endRaw <= outputStart || rawT.startRaw >= outputStart + outputDuration) {
+      return;
+    }
+
+    const start = Math.max(0, rawT.startRaw - outputStart);
+    const end = Math.min(outputDuration, rawT.endRaw - outputStart);
+    const duration = Math.max(0.01, end - start);
+    const trimStart = rawT.trimStartRaw + Math.max(0, outputStart - rawT.startRaw);
+
+    const timing = { entry, start, duration, trimStart };
+    finalItemTiming.push(timing);
+
     if (entry.type === 'image') {
-      const duration = timing?.duration ?? outputDuration;
-      args.push('-loop', '1', '-t', String(duration));
+      args.push('-loop', '1', '-t', String(duration + start));
     }
     args.push('-i', entry.path);
     inputArgs.push(...args);
@@ -949,10 +968,13 @@ const buildRenderV2FilterGraph = async (
   let visualIndex = 0;
   const sortedVisual = [...visualItems].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
   for (const item of sortedVisual) {
-    const inputIndex = inputs.findIndex(entry => entry.item === item);
+    const timing = finalItemTiming.find(t => t.entry.item === item);
+    if (!timing) continue;
+
+    const inputIndex = inputEntries.findIndex(e => e.item === item);
     if (inputIndex < 0) continue;
+
     const label = `[v${visualIndex}]`;
-    const timing = itemTiming.find(t => t.entry.item === item);
     const start = timing?.start ?? 0;
     const duration = timing?.duration ?? outputDuration;
     const end = Math.max(start + 0.01, start + duration);
@@ -1092,17 +1114,19 @@ const buildRenderV2FilterGraph = async (
 
   for (let idx = 0; idx < subtitleItems.length; idx += 1) {
     const subtitleItem = subtitleItems[idx];
+    const timing = finalItemTiming.find(t => t.entry.item === subtitleItem);
+    if (!timing) continue;
+
     const subPath = resolveRenderInputPath(subtitleItem.source?.ref, config.inputsMap)
       ?? (subtitleItem.source?.path ? resolveSafePath(subtitleItem.source.path) : null);
     if (!subPath) continue;
-    const timing = itemTiming.find(t => t.entry.item === subtitleItem);
-    const start = timing?.start ?? 0;
-    const duration = timing?.duration ?? outputDuration;
-    const end = Math.max(start + 0.01, start + duration);
+    const start = timing.start;
+    const end = start + timing.duration;
     const stylePayload = {
       ...(subtitleItem.subtitleStyle ?? {}),
       playResX: outW,
-      playResY: outH
+      playResY: outH,
+      shift: -outputStart
     };
     const style = parseAssRenderStyle(stylePayload);
     const assOut = path.join(tmpDir, `render-v2-${idx}.ass`);
@@ -1122,27 +1146,30 @@ const buildRenderV2FilterGraph = async (
     const textItem = textItems[idx];
     const rawText = typeof textItem.text?.value === 'string' ? textItem.text.value.trim() : '';
     if (!rawText) continue;
-    const timing = {
-      start: Number.isFinite(textItem.text?.start)
+    
+    const itemStartRaw = Number.isFinite(textItem.text?.start)
         ? Number(textItem.text?.start)
-        : (textItem.timeline?.start ?? 0),
-      duration: Number.isFinite(textItem.text?.end)
-        ? Math.max(0.01, Number(textItem.text?.end) - (Number(textItem.text?.start ?? textItem.timeline?.start ?? 0)))
+        : (textItem.timeline?.start ?? 0);
+    const itemEndRaw = Number.isFinite(textItem.text?.end)
+        ? Number(textItem.text?.end)
         : (Number.isFinite(textItem.timeline?.duration)
-          ? Math.max(0.01, Number(textItem.timeline?.duration))
-          : outputDuration)
-    };
-    const start = Math.max(0, timing.start);
-    const end = Math.max(start + 0.01, start + timing.duration);
+          ? itemStartRaw + Number(textItem.timeline?.duration)
+          : itemStartRaw + 5);
+
+    if (itemEndRaw <= outputStart || itemStartRaw >= outputStart + outputDuration) {
+      continue;
+    }
+
     const stylePayload = {
       ...(textItem.subtitleStyle ?? {}),
       playResX: outW,
-      playResY: outH
+      playResY: outH,
+      shift: -outputStart
     };
     const style = parseAssRenderStyle(stylePayload);
     const assOut = path.join(tmpDir, `render-text-${idx}.ass`);
     try {
-      const doc = buildAssDocument([{ start, end, text: rawText }], style);
+      const doc = buildAssDocument([{ start: itemStartRaw, end: itemEndRaw, text: rawText }], style);
       await fs.writeFile(assOut, doc, 'utf-8');
       const subFilter = buildSubtitlesVideoFilter(assOut, { w: style.playResX, h: style.playResY });
       const label = `[vtext${idx}]`;
@@ -1157,17 +1184,20 @@ const buildRenderV2FilterGraph = async (
   let audioIndex = 0;
   for (const item of audioItems) {
     if (!includeAudio) break;
-    const inputIndex = inputs.findIndex(entry => entry.item === item);
+    const timing = finalItemTiming.find(t => t.entry.item === item);
+    if (!timing) continue;
+
+    const inputIndex = inputEntries.findIndex(e => e.item === item);
     if (inputIndex < 0) continue;
     if (item.audioMix?.mute) continue;
+
     const label = `[a${audioIndex}]`;
     let chain = `[${inputIndex}:a]`;
     const addFilter = (filter: string) => {
       chain += chain.endsWith(']') ? filter : `,${filter}`;
     };
-    const timing = itemTiming.find(t => t.entry.item === item);
-    const trimStart = timing?.trimStart ?? 0;
-    const duration = timing?.duration ?? outputDuration;
+    const trimStart = timing.trimStart;
+    const duration = timing.duration;
     const endValue = trimStart + duration;
     if (trimStart > 0 || duration > 0.1) {
       addFilter(`atrim=start=${trimStart}:end=${endValue}`);
@@ -1178,7 +1208,7 @@ const buildRenderV2FilterGraph = async (
       const factor = Math.pow(10, gainDb / 20);
       addFilter(`volume=${factor.toFixed(4)}`);
     }
-    const start = timing?.start ?? 0;
+    const start = timing.start;
     if (start > 0) {
       const ms = Math.round(start * 1000);
       addFilter(`adelay=${ms}|${ms}`);
@@ -1789,7 +1819,12 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       }
       const previewSeconds = (job.params as any)?.render?.previewSeconds;
       if (Number.isFinite(previewSeconds) && previewSeconds > 0) {
-        appendJobLog(job, `Render preview: first ${previewSeconds}s\n`);
+        const start = config?.timeline.start || 0;
+        if (start > 0) {
+          appendJobLog(job, `Render preview: last ${previewSeconds}s (starting from ${start.toFixed(1)}s)\n`);
+        } else {
+          appendJobLog(job, `Render preview: first ${previewSeconds}s\n`);
+        }
       }
       renderTask.status = 'active';
       renderTask.progress = 0;

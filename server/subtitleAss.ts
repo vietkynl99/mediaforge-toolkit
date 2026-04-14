@@ -30,6 +30,7 @@ export type AssRenderStyle = {
   autoMovePositions: Array<{ x: number; y: number }>;
   playResX: number;
   playResY: number;
+  shift?: number;
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -106,7 +107,8 @@ export const parseAssRenderStyle = (raw: unknown): AssRenderStyle => {
     autoMoveInterval,
     autoMovePositions,
     playResX,
-    playResY
+    playResY,
+    shift: num(o.shift, 0)
   };
 };
 
@@ -190,7 +192,7 @@ export const buildAssDocument = (cues: SubtitleCue[], style: AssRenderStyle): st
     `${bold},${italic},${underline},${strike},${scaleX},${scaleY},${style.spacing},${angle},` +
     `${borderStyle},${style.outline},${style.shadow},${style.alignment},${style.marginL},${style.marginR},${style.marginV},${encoding}`;
 
-  const shift = 0;
+  const shift = style.shift ?? 0;
   const posOverride = style.positionMode === 'position'
     ? `{\\pos(${style.positionX},${style.positionY})}`
     : '';

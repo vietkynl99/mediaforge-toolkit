@@ -304,7 +304,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           }}
                           className="w-full px-3 py-2 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                          Render Full Video
+                          Full Video
                         </button>
                         <button
                           type="button"
@@ -317,7 +317,25 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           }}
                           className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-zinc-800 text-zinc-200 hover:border-zinc-700 hover:text-zinc-50 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                          Render Preview 30s
+                          Preview first 30s
+                        </button>
+                        <button
+                          type="button"
+                          disabled={runPipelineSubmitting}
+                          onClick={() => {
+                            setRenderConfirmOpen(false);
+                            const duration = 30;
+                            const start = Math.max(0, renderTimelineDuration - duration);
+                            runPipelineJob({ 
+                              renderPreviewSeconds: duration,
+                              renderPreviewStartSeconds: start
+                            });
+                            setShowRenderStudio(false);
+                            setActiveTab('dashboard');
+                          }}
+                          className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-zinc-800 text-zinc-200 hover:border-zinc-700 hover:text-zinc-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Preview last 30s
                         </button>
                         <button
                           type="button"

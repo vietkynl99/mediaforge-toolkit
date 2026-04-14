@@ -5751,6 +5751,7 @@ export default function App() {
       return;
     }
     const renderPreviewSeconds = options?.renderPreviewSeconds;
+    const renderPreviewStartSeconds = options?.renderPreviewStartSeconds;
     const sendPipeline = async (overwrite: boolean) => {
       const pipelinePayload: Record<string, any> = runPipelineHasDownload
         ? {
@@ -5847,6 +5848,9 @@ export default function App() {
               ...renderConfigV2.timeline,
               duration: Number(renderPreviewSeconds)
             };
+            if (Number.isFinite(renderPreviewStartSeconds)) {
+              renderConfigV2.timeline.start = Number(renderPreviewStartSeconds);
+            }
           }
           pipelinePayload.renderConfigV2 = renderConfigV2;
         }
