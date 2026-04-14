@@ -175,8 +175,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const singleTextEndFallback = renderTimelineDuration > 0
     ? renderTimelineDuration
     : (renderVideoDuration ?? renderAudioDuration ?? 5);
-  const singleTextStartValue = singleTextStartDraft === '' ? '0' : singleTextStartDraft;
-  const singleTextEndValue = singleTextEndDraft === '' ? String(singleTextEndFallback) : singleTextEndDraft;
+  const singleTextMatchDuration = String(renderParamsDraft?.text?.singleTextMatchDuration ?? '0') === '1';
+  const singleTextStartValue = singleTextMatchDuration ? '0' : (singleTextStartDraft === '' ? '0' : singleTextStartDraft);
+  const singleTextEndValue = singleTextMatchDuration ? String(singleTextEndFallback) : (singleTextEndDraft === '' ? String(singleTextEndFallback) : singleTextEndDraft);
   const singleTextValueDraft = String(renderParamsDraft?.text?.singleText ?? '').trim();
   const singleTextStartNumber = coerceNumber(singleTextStartValue, 0) ?? 0;
   const singleTextEndNumber = coerceNumber(singleTextEndValue, singleTextEndFallback) ?? singleTextEndFallback;
@@ -2633,46 +2634,61 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   placeholder="Type text to show on the timeline"
                                   className="mt-2 h-20 w-full resize-none rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-2 text-xs text-zinc-200 focus:outline-none"
                                 />
-                                <div className="mt-2 grid grid-cols-2 gap-2">
-                                  <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Start (s)</label>
-                                    <input
-                                      type="number"
-                                      step="0.1"
-                                      value={singleTextStartValue}
-                                      onChange={e => {
-                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
-                                        updateRenderParamDraft('text', 'singleTextStart', e.target.value);
-                                      }}
-                                      onFocus={() => {
-                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
-                                        holdPreview();
-                                      }}
-                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('text', 'singleTextStart'))}
-                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('text', 'singleTextStart'))}
-                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                    />
+                                <label className="mt-2 flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={singleTextMatchDuration}
+                                    onChange={e => {
+                                      const v = e.target.checked ? '1' : '0';
+                                      updateRenderParamDraft('text', 'singleTextMatchDuration', v);
+                                      updateRenderParam('text', 'singleTextMatchDuration', v);
+                                    }}
+                                    className="rounded border-zinc-600"
+                                  />
+                                  Match duration with timeline
+                                </label>
+                                {!singleTextMatchDuration && (
+                                  <div className="mt-2 grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Start (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={singleTextStartValue}
+                                        onChange={e => {
+                                          if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                          updateRenderParamDraft('text', 'singleTextStart', e.target.value);
+                                        }}
+                                        onFocus={() => {
+                                          if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                          holdPreview();
+                                        }}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('text', 'singleTextStart'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('text', 'singleTextStart'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">End (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={singleTextEndValue}
+                                        onChange={e => {
+                                          if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                          updateRenderParamDraft('text', 'singleTextEnd', e.target.value);
+                                        }}
+                                        onFocus={() => {
+                                          if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
+                                          holdPreview();
+                                        }}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('text', 'singleTextEnd'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('text', 'singleTextEnd'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
                                   </div>
-                                  <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">End (s)</label>
-                                    <input
-                                      type="number"
-                                      step="0.1"
-                                      value={singleTextEndValue}
-                                      onChange={e => {
-                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
-                                        updateRenderParamDraft('text', 'singleTextEnd', e.target.value);
-                                      }}
-                                      onFocus={() => {
-                                        if (!renderTextTrackEnabled) setRenderTextTrackEnabled(true);
-                                        holdPreview();
-                                      }}
-                                      onBlur={() => releasePreview(() => commitRenderParamDraftValue('text', 'singleTextEnd'))}
-                                      onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('text', 'singleTextEnd'))}
-                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                    />
-                                  </div>
-                                </div>
+                                )}
                               </div>
                               <div className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 p-2">
                                 <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Auto Move (Text Track)</div>

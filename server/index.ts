@@ -78,7 +78,7 @@ type RenderItemV2 = {
   timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
   layer?: number;
   mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
-  text?: { value: string; start?: number; end?: number };
+  text?: { value: string; start?: number; end?: number; matchDuration?: string };
   transform?: {
     x?: number;
     y?: number;

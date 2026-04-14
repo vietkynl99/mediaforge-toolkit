@@ -162,6 +162,7 @@ type RenderSubtitleAssState = {
   singleText?: string;
   singleTextStart?: string;
   singleTextEnd?: string;
+  singleTextMatchDuration?: string;
 };
 
 type RenderConfigV2 = {
@@ -189,7 +190,7 @@ type RenderConfigV2 = {
     timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
     layer?: number;
     mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
-    text?: { value: string; start?: number; end?: number };
+    text?: { value: string; start?: number; end?: number; matchDuration?: string };
     transform?: {
       x?: number;
       y?: number;
@@ -260,7 +261,8 @@ const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
   textAutoMovePositions: '',
   singleText: '',
   singleTextStart: '0',
-  singleTextEnd: ''
+  singleTextEnd: '',
+  singleTextMatchDuration: '0'
 };
 
 const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
@@ -292,6 +294,7 @@ const RENDER_TEXT_PARAM_FIELDS = new Set([
   'singleText',
   'singleTextStart',
   'singleTextEnd',
+  'singleTextMatchDuration',
   'textOpacity',
   'textAutoMoveEnabled',
   'textAutoMoveInterval',
@@ -1531,11 +1534,12 @@ export default function App() {
   const renderVideoDuration = renderVideoFile?.durationSeconds ?? parseDurationToSeconds(renderVideoFile?.duration);
   const renderAudioDuration = renderAudioFile?.durationSeconds ?? parseDurationToSeconds(renderAudioFile?.duration);
   const singleTextValue = String(renderParams.text.singleText ?? '').trim();
-  const singleTextStart = coerceNumber(renderParams.text.singleTextStart, 0) ?? 0;
-  const singleTextFallbackEnd = renderVideoDuration ?? renderAudioDuration ?? 5;
-  const singleTextEnd = coerceNumber(renderParams.text.singleTextEnd, singleTextFallbackEnd) ?? singleTextFallbackEnd;
-  const singleTextDuration = singleTextValue ? Math.max(0.01, singleTextEnd - singleTextStart) : 0;
-  const singleTextTrackEnd = singleTextValue ? singleTextStart + singleTextDuration : 0;
+  const singleTextMatchDuration = String(renderParams.text.singleTextMatchDuration ?? '0') === '1';
+  const singleTextStart = singleTextMatchDuration ? 0 : (coerceNumber(renderParams.text.singleTextStart, 0) ?? 0);
+  const singleTextFallbackEndTemp = renderVideoDuration ?? renderAudioDuration ?? 5;
+  const singleTextEndTemp = singleTextMatchDuration ? singleTextFallbackEndTemp : (coerceNumber(renderParams.text.singleTextEnd, singleTextFallbackEndTemp) ?? singleTextFallbackEndTemp);
+  const singleTextDurationTemp = singleTextValue ? Math.max(0.01, singleTextEndTemp - singleTextStart) : 0;
+  const singleTextTrackEndTemp = singleTextValue ? singleTextStart + singleTextDurationTemp : 0;
   const renderSubtitleDuration = renderSubtitleFile?.durationSeconds
     ?? parseDurationToSeconds(renderSubtitleFile?.duration);
   const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string, value: any) => {
@@ -1677,7 +1681,7 @@ export default function App() {
     renderVideoDuration ?? 0,
     renderAudioDuration ?? 0,
     renderSubtitleDuration ?? 0,
-    singleTextTrackEnd ?? 0
+    singleTextTrackEndTemp ?? 0
   );
   const renderImageDurationFallback = renderTimelineMax > 0 ? renderTimelineMax : 5;
   const renderImageDurationEntries = renderImageFiles.map(file => ({
@@ -1690,6 +1694,12 @@ export default function App() {
   /** Chỉ UI: strip timeline rộng thêm một phần sau điểm cuối nội dung (scroll / click map theo giá trị này, thời gian clamp về duration thật). */
   const renderTimelineViewDuration =
     renderTimelineDuration > 0 ? renderTimelineDuration * (1 + RENDER_TIMELINE_VIEW_PAD) : 0;
+
+  // Recalculate single text with actual timeline duration
+  const singleTextFallbackEnd = renderTimelineDuration > 0 ? renderTimelineDuration : singleTextFallbackEndTemp;
+  const singleTextEnd = singleTextMatchDuration ? singleTextFallbackEnd : (coerceNumber(renderParams.text.singleTextEnd, singleTextFallbackEnd) ?? singleTextFallbackEnd);
+  const singleTextDuration = singleTextValue ? Math.max(0.01, singleTextEnd - singleTextStart) : 0;
+  const singleTextTrackEnd = singleTextValue ? singleTextStart + singleTextDuration : 0;
   const renderSubtitleLanes = useMemo(() => {
     if (renderSubtitleCues.length === 0) return [];
     const sorted = [...renderSubtitleCues].sort((a, b) => {
@@ -3277,6 +3287,7 @@ export default function App() {
     delete subtitleBaseStyle.singleText;
     delete subtitleBaseStyle.singleTextStart;
     delete subtitleBaseStyle.singleTextEnd;
+    delete subtitleBaseStyle.singleTextMatchDuration;
     delete subtitleBaseStyle.textOpacity;
     const {
       textAutoMoveEnabled,
@@ -3285,6 +3296,7 @@ export default function App() {
       singleText,
       singleTextStart,
       singleTextEnd,
+      singleTextMatchDuration,
       textOpacity,
       ...textBaseStyle
     } = renderParams.text;
@@ -3505,7 +3517,7 @@ export default function App() {
         type: 'text',
         source: {},
         timeline: { start, duration: safeEnd - start },
-        text: { value: singleTextValue, start, end: safeEnd },
+        text: { value: singleTextValue, start, end: safeEnd, matchDuration: singleTextMatchDuration ? '1' : '0' },
         subtitleStyle: textSubtitleStyle
       });
       const textLabel = (renderTrackLabels.text ?? '').trim();
@@ -3727,6 +3739,23 @@ export default function App() {
         });
         return next;
       });
+    }
+
+    const textItem = template.config.items.find(item => item.type === 'text');
+    if (textItem?.text) {
+      const textData = textItem.text;
+      const matchDuration = textData.matchDuration === '1';
+      setRenderParams(prev => ({
+        ...prev,
+        text: {
+          ...prev.text,
+          singleText: textData.value ?? prev.text.singleText,
+          singleTextStart: matchDuration ? '0' : String(textData.start ?? 0),
+          singleTextEnd: matchDuration ? '' : String(textData.end ?? 0),
+          singleTextMatchDuration: textData.matchDuration ?? '0'
+        }
+      }));
+      setRenderTextTrackEnabled(true);
     }
   };
 
