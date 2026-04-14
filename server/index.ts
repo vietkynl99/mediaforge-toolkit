@@ -58,6 +58,7 @@ type RenderConfigV2 = {
     duration?: number;
     backgroundColor?: string;
     trackLabels?: Record<string, string>;
+    imageMatchDuration?: Record<string, boolean>;
   };
   renderOptions?: {
     codec?: 'h264' | 'h265';

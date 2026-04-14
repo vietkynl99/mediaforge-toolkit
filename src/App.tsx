@@ -174,6 +174,7 @@ type RenderConfigV2 = {
     backgroundColor?: string;
     /** Display names keyed by placeholder ref (inputsMap keys) plus `text` for the text overlay track. */
     trackLabels?: Record<string, string>;
+    imageMatchDuration?: boolean;
   };
   renderOptions?: {
     codec?: 'h264' | 'h265';
@@ -1294,6 +1295,7 @@ export default function App() {
   const [renderInputFileIds, setRenderInputFileIds] = useState<string[]>([]);
   const [renderImageOrderIds, setRenderImageOrderIds] = useState<string[]>([]);
   const [renderImageDurations, setRenderImageDurations] = useState<Record<string, string>>({});
+  const [renderImageMatchDuration, setRenderImageMatchDuration] = useState<Record<string, boolean>>({});
   const [renderImageTransforms, setRenderImageTransforms] = useState<Record<string, {
     x?: string;
     y?: string;
@@ -1525,6 +1527,7 @@ export default function App() {
     setRenderImageTransforms({});
     setRenderVideoTransforms({});
     setRenderImageDurations({});
+    setRenderImageMatchDuration({});
     setRenderImageOrderIds([]);
     setRenderInputFileIds([]);
     setRenderTextTrackEnabled(false);
@@ -1684,9 +1687,23 @@ export default function App() {
     singleTextTrackEndTemp ?? 0
   );
   const renderImageDurationFallback = renderTimelineMax > 0 ? renderTimelineMax : 5;
-  const renderImageDurationEntries = renderImageFiles.map(file => ({
+  const renderImageDurationEntriesTemp = renderImageFiles.map(file => ({
     id: file.id,
     duration: coerceNumber(renderImageDurations[file.id], renderImageDurationFallback) ?? renderImageDurationFallback
+  }));
+  const renderImageTimelineMaxTemp = renderImageDurationEntriesTemp.reduce((max, entry) => Math.max(max, entry.duration), 0);
+  /** Thời lượng thật = track dài nhất (hiển thị, preview, export). */
+  const renderTimelineDurationTemp = Math.max(renderTimelineMax, renderImageTimelineMaxTemp);
+  /** Chỉ UI: strip timeline rộng thêm một phần sau điểm cuối nội dung (scroll / click map theo giá trị này, thời gian clamp về duration thật). */
+  const renderTimelineViewDurationTemp =
+    renderTimelineDurationTemp > 0 ? renderTimelineDurationTemp * (1 + RENDER_TIMELINE_VIEW_PAD) : 0;
+
+  // Recalculate image durations with actual timeline duration
+  const renderImageDurationEntries = renderImageFiles.map(file => ({
+    id: file.id,
+    duration: renderImageMatchDuration[file.id] && renderTimelineDurationTemp > 0
+      ? renderTimelineDurationTemp
+      : (coerceNumber(renderImageDurations[file.id], renderImageDurationFallback) ?? renderImageDurationFallback)
   }));
   const renderImageTimelineMax = renderImageDurationEntries.reduce((max, entry) => Math.max(max, entry.duration), 0);
   /** Thời lượng thật = track dài nhất (hiển thị, preview, export). */
@@ -2892,6 +2909,7 @@ export default function App() {
     renderInputFileIds,
     renderImageOrderIds,
     renderImageDurations,
+    renderImageMatchDuration,
     renderImageTransforms,
     renderVideoTransforms,
     renderTrackLabels,
@@ -2915,6 +2933,7 @@ export default function App() {
     renderTrackLabels,
     renderImageTransforms,
     renderImageDurations,
+    renderImageMatchDuration,
     renderImageOrderIds,
     renderInputFileIds
   ]);
@@ -3529,7 +3548,8 @@ export default function App() {
       timeline: {
         resolution: timelineResolution,
         framerate: timelineFramerate,
-        trackLabels: trackLabelsOut
+        trackLabels: trackLabelsOut,
+        imageMatchDuration: renderImageMatchDuration
       },
       renderOptions: {
         codec: renderParams.render?.codec === 'h265' ? 'h265' : 'h264',
@@ -3607,6 +3627,20 @@ export default function App() {
     };
     setRenderConfigV2Override(nextConfig);
     setRenderTrackLabels(template.config.timeline?.trackLabels ?? {});
+    const imageMatchDurationRaw = template.config.timeline?.imageMatchDuration;
+    let imageMatchDuration: Record<string, boolean> = {};
+    if (typeof imageMatchDurationRaw === 'boolean') {
+      // Backward compatibility: old templates had global boolean, convert to per-image
+      const shouldMatch = imageMatchDurationRaw;
+      imageMatchDuration = Object.fromEntries(
+        Object.keys(template.config.inputsMap ?? {})
+          .filter(key => key.startsWith('image'))
+          .map(key => [key, shouldMatch])
+      );
+    } else if (imageMatchDurationRaw && typeof imageMatchDurationRaw === 'object') {
+      imageMatchDuration = imageMatchDurationRaw as Record<string, boolean>;
+    }
+    setRenderImageMatchDuration(imageMatchDuration);
     const selectedIds = Object.values(mapping).filter(Boolean);
     setRenderInputFileIds(selectedIds);
     const imageIdsInOrder = Object.keys(template.config.inputsMap ?? {})
@@ -5076,10 +5110,10 @@ export default function App() {
     if (lastRenderConfigSyncRef.current === renderConfigV2Override) return;
     lastRenderConfigSyncRef.current = renderConfigV2Override;
     const inputsMap = renderConfigV2Override.inputsMap ?? {};
-    const fileByPath = new Map(
+    const fileByPath = new Map<string, VaultFile>(
       runPipelineProject.files
         .filter(file => Boolean(file.relativePath))
-        .map(file => [file.relativePath, file])
+        .map(file => [file.relativePath!, file])
     );
     const imageIdsByRef = Object.keys(inputsMap)
       .filter(key => key.startsWith('image'))
@@ -5105,7 +5139,7 @@ export default function App() {
       if (item.type !== 'image') return;
       const refKey = item.source?.ref;
       const pathValue = refKey ? inputsMap[refKey] : undefined;
-      const fileId = pathValue ? fileByPath.get(pathValue)?.id : null;
+      const fileId = pathValue ? (fileByPath.get(pathValue) as VaultFile | undefined)?.id : null;
       if (!fileId) return;
       const transform = item.transform ?? {};
       const crop = (transform.crop ?? {}) as { x?: number; y?: number; w?: number; h?: number };
@@ -5291,8 +5325,8 @@ export default function App() {
           }
           if (typeof entry === 'object') {
             const obj = entry as Record<string, unknown>;
-            const x = coerceNumber(obj.x, NaN);
-            const y = coerceNumber(obj.y, NaN);
+            const x = coerceNumber(obj.x as string | number | null | undefined, NaN);
+            const y = coerceNumber(obj.y as string | number | null | undefined, NaN);
             if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
             return `${x},${y}`;
           }
@@ -6042,6 +6076,8 @@ export default function App() {
     renderImageDurationEntries,
     renderImageDurations,
     setRenderImageDurations,
+    renderImageMatchDuration,
+    setRenderImageMatchDuration,
     renderImageOrderIds,
     setRenderImageOrderIds,
     renderImageTransforms,

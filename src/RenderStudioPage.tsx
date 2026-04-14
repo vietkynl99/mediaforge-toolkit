@@ -55,6 +55,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     renderImageDurationEntries,
     renderImageDurations,
     setRenderImageDurations,
+    renderImageMatchDuration,
+    setRenderImageMatchDuration,
     renderImageOrderIds,
     setRenderImageOrderIds,
     renderImageTransforms,
@@ -3060,58 +3062,76 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     const durationValue = renderImageDurations[file.id] ?? '';
                                     const transform = renderImageTransforms?.[file.id] ?? {};
                                     const layerIndex = renderImageFiles.findIndex(entry => entry.id === file.id);
+                                    const isMatchDuration = renderImageMatchDuration[file.id] ?? false;
                                     return (
                                       <div
                                         key={file.id}
-                                        className="flex items-center gap-2 border border-zinc-800 rounded-lg px-2 py-1.5 bg-zinc-900/60"
-                                        draggable
-                                        onDragStart={event => {
-                                          event.dataTransfer.setData('text/plain', file.id);
-                                          event.dataTransfer.effectAllowed = 'move';
-                                        }}
-                                        onDragOver={event => {
-                                          event.preventDefault();
-                                          event.dataTransfer.dropEffect = 'move';
-                                        }}
-                                        onDrop={event => {
-                                          event.preventDefault();
-                                          const draggedId = event.dataTransfer.getData('text/plain');
-                                          if (!draggedId || draggedId === file.id) return;
-                                          setRenderImageOrderIds(prev => {
-                                            const next = prev.filter(id => id !== draggedId);
-                                            const targetIndex = next.indexOf(file.id);
-                                            next.splice(Math.max(0, targetIndex), 0, draggedId);
-                                            return [...next];
-                                          });
-                                        }}
+                                        className="flex flex-col gap-2 border border-zinc-800 rounded-lg px-2 py-1.5 bg-zinc-900/60"
                                       >
-                                        <div className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center text-zinc-500 cursor-grab">
-                                          <Image size={12} />
-                                        </div>
-                                        <div className="min-w-0 flex-1">
-                                          <div className="text-xs text-zinc-200 truncate">{file.name}</div>
-                                          <div className="text-[10px] text-zinc-500">
-                                            Layer {layerIndex >= 0 ? layerIndex + 1 : '--'}
+                                        <div
+                                          className="flex items-center gap-2"
+                                          draggable
+                                          onDragStart={event => {
+                                            event.dataTransfer.setData('text/plain', file.id);
+                                            event.dataTransfer.effectAllowed = 'move';
+                                          }}
+                                          onDragOver={event => {
+                                            event.preventDefault();
+                                            event.dataTransfer.dropEffect = 'move';
+                                          }}
+                                          onDrop={event => {
+                                            event.preventDefault();
+                                            const draggedId = event.dataTransfer.getData('text/plain');
+                                            if (!draggedId || draggedId === file.id) return;
+                                            setRenderImageOrderIds(prev => {
+                                              const next = prev.filter(id => id !== draggedId);
+                                              const targetIndex = next.indexOf(file.id);
+                                              next.splice(Math.max(0, targetIndex), 0, draggedId);
+                                              return [...next];
+                                            });
+                                          }}
+                                        >
+                                          <div className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center text-zinc-500 cursor-grab">
+                                            <Image size={12} />
                                           </div>
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-xs text-zinc-200 truncate">{file.name}</div>
+                                            <div className="text-[10px] text-zinc-500">
+                                              Layer {layerIndex >= 0 ? layerIndex + 1 : '--'}
+                                            </div>
+                                          </div>
+                                          <label className="flex items-center gap-1 text-xs text-zinc-400 cursor-pointer">
+                                            <input
+                                              type="checkbox"
+                                              checked={isMatchDuration}
+                                              onChange={e => setRenderImageMatchDuration(prev => ({ ...prev, [file.id]: e.target.checked }))}
+                                              className="rounded border-zinc-600"
+                                            />
+                                            Match
+                                          </label>
                                         </div>
-                                        <input
-                                          type="number"
-                                          min="0.1"
-                                          step="0.1"
-                                          value={durationValue}
-                                          onChange={e => {
-                                            const value = e.target.value;
-                                            setRenderImageDurations(prev => ({ ...prev, [file.id]: value }));
-                                          }}
-                                          onFocus={holdPreview}
-                                          onBlur={() => setRenderPreviewHold(false)}
-                                          onKeyDown={(event) => {
-                                            if (event.key === 'Enter') setRenderPreviewHold(false);
-                                          }}
-                                          className="w-20 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                          placeholder="Duration"
-                                        />
-                                        <span className="text-[10px] text-zinc-500">s</span>
+                                        {!isMatchDuration && (
+                                          <>
+                                            <input
+                                              type="number"
+                                              min="0.1"
+                                              step="0.1"
+                                              value={durationValue}
+                                              onChange={e => {
+                                                const value = e.target.value;
+                                                setRenderImageDurations(prev => ({ ...prev, [file.id]: value }));
+                                              }}
+                                              onFocus={holdPreview}
+                                              onBlur={() => setRenderPreviewHold(false)}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter') setRenderPreviewHold(false);
+                                              }}
+                                              className="w-20 bg-zinc-900 border border-zinc-800 rounded-md px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              placeholder="Duration"
+                                            />
+                                            <span className="text-[10px] text-zinc-500">s</span>
+                                          </>
+                                        )}
                                       </div>
                                     );
                                   })}
