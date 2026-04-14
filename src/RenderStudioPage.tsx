@@ -3091,15 +3091,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                             });
                                           }}
                                         >
-                                          <div className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center text-zinc-500 cursor-grab">
-                                            <Image size={12} />
-                                          </div>
-                                          <div className="min-w-0 flex-1">
-                                            <div className="text-xs text-zinc-200 truncate">{file.name}</div>
-                                            <div className="text-[10px] text-zinc-500">
-                                              Layer {layerIndex >= 0 ? layerIndex + 1 : '--'}
-                                            </div>
-                                          </div>
                                           <label className="flex items-center gap-1 text-xs text-zinc-400 cursor-pointer">
                                             <input
                                               type="checkbox"
@@ -3111,7 +3102,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                           </label>
                                         </div>
                                         {!isMatchDuration && (
-                                          <>
+                                          <div className="flex items-center gap-2">
                                             <input
                                               type="number"
                                               min="0.1"
@@ -3130,450 +3121,449 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                               placeholder="Duration"
                                             />
                                             <span className="text-[10px] text-zinc-500">s</span>
-                                          </>
+                                          </div>
                                         )}
-                                      </div>
-                                    );
-                                  })}
-                                  {imageInspectorFiles.map(file => {
-                                    const transform = renderImageTransforms?.[file.id] ?? {};
-                                    return (
-                                      <div key={`tx-${file.id}`} className="border border-zinc-800 rounded-lg p-2 bg-zinc-900/50">
-                                        <div className="text-[11px] text-zinc-400 mb-2 truncate">{file.name}</div>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos X (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.x ?? '50'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], x: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos Y (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.y ?? '50'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], y: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              min="0"
-                                              value={transform.scale ?? '100'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], scale: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Opacity (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.opacity ?? '100'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], opacity: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Rotation (deg)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.rotation ?? '0'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], rotation: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fit</label>
-                                            <select
-                                              value={transform.fit ?? 'contain'}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], fit: e.target.value as 'contain' | 'cover' | 'stretch' }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            >
-                                              <option value="contain">contain</option>
-                                              <option value="cover">cover</option>
-                                              <option value="stretch">stretch</option>
-                                            </select>
-                                          </div>
-                                        </div>
-                                        <div className="grid grid-cols-4 gap-2 mt-2">
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop X (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.cropX ?? '0'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], cropX: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop Y (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.cropY ?? '0'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], cropY: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop W (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.cropW ?? '100'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], cropW: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                          <div className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop H (%)</label>
-                                            <input
-                                              type="number"
-                                              step="1"
-                                              value={transform.cropH ?? '100'}
-                                              onFocus={holdPreview}
-                                              onBlur={() => setRenderPreviewHold(false)}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter') setRenderPreviewHold(false);
-                                              }}
-                                              onChange={e => setRenderImageTransforms(prev => ({
-                                                ...prev,
-                                                [file.id]: { ...prev[file.id], cropH: e.target.value }
-                                              }))}
-                                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                            />
-                                          </div>
-                                        </div>
-                                        <div className="border border-zinc-800/70 rounded-lg p-2 mt-2 bg-zinc-950/50">
-                                          <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Mask</div>
+                                        <div className="border border-zinc-800/70 rounded-lg p-2 bg-zinc-900/50">
+                                          <div className="text-[11px] text-zinc-400 mb-2 truncate">{file.name}</div>
                                           <div className="grid grid-cols-2 gap-2">
                                             <div className="flex flex-col gap-1">
-                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Type</label>
-                                              <select
-                                                value={transform.maskType ?? 'none'}
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos X (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.x ?? '50'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
                                                 onChange={e => setRenderImageTransforms(prev => ({
                                                   ...prev,
-                                                  [file.id]: { ...prev[file.id], maskType: e.target.value as 'none' | 'rect' | 'circle' }
+                                                  [file.id]: { ...prev[file.id], x: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Pos Y (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.y ?? '50'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], y: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                min="0"
+                                                value={transform.scale ?? '100'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], scale: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Opacity (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.opacity ?? '100'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], opacity: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Rotation (deg)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.rotation ?? '0'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], rotation: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fit</label>
+                                              <select
+                                                value={transform.fit ?? 'contain'}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], fit: e.target.value as 'contain' | 'cover' | 'stretch' }
                                                 }))}
                                                 className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                               >
-                                                <option value="none">None</option>
-                                                <option value="rect">Rectangle</option>
-                                                <option value="circle">Circle</option>
+                                                <option value="contain">contain</option>
+                                                <option value="cover">cover</option>
+                                                <option value="stretch">stretch</option>
                                               </select>
                                             </div>
                                           </div>
-                                          {transform.maskType && transform.maskType !== 'none' && (
-                                            <div className="grid grid-cols-2 gap-2 mt-2">
+                                          <div className="grid grid-cols-4 gap-2 mt-2">
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop X (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.cropX ?? '0'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], cropX: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop Y (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.cropY ?? '0'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], cropY: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop W (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.cropW ?? '100'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], cropW: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop H (%)</label>
+                                              <input
+                                                type="number"
+                                                step="1"
+                                                value={transform.cropH ?? '100'}
+                                                onFocus={holdPreview}
+                                                onBlur={() => setRenderPreviewHold(false)}
+                                                onKeyDown={(event) => {
+                                                  if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                }}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], cropH: e.target.value }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              />
+                                            </div>
+                                          </div>
+                                          <div className="border border-zinc-800/70 rounded-lg p-2 mt-2 bg-zinc-950/50">
+                                            <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Mask</div>
+                                            <div className="grid grid-cols-2 gap-2">
                                               <div className="flex flex-col gap-1">
-                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
-                                                <input
-                                                  type="number"
-                                                  step="1"
-                                                  value={transform.maskLeft ?? '0'}
-                                                  onFocus={holdPreview}
-                                                  onBlur={() => setRenderPreviewHold(false)}
-                                                  onKeyDown={(event) => {
-                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
-                                                  }}
+                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Type</label>
+                                                <select
+                                                  value={transform.maskType ?? 'none'}
                                                   onChange={e => setRenderImageTransforms(prev => ({
                                                     ...prev,
-                                                    [file.id]: { ...prev[file.id], maskLeft: e.target.value }
+                                                    [file.id]: { ...prev[file.id], maskType: e.target.value as 'none' | 'rect' | 'circle' }
                                                   }))}
                                                   className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                />
-                                              </div>
-                                              <div className="flex flex-col gap-1">
-                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
-                                                <input
-                                                  type="number"
-                                                  step="1"
-                                                  value={transform.maskRight ?? '0'}
-                                                  onFocus={holdPreview}
-                                                  onBlur={() => setRenderPreviewHold(false)}
-                                                  onKeyDown={(event) => {
-                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
-                                                  }}
-                                                  onChange={e => setRenderImageTransforms(prev => ({
-                                                    ...prev,
-                                                    [file.id]: { ...prev[file.id], maskRight: e.target.value }
-                                                  }))}
-                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                />
-                                              </div>
-                                              <div className="flex flex-col gap-1">
-                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
-                                                <input
-                                                  type="number"
-                                                  step="1"
-                                                  value={transform.maskTop ?? '0'}
-                                                  onFocus={holdPreview}
-                                                  onBlur={() => setRenderPreviewHold(false)}
-                                                  onKeyDown={(event) => {
-                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
-                                                  }}
-                                                  onChange={e => setRenderImageTransforms(prev => ({
-                                                    ...prev,
-                                                    [file.id]: { ...prev[file.id], maskTop: e.target.value }
-                                                  }))}
-                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                />
-                                              </div>
-                                              <div className="flex flex-col gap-1">
-                                                <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
-                                                <input
-                                                  type="number"
-                                                  step="1"
-                                                  value={transform.maskBottom ?? '0'}
-                                                  onFocus={holdPreview}
-                                                  onBlur={() => setRenderPreviewHold(false)}
-                                                  onKeyDown={(event) => {
-                                                    if (event.key === 'Enter') setRenderPreviewHold(false);
-                                                  }}
-                                                  onChange={e => setRenderImageTransforms(prev => ({
-                                                    ...prev,
-                                                    [file.id]: { ...prev[file.id], maskBottom: e.target.value }
-                                                  }))}
-                                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                />
+                                                >
+                                                  <option value="none">None</option>
+                                                  <option value="rect">Rectangle</option>
+                                                  <option value="circle">Circle</option>
+                                                </select>
                                               </div>
                                             </div>
-                                          )}
-                                          <div className="text-[10px] text-zinc-600 leading-snug mt-2">
-                                            Mask uses item space (0–100% inset from the image frame after fit/scale).
-                                          </div>
-                                        </div>
-                                        <div className="border border-zinc-800/70 rounded-lg p-2 mt-2 bg-zinc-950/50">
-                                          <div className="flex items-center justify-between gap-2 mb-2">
-                                            <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur</div>
-                                            <button
-                                              type="button"
-                                              onClick={() => addRenderImageBlurEffect(file.id)}
-                                              className="text-[10px] rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:border-zinc-600"
-                                            >
-                                              + Blur region
-                                            </button>
-                                          </div>
-                                          {(transform.blurEffects ?? []).length === 0 ? (
-                                            <div className="text-[11px] text-zinc-500">No blur effect for this image track.</div>
-                                          ) : (
-                                            <div className="flex flex-col gap-2">
-                                              {(transform.blurEffects ?? []).map((effect, idx) => (
-                                                <div key={`img-blur-${file.id}-${idx}`} className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-2 flex flex-col gap-2">
-                                                  <div className="flex items-center justify-between gap-2">
-                                                    <span className="text-[10px] uppercase tracking-widest text-zinc-500">Region #{idx + 1}</span>
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => removeRenderImageBlurEffect(file.id, idx)}
-                                                      className="text-[10px] text-red-400 hover:text-red-300"
-                                                    >
-                                                      Remove
-                                                    </button>
-                                                  </div>
-                                                  <div className="grid grid-cols-2 gap-2">
-                                                    <div className="flex flex-col gap-1">
-                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
-                                                      <input
-                                                        type="number"
-                                                        step="1"
-                                                        min="0"
-                                                        max="100"
-                                                        value={effect.left}
-                                                        onFocus={holdPreview}
-                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'left'))}
-                                                        onChange={e => {
-                                                          const v = coerceNumber(e.target.value, effect.left) ?? effect.left;
-                                                          updateRenderImageBlurEffect(file.id, idx, { left: v });
-                                                        }}
-                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'left'))}
-                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                      />
-                                                    </div>
-                                                    <div className="flex flex-col gap-1">
-                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
-                                                      <input
-                                                        type="number"
-                                                        step="1"
-                                                        min="0"
-                                                        max="100"
-                                                        value={effect.right}
-                                                        onFocus={holdPreview}
-                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'right'))}
-                                                        onChange={e => {
-                                                          const v = coerceNumber(e.target.value, effect.right) ?? effect.right;
-                                                          updateRenderImageBlurEffect(file.id, idx, { right: v });
-                                                        }}
-                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'right'))}
-                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                      />
-                                                    </div>
-                                                    <div className="flex flex-col gap-1">
-                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
-                                                      <input
-                                                        type="number"
-                                                        step="1"
-                                                        min="0"
-                                                        max="100"
-                                                        value={effect.top}
-                                                        onFocus={holdPreview}
-                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'top'))}
-                                                        onChange={e => {
-                                                          const v = coerceNumber(e.target.value, effect.top) ?? effect.top;
-                                                          updateRenderImageBlurEffect(file.id, idx, { top: v });
-                                                        }}
-                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'top'))}
-                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                      />
-                                                    </div>
-                                                    <div className="flex flex-col gap-1">
-                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
-                                                      <input
-                                                        type="number"
-                                                        step="1"
-                                                        min="0"
-                                                        max="100"
-                                                        value={effect.bottom}
-                                                        onFocus={holdPreview}
-                                                        onKeyDown={releasePreviewOnEnter(() => commitRenderImageBlurEffectValue(file.id, idx, 'bottom'))}
-                                                        onChange={e => {
-                                                          const v = coerceNumber(e.target.value, effect.bottom) ?? effect.bottom;
-                                                          updateRenderImageBlurEffect(file.id, idx, { bottom: v });
-                                                        }}
-                                                        onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'bottom'))}
-                                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
-                                                      />
-                                                    </div>
-                                                  </div>
-                                                  <div className="flex flex-col gap-2">
-                                                    <div className="flex items-center justify-between gap-2">
-                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur strength</label>
-                                                      <span className="text-xs tabular-nums text-zinc-300">{effect.sigma.toFixed(1)}</span>
-                                                    </div>
-                                                    <input
-                                                      type="range"
-                                                      min={0.5}
-                                                      max={80}
-                                                      step={0.5}
-                                                      value={effect.sigma}
-                                                      onMouseDown={holdPreview}
-                                                      onTouchStart={holdPreview}
-                                                      onChange={e => {
-                                                        const v = Number(e.target.value);
-                                                        if (!Number.isFinite(v)) return;
-                                                        updateRenderImageBlurEffect(file.id, idx, { sigma: Math.min(80, Math.max(0.5, v)) });
-                                                      }}
-                                                      onMouseUp={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'sigma'))}
-                                                      onTouchEnd={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'sigma'))}
-                                                      className="w-full accent-lime-400 cursor-pointer"
-                                                    />
-                                                  </div>
-                                                  <div className="flex flex-col gap-2">
-                                                    <div className="flex items-center justify-between gap-2">
-                                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Feather</label>
-                                                      <span className="text-xs tabular-nums text-zinc-300">{effect.feather}</span>
-                                                    </div>
-                                                    <input
-                                                      type="range"
-                                                      min={0}
-                                                      max={RENDER_BLUR_FEATHER_MAX}
-                                                      step={1}
-                                                      value={effect.feather}
-                                                      onMouseDown={holdPreview}
-                                                      onTouchStart={holdPreview}
-                                                      onChange={e => {
-                                                        const v = Number(e.target.value);
-                                                        if (!Number.isFinite(v)) return;
-                                                        updateRenderImageBlurEffect(file.id, idx, {
-                                                          feather: Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, Math.round(v)))
-                                                        });
-                                                      }}
-                                                      onMouseUp={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'feather'))}
-                                                      onTouchEnd={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'feather'))}
-                                                      className="w-full accent-lime-400 cursor-pointer"
-                                                    />
-                                                  </div>
+                                            {transform.maskType && transform.maskType !== 'none' && (
+                                              <div className="grid grid-cols-2 gap-2 mt-2">
+                                                <div className="flex flex-col gap-1">
+                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
+                                                  <input
+                                                    type="number"
+                                                    step="1"
+                                                    value={transform.maskLeft ?? '0'}
+                                                    onFocus={holdPreview}
+                                                    onBlur={() => setRenderPreviewHold(false)}
+                                                    onKeyDown={(event) => {
+                                                      if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                    }}
+                                                    onChange={e => setRenderImageTransforms(prev => ({
+                                                      ...prev,
+                                                      [file.id]: { ...prev[file.id], maskLeft: e.target.value }
+                                                    }))}
+                                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                  />
                                                 </div>
-                                              ))}
+                                                <div className="flex flex-col gap-1">
+                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
+                                                  <input
+                                                    type="number"
+                                                    step="1"
+                                                    value={transform.maskTop ?? '0'}
+                                                    onFocus={holdPreview}
+                                                    onBlur={() => setRenderPreviewHold(false)}
+                                                    onKeyDown={(event) => {
+                                                      if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                    }}
+                                                    onChange={e => setRenderImageTransforms(prev => ({
+                                                      ...prev,
+                                                      [file.id]: { ...prev[file.id], maskTop: e.target.value }
+                                                    }))}
+                                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                  />
+                                                </div>
+                                                <div className="flex flex-col gap-1">
+                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Width (%)</label>
+                                                  <input
+                                                    type="number"
+                                                    step="1"
+                                                    value={transform.maskWidth ?? '100'}
+                                                    onFocus={holdPreview}
+                                                    onBlur={() => setRenderPreviewHold(false)}
+                                                    onKeyDown={(event) => {
+                                                      if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                    }}
+                                                    onChange={e => setRenderImageTransforms(prev => ({
+                                                      ...prev,
+                                                      [file.id]: { ...prev[file.id], maskWidth: e.target.value }
+                                                    }))}
+                                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                  />
+                                                </div>
+                                                <div className="flex flex-col gap-1">
+                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Height (%)</label>
+                                                  <input
+                                                    type="number"
+                                                    step="1"
+                                                    value={transform.maskHeight ?? '100'}
+                                                    onFocus={holdPreview}
+                                                    onBlur={() => setRenderPreviewHold(false)}
+                                                    onKeyDown={(event) => {
+                                                      if (event.key === 'Enter') setRenderPreviewHold(false);
+                                                    }}
+                                                    onChange={e => setRenderImageTransforms(prev => ({
+                                                      ...prev,
+                                                      [file.id]: { ...prev[file.id], maskHeight: e.target.value }
+                                                    }))}
+                                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                  />
+                                                </div>
+                                              </div>
+                                            )}
+                                            <div className="text-[10px] text-zinc-600 leading-snug mt-2">
+                                              Mask uses item space (0–100% inset from the image frame after fit/scale).
                                             </div>
-                                          )}
+                                          </div>
+                                          <div className="border border-zinc-800/70 rounded-lg p-2 mt-2 bg-zinc-950/50">
+                                            <div className="flex items-center justify-between gap-2 mb-2">
+                                              <div className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur</div>
+                                              <button
+                                                type="button"
+                                                onClick={() => addRenderImageBlurEffect(file.id)}
+                                                className="text-[10px] rounded-md border border-zinc-700 px-2 py-1 text-zinc-200 hover:border-zinc-600"
+                                              >
+                                                + Blur region
+                                              </button>
+                                            </div>
+                                            {(transform.blurEffects ?? []).length === 0 ? (
+                                              <div className="text-[11px] text-zinc-500">No blur effect for this image track.</div>
+                                            ) : (
+                                              <div className="flex flex-col gap-2">
+                                                {(transform.blurEffects ?? []).map((effect, idx) => (
+                                                  <div key={`img-blur-${file.id}-${idx}`} className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-2 flex flex-col gap-2">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                      <span className="text-[10px] uppercase tracking-widest text-zinc-500">Region #{idx + 1}</span>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => removeRenderImageBlurEffect(file.id, idx)}
+                                                        className="text-[10px] text-red-400 hover:text-red-300"
+                                                      >
+                                                        Remove
+                                                      </button>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                      <div className="flex flex-col gap-1">
+                                                        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Left (%)</label>
+                                                        <input
+                                                          type="number"
+                                                          step="1"
+                                                          value={effect.left}
+                                                          onFocus={holdPreview}
+                                                          onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'left'))}
+                                                          onKeyDown={(event) => {
+                                                            if (event.key === 'Enter') releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'left'));
+                                                          }}
+                                                          onChange={e => {
+                                                            const v = Number(e.target.value);
+                                                            if (!Number.isFinite(v)) return;
+                                                            updateRenderImageBlurEffect(file.id, idx, { left: Math.min(100, Math.max(0, v)) });
+                                                          }}
+                                                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                        />
+                                                      </div>
+                                                      <div className="flex flex-col gap-1">
+                                                        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Top (%)</label>
+                                                        <input
+                                                          type="number"
+                                                          step="1"
+                                                          value={effect.top}
+                                                          onFocus={holdPreview}
+                                                          onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'top'))}
+                                                          onKeyDown={(event) => {
+                                                            if (event.key === 'Enter') releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'top'));
+                                                          }}
+                                                          onChange={e => {
+                                                            const v = Number(e.target.value);
+                                                            if (!Number.isFinite(v)) return;
+                                                            updateRenderImageBlurEffect(file.id, idx, { top: Math.min(100, Math.max(0, v)) });
+                                                          }}
+                                                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                        />
+                                                      </div>
+                                                      <div className="flex flex-col gap-1">
+                                                        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
+                                                        <input
+                                                          type="number"
+                                                          step="1"
+                                                          value={effect.right}
+                                                          onFocus={holdPreview}
+                                                          onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'right'))}
+                                                          onKeyDown={(event) => {
+                                                            if (event.key === 'Enter') releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'right'));
+                                                          }}
+                                                          onChange={e => {
+                                                            const v = Number(e.target.value);
+                                                            if (!Number.isFinite(v)) return;
+                                                            updateRenderImageBlurEffect(file.id, idx, { right: Math.min(100, Math.max(0, v)) });
+                                                          }}
+                                                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                        />
+                                                      </div>
+                                                      <div className="flex flex-col gap-1">
+                                                        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
+                                                        <input
+                                                          type="number"
+                                                          step="1"
+                                                          value={effect.bottom}
+                                                          onFocus={holdPreview}
+                                                          onBlur={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'bottom'))}
+                                                          onKeyDown={(event) => {
+                                                            if (event.key === 'Enter') releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'bottom'));
+                                                          }}
+                                                          onChange={e => {
+                                                            const v = Number(e.target.value);
+                                                            if (!Number.isFinite(v)) return;
+                                                            updateRenderImageBlurEffect(file.id, idx, { bottom: Math.min(100, Math.max(0, v)) });
+                                                          }}
+                                                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                                        />
+                                                      </div>
+                                                    </div>
+                                                    <div className="flex flex-col gap-2">
+                                                      <div className="flex items-center justify-between gap-2">
+                                                        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Blur strength</label>
+                                                        <span className="text-xs tabular-nums text-zinc-300">{effect.sigma.toFixed(1)}</span>
+                                                      </div>
+                                                      <input
+                                                        type="range"
+                                                        min={0.5}
+                                                        max={80}
+                                                        step={0.5}
+                                                        value={effect.sigma}
+                                                        onMouseDown={holdPreview}
+                                                        onTouchStart={holdPreview}
+                                                        onChange={e => {
+                                                          const v = Number(e.target.value);
+                                                          if (!Number.isFinite(v)) return;
+                                                          updateRenderImageBlurEffect(file.id, idx, { sigma: Math.min(80, Math.max(0.5, v)) });
+                                                        }}
+                                                        onMouseUp={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'sigma'))}
+                                                        onTouchEnd={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'sigma'))}
+                                                        className="w-full accent-lime-400 cursor-pointer"
+                                                      />
+                                                    </div>
+                                                    <div className="flex flex-col gap-2">
+                                                      <div className="flex items-center justify-between gap-2">
+                                                        <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Feather</label>
+                                                        <span className="text-xs tabular-nums text-zinc-300">{effect.feather}</span>
+                                                      </div>
+                                                      <input
+                                                        type="range"
+                                                        min={0}
+                                                        max={RENDER_BLUR_FEATHER_MAX}
+                                                        step={1}
+                                                        value={effect.feather}
+                                                        onMouseDown={holdPreview}
+                                                        onTouchStart={holdPreview}
+                                                        onChange={e => {
+                                                          const v = Number(e.target.value);
+                                                          if (!Number.isFinite(v)) return;
+                                                          updateRenderImageBlurEffect(file.id, idx, {
+                                                            feather: Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, Math.round(v)))
+                                                          });
+                                                        }}
+                                                        onMouseUp={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'feather'))}
+                                                        onTouchEnd={() => releasePreview(() => commitRenderImageBlurEffectValue(file.id, idx, 'feather'))}
+                                                        className="w-full accent-lime-400 cursor-pointer"
+                                                      />
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
                                         </div>
                                       </div>
                                     );
