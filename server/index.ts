@@ -119,6 +119,7 @@ const EDGE_TTS_RETRY_DELAY_MS = 1000;
 const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
 const TTS_PITCH_BASE_HZ = 200;
+const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
@@ -2210,6 +2211,95 @@ type TtsTaskResult = {
   overlapMode: 'overlap' | 'truncate';
 };
 
+type CueCacheIdentity = {
+  sourceRelativePath: string;
+  cueIndex: number;
+  cueStartMs: number;
+  cueEndMs: number;
+  cueText: string;
+  voice: string;
+  rate: string | null;
+  pitch: string | null;
+  volume: string | null;
+  removeLineBreaks: boolean;
+  outputExt: string;
+  engineCommand: string;
+};
+
+type CueCacheMeta = {
+  createdAt: string;
+  audioPath: string;
+  durationSeconds: number;
+  identity: CueCacheIdentity;
+};
+
+const fileExists = async (fullPath: string) =>
+  fs.access(fullPath).then(() => true).catch(() => false);
+
+const toCueCacheKey = (identity: CueCacheIdentity) =>
+  crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 24);
+
+const buildCueCacheIdentity = (
+  sourceRelativePath: string,
+  cue: SubtitleCue,
+  cueIndex: number,
+  voice: string,
+  rate: string | undefined,
+  pitch: string | undefined,
+  volume: string | undefined,
+  removeLineBreaks: boolean,
+  outputExt: string,
+  engineCommand: string
+): CueCacheIdentity => ({
+  sourceRelativePath,
+  cueIndex,
+  cueStartMs: Math.max(0, Math.round(cue.start * 1000)),
+  cueEndMs: Math.max(0, Math.round(cue.end * 1000)),
+  cueText: cue.text,
+  voice,
+  rate: rate ?? null,
+  pitch: pitch ?? null,
+  volume: volume ?? null,
+  removeLineBreaks,
+  outputExt,
+  engineCommand,
+});
+
+const buildCueCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
+  const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
+  const stem = `cue-${String(cueIndex).padStart(4, '0')}-${key}`;
+  return {
+    cacheDir,
+    audioPath: path.join(cacheDir, `${stem}.${outputExt}`),
+    metaPath: path.join(cacheDir, `${stem}.json`)
+  };
+};
+
+const readCueCacheMeta = async (metaPath: string): Promise<CueCacheMeta | null> => {
+  try {
+    const raw = await fs.readFile(metaPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.identity) return null;
+    return parsed as CueCacheMeta;
+  } catch {
+    return null;
+  }
+};
+
+const sameCueIdentity = (left: CueCacheIdentity, right: CueCacheIdentity) =>
+  left.sourceRelativePath === right.sourceRelativePath &&
+  left.cueIndex === right.cueIndex &&
+  left.cueStartMs === right.cueStartMs &&
+  left.cueEndMs === right.cueEndMs &&
+  left.cueText === right.cueText &&
+  left.voice === right.voice &&
+  left.rate === right.rate &&
+  left.pitch === right.pitch &&
+  left.volume === right.volume &&
+  left.removeLineBreaks === right.removeLineBreaks &&
+  left.outputExt === right.outputExt &&
+  left.engineCommand === right.engineCommand;
+
 const shouldRetryEdgeTtsError = (message: string) => {
   return /429|rate limit|throttl|temporar|try again|server is busy|NoAudioReceived/i.test(message);
 };
@@ -2302,74 +2392,116 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     return [`${flag}=${value}`];
   };
   const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tts-cues-'));
-  const cuePaths: string[] = [];
-  try {
-    for (let i = 0; i < cues.length; i += 1) {
-      const cue = cues[i];
-      const cuePath = path.join(tmpDir, `cue-${String(i).padStart(4, '0')}.${DEFAULT_TTS_OUTPUT_EXT}`);
-      const args = [
-        '--text',
-        cue.text,
-        '--voice',
-        voice,
-        '--write-media',
-        cuePath,
-        ...withFlagValue('--rate', rate),
-        ...withFlagValue('--pitch', pitch),
-        ...withFlagValue('--volume', volume)
-      ];
-      const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
-      options?.onLog?.(`COMMAND (tts cue ${i + 1}/${cues.length}): ${commandLine}\n`);
-      await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`);
-      cuePaths.push(cuePath);
-      const duration = await runFfprobe(cuePath).catch(() => 0);
-      audioDurations.push(duration);
-      options?.onProgress?.(i + 1, cues.length);
-    }
-
-    const ffmpegPath = await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
-    const inputArgs = cuePaths.flatMap(cuePath => ['-i', cuePath]);
-    const filterChains: string[] = [];
-    const mixInputs: string[] = [];
-    cues.forEach((cue, index) => {
-      const delayMs = Math.max(0, Math.round(cue.start * 1000));
-      const duration = Math.max(0, cue.end - cue.start);
-      const trim = overlapMode === 'truncate' ? `atrim=0:${duration},` : '';
-      filterChains.push(`[${index}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${index}]`);
-      mixInputs.push(`[a${index}]`);
-    });
-    const filter = `${filterChains.join(';')};${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest,loudnorm=I=-16:TP=-1.5:LRA=11[out]`;
-    const ffmpegArgs = [
-      '-y',
-      ...inputArgs,
-      '-filter_complex',
-      filter,
-      '-map',
-      '[out]',
-      '-c:a',
-      'libmp3lame',
-      '-q:a',
-      '4',
-      outputPath
-    ];
-    const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
-    options?.onLog?.(`COMMAND (ffmpeg mix): ${ffmpegCommand}\n`);
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let stderr = '';
-      proc.stderr.on('data', data => {
-        stderr += data.toString();
-      });
-      proc.on('error', reject);
-      proc.on('close', code => {
-        if (code === 0) resolve();
-        else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
-      });
-    });
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => null);
+  const sourceRelativePath = path.relative(MEDIA_VAULT_ROOT, inputFullPath);
+  if (sourceRelativePath.startsWith('..') || path.isAbsolute(sourceRelativePath)) {
+    throw new Error('TTS input is outside media vault root');
   }
+  const projectName = sourceRelativePath.split(path.sep).filter(Boolean)[0];
+  if (!projectName) {
+    throw new Error('Unable to determine project root for TTS cue cache');
+  }
+  const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
+  const cueCacheRoot = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
+  await fs.mkdir(cueCacheRoot, { recursive: true });
+  const cuePaths: string[] = [];
+  for (let i = 0; i < cues.length; i += 1) {
+    const cue = cues[i];
+    const identity = buildCueCacheIdentity(
+      sourceRelativePath,
+      cue,
+      i,
+      voice,
+      rate,
+      pitch,
+      volume,
+      removeLineBreaks,
+      DEFAULT_TTS_OUTPUT_EXT,
+      EDGE_TTS_CMD
+    );
+    const key = toCueCacheKey(identity);
+    const { cacheDir, audioPath, metaPath } = buildCueCachePaths(projectRoot, i, key, DEFAULT_TTS_OUTPUT_EXT);
+    await fs.mkdir(cacheDir, { recursive: true });
+    const existingMeta = await readCueCacheMeta(metaPath);
+    const reusable = await fileExists(audioPath) && !!existingMeta && sameCueIdentity(existingMeta.identity, identity);
+    if (reusable) {
+      cuePaths.push(audioPath);
+      const durationFromMeta = Number(existingMeta.durationSeconds);
+      if (Number.isFinite(durationFromMeta) && durationFromMeta > 0) {
+        audioDurations.push(durationFromMeta);
+      } else {
+        const duration = await runFfprobe(audioPath).catch(() => 0);
+        audioDurations.push(duration);
+      }
+      options?.onLog?.(`CACHE HIT (tts cue ${i + 1}/${cues.length}): ${path.relative(projectRoot, audioPath)}\n`);
+      options?.onProgress?.(i + 1, cues.length);
+      continue;
+    }
+    const args = [
+      '--text',
+      cue.text,
+      '--voice',
+      voice,
+      '--write-media',
+      audioPath,
+      ...withFlagValue('--rate', rate),
+      ...withFlagValue('--pitch', pitch),
+      ...withFlagValue('--volume', volume)
+    ];
+    const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
+    options?.onLog?.(`COMMAND (tts cue ${i + 1}/${cues.length}): ${commandLine}\n`);
+    await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`);
+    cuePaths.push(audioPath);
+    const duration = await runFfprobe(audioPath).catch(() => 0);
+    audioDurations.push(duration);
+    const meta: CueCacheMeta = {
+      createdAt: new Date().toISOString(),
+      audioPath: path.relative(projectRoot, audioPath),
+      durationSeconds: duration,
+      identity
+    };
+    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+    options?.onProgress?.(i + 1, cues.length);
+  }
+
+  const ffmpegPath = await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
+  const inputArgs = cuePaths.flatMap(cuePath => ['-i', cuePath]);
+  const filterChains: string[] = [];
+  const mixInputs: string[] = [];
+  cues.forEach((cue, index) => {
+    const delayMs = Math.max(0, Math.round(cue.start * 1000));
+    const duration = Math.max(0, cue.end - cue.start);
+    const trim = overlapMode === 'truncate' ? `atrim=0:${duration},` : '';
+    filterChains.push(`[${index}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${index}]`);
+    mixInputs.push(`[a${index}]`);
+  });
+  const filter = `${filterChains.join(';')};${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest,loudnorm=I=-16:TP=-1.5:LRA=11[out]`;
+  const ffmpegArgs = [
+    '-y',
+    ...inputArgs,
+    '-filter_complex',
+    filter,
+    '-map',
+    '[out]',
+    '-c:a',
+    'libmp3lame',
+    '-q:a',
+    '4',
+    outputPath
+  ];
+  const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
+  options?.onLog?.(`COMMAND (ffmpeg mix): ${ffmpegCommand}\n`);
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', data => {
+      stderr += data.toString();
+    });
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+    });
+  });
   const segments = cues.map((cue, index) => {
     const duration = audioDurations[index] ?? 0;
     const cap = overlapMode === 'truncate' ? Math.min(duration, cueDurations[index] ?? duration) : duration;
