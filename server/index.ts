@@ -29,8 +29,18 @@ type VaultFileDTO = {
     role?: 'source' | 'output';
     sourceRelativePath?: string;
   };
-    tts?: {
-      processedAt: string;
+  tts?: {
+    processedAt: string;
+    voice?: string;
+    rate?: number;
+    pitch?: number;
+    volume?: number;
+    overlapSeconds?: number;
+    overlapMode?: 'overlap' | 'truncate';
+    removeLineBreaks?: boolean;
+    outputSignature?: string;
+    outputDetails?: Record<string, {
+      processedAt?: string;
       voice?: string;
       rate?: number;
       pitch?: number;
@@ -38,10 +48,12 @@ type VaultFileDTO = {
       overlapSeconds?: number;
       overlapMode?: 'overlap' | 'truncate';
       removeLineBreaks?: boolean;
-      outputs?: string[];
-      role?: 'source' | 'output';
-      sourceRelativePath?: string;
-    };
+      outputSignature?: string;
+    }>;
+    outputs?: string[];
+    role?: 'source' | 'output';
+    sourceRelativePath?: string;
+  };
 };
 
 type VaultFolderDTO = {
@@ -637,6 +649,7 @@ const upsertTtsMetadata = (payload: {
   overlapSeconds?: number;
   overlapMode?: 'overlap' | 'truncate';
   removeLineBreaks?: boolean;
+  outputSignature?: string;
   outputs?: string[];
 }) => {
   const relative = payload.relativePath.replace(/\\/g, '/');
@@ -660,6 +673,22 @@ const upsertTtsMetadata = (payload: {
   };
   readMeta()
     .then(data => {
+      const existing = data[relative];
+      const mergedOutputs = Array.from(new Set([...(existing?.outputs ?? []), ...(payload.outputs ?? [])]));
+      const nextOutputDetails = { ...(existing?.outputDetails ?? {}) };
+      (payload.outputs ?? []).forEach(outputPath => {
+        nextOutputDetails[outputPath] = {
+          processedAt: payload.processedAt,
+          voice: payload.voice ?? undefined,
+          rate: payload.rate,
+          pitch: payload.pitch,
+          volume: payload.volume,
+          overlapSeconds: payload.overlapSeconds,
+          overlapMode: payload.overlapMode,
+          removeLineBreaks: payload.removeLineBreaks,
+          outputSignature: payload.outputSignature
+        };
+      });
       data[relative] = {
         processedAt: payload.processedAt,
         voice: payload.voice ?? undefined,
@@ -669,7 +698,9 @@ const upsertTtsMetadata = (payload: {
         overlapSeconds: payload.overlapSeconds,
         overlapMode: payload.overlapMode,
         removeLineBreaks: payload.removeLineBreaks,
-        outputs: payload.outputs,
+        outputSignature: payload.outputSignature,
+        outputs: mergedOutputs,
+        outputDetails: nextOutputDetails,
         role: 'source'
       };
       return writeMeta(data);
@@ -1799,7 +1830,8 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
         volume: ttsResult.volume,
         overlapSeconds: ttsResult.overlapSeconds,
         overlapMode: ttsResult.overlapMode,
-        removeLineBreaks: (job as any).__ttsRemoveLineBreaks as boolean | undefined,
+        removeLineBreaks: ttsResult.removeLineBreaks,
+        outputSignature: ttsResult.outputSignature,
         outputs: [ttsResult.outputRelativePath]
       });
       if (!job.log || job.log.trim().length === 0) {
@@ -2177,6 +2209,44 @@ const formatTtsPitch = (value?: number) => {
   return `${signed}Hz`;
 };
 
+const normalizeTtsOutputSettings = (options?: {
+  voice?: string;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  overlapMode?: 'overlap' | 'truncate';
+  removeLineBreaks?: boolean;
+}): TtsOutputSettings => ({
+  voice: options?.voice?.trim() || DEFAULT_TTS_VOICE,
+  rate: typeof options?.rate === 'number' && Number.isFinite(options.rate) ? options.rate : undefined,
+  pitch: typeof options?.pitch === 'number' && Number.isFinite(options.pitch) ? options.pitch : undefined,
+  volume: typeof options?.volume === 'number' && Number.isFinite(options.volume) ? options.volume : undefined,
+  overlapMode: options?.overlapMode === 'overlap' ? 'overlap' : 'truncate',
+  removeLineBreaks: options?.removeLineBreaks !== false
+});
+
+const buildTtsOutputSignature = (settings: TtsOutputSettings) => {
+  const payload = {
+    voice: settings.voice,
+    rate: settings.rate ?? null,
+    pitch: settings.pitch ?? null,
+    volume: settings.volume ?? null,
+    overlapMode: settings.overlapMode,
+    removeLineBreaks: settings.removeLineBreaks
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 10);
+};
+
+const buildTtsOutputName = (inputFullPath: string, settings: TtsOutputSettings) => {
+  const ext = path.extname(inputFullPath).toLowerCase();
+  const baseName = path.basename(inputFullPath, ext);
+  const signature = buildTtsOutputSignature(settings);
+  return {
+    outputName: `${baseName}.tts.${signature}.${DEFAULT_TTS_OUTPUT_EXT}`,
+    outputSignature: signature
+  };
+};
+
 const runFfprobeWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
   const args = [
     '-v', 'error',
@@ -2200,15 +2270,50 @@ const runFfprobeWithBin = (bin: string, input: string) => new Promise<number>((r
   });
 });
 
+const runFfprobeSampleRateWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
+  const args = [
+    '-v', 'error',
+    '-select_streams', 'a:0',
+    '-show_entries', 'stream=sample_rate',
+    '-of', 'default=noprint_wrappers=1:nokey=1',
+    input
+  ];
+  const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  let error = '';
+  proc.stdout.on('data', data => { output += data.toString(); });
+  proc.stderr.on('data', data => { error += data.toString(); });
+  proc.on('error', reject);
+  proc.on('close', code => {
+    if (code !== 0) {
+      reject(new Error(error || `ffprobe exited with code ${code}`));
+      return;
+    }
+    const value = Number.parseInt(output.trim(), 10);
+    resolve(Number.isFinite(value) ? value : 0);
+  });
+});
+
 type TtsTaskResult = {
   outputPath: string;
   outputRelativePath: string;
+  outputSignature: string;
   voice: string;
   rate?: number;
   pitch?: number;
   volume?: number;
   overlapSeconds: number;
   overlapMode: 'overlap' | 'truncate';
+  removeLineBreaks: boolean;
+};
+
+type TtsOutputSettings = {
+  voice: string;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  overlapMode: 'overlap' | 'truncate';
+  removeLineBreaks: boolean;
 };
 
 type CueCacheIdentity = {
@@ -2218,8 +2323,6 @@ type CueCacheIdentity = {
   cueEndMs: number;
   cueText: string;
   voice: string;
-  rate: string | null;
-  pitch: string | null;
   volume: string | null;
   removeLineBreaks: boolean;
   outputExt: string;
@@ -2230,7 +2333,25 @@ type CueCacheMeta = {
   createdAt: string;
   audioPath: string;
   durationSeconds: number;
+  sampleRateHz: number;
   identity: CueCacheIdentity;
+};
+
+type CueFxCacheIdentity = {
+  baseCueKey: string;
+  cueIndex: number;
+  rate: number;
+  pitch: number;
+  outputExt: string;
+  engine: 'ffmpeg';
+};
+
+type CueFxCacheMeta = {
+  createdAt: string;
+  audioPath: string;
+  durationSeconds: number;
+  identity: CueFxCacheIdentity;
+  filter: string;
 };
 
 const fileExists = async (fullPath: string) =>
@@ -2244,8 +2365,6 @@ const buildCueCacheIdentity = (
   cue: SubtitleCue,
   cueIndex: number,
   voice: string,
-  rate: string | undefined,
-  pitch: string | undefined,
   volume: string | undefined,
   removeLineBreaks: boolean,
   outputExt: string,
@@ -2257,8 +2376,6 @@ const buildCueCacheIdentity = (
   cueEndMs: Math.max(0, Math.round(cue.end * 1000)),
   cueText: cue.text,
   voice,
-  rate: rate ?? null,
-  pitch: pitch ?? null,
   volume: volume ?? null,
   removeLineBreaks,
   outputExt,
@@ -2293,12 +2410,88 @@ const sameCueIdentity = (left: CueCacheIdentity, right: CueCacheIdentity) =>
   left.cueEndMs === right.cueEndMs &&
   left.cueText === right.cueText &&
   left.voice === right.voice &&
-  left.rate === right.rate &&
-  left.pitch === right.pitch &&
   left.volume === right.volume &&
   left.removeLineBreaks === right.removeLineBreaks &&
   left.outputExt === right.outputExt &&
   left.engineCommand === right.engineCommand;
+
+const sanitizeRateFactor = (value?: number) => {
+  if (value === undefined || value === null || !Number.isFinite(value) || value <= 0) return 1;
+  return value;
+};
+
+const sanitizePitchSemitones = (value?: number) => {
+  if (value === undefined || value === null || !Number.isFinite(value)) return 0;
+  return value;
+};
+
+const roundFactor = (value: number) => Math.round(value * 1_000_000) / 1_000_000;
+
+const buildAtempoFilters = (factor: number): string[] => {
+  const out: string[] = [];
+  let remaining = factor;
+  if (!Number.isFinite(remaining) || remaining <= 0) return out;
+  while (remaining > 2.0) {
+    out.push('atempo=2.0');
+    remaining /= 2.0;
+  }
+  while (remaining < 0.5) {
+    out.push('atempo=0.5');
+    remaining /= 0.5;
+  }
+  const rounded = roundFactor(remaining);
+  if (Math.abs(rounded - 1) > 0.000001) {
+    out.push(`atempo=${rounded}`);
+  }
+  return out;
+};
+
+const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: number): string | null => {
+  const safeRate = sanitizeRateFactor(rate);
+  const safePitch = sanitizePitchSemitones(pitchSemitones);
+  const safeSampleRate = Number.isFinite(sampleRateHz) && sampleRateHz > 0 ? Math.round(sampleRateHz) : 24000;
+  const pitchRatio = Math.pow(2, safePitch / 12);
+  const filters: string[] = [];
+  if (Math.abs(safePitch) > 0.000001) {
+    const shiftedRate = Math.max(1000, Math.round(safeSampleRate * pitchRatio));
+    filters.push(`asetrate=${shiftedRate}`);
+    filters.push(`aresample=${safeSampleRate}`);
+    filters.push(...buildAtempoFilters(1 / pitchRatio));
+  }
+  if (Math.abs(safeRate - 1) > 0.000001) {
+    filters.push(...buildAtempoFilters(safeRate));
+  }
+  return filters.length ? filters.join(',') : null;
+};
+
+const buildCueFxCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
+  const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
+  const stem = `cue-${String(cueIndex).padStart(4, '0')}-fx-${key}`;
+  return {
+    cacheDir,
+    audioPath: path.join(cacheDir, `${stem}.${outputExt}`),
+    metaPath: path.join(cacheDir, `${stem}.json`)
+  };
+};
+
+const readCueFxMeta = async (metaPath: string): Promise<CueFxCacheMeta | null> => {
+  try {
+    const raw = await fs.readFile(metaPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.identity) return null;
+    return parsed as CueFxCacheMeta;
+  } catch {
+    return null;
+  }
+};
+
+const sameCueFxIdentity = (left: CueFxCacheIdentity, right: CueFxCacheIdentity) =>
+  left.baseCueKey === right.baseCueKey &&
+  left.cueIndex === right.cueIndex &&
+  Math.abs(left.rate - right.rate) < 0.000001 &&
+  Math.abs(left.pitch - right.pitch) < 0.000001 &&
+  left.outputExt === right.outputExt &&
+  left.engine === right.engine;
 
 const shouldRetryEdgeTtsError = (message: string) => {
   return /429|rate limit|throttl|temporar|try again|server is busy|NoAudioReceived/i.test(message);
@@ -2368,8 +2561,9 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   if (!SUB_EXT.has(ext)) {
     throw new Error('TTS input must be a subtitle file');
   }
+  const ttsSettings = normalizeTtsOutputSettings(options);
+  const removeLineBreaks = ttsSettings.removeLineBreaks;
   const raw = await fs.readFile(inputFullPath, 'utf-8');
-  const removeLineBreaks = options?.removeLineBreaks !== false;
   const cues = ext === '.ass' || ext === '.ssa'
     ? parseAssCues(raw, removeLineBreaks)
     : parseSrtVttCues(raw, removeLineBreaks);
@@ -2379,14 +2573,13 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   const cueDurations = cues.map(cue => Math.max(0, cue.end - cue.start));
   const audioDurations: number[] = [];
   await fs.mkdir(outputDir, { recursive: true });
-  const baseName = path.basename(inputFullPath, ext);
-  const outputName = `${baseName}.tts.${DEFAULT_TTS_OUTPUT_EXT}`;
+  const { outputName, outputSignature } = buildTtsOutputName(inputFullPath, ttsSettings);
   const outputPath = path.join(outputDir, outputName);
-  const voice = options?.voice || DEFAULT_TTS_VOICE;
-  const rate = formatTtsRate(options?.rate);
-  const pitch = formatTtsPitch(options?.pitch);
-  const volume = formatTtsVolume(options?.volume);
-  const overlapMode = options?.overlapMode === 'overlap' ? 'overlap' : 'truncate';
+  const voice = ttsSettings.voice;
+  const volume = formatTtsVolume(ttsSettings.volume);
+  const fxRate = sanitizeRateFactor(ttsSettings.rate);
+  const fxPitch = sanitizePitchSemitones(ttsSettings.pitch);
+  const overlapMode = ttsSettings.overlapMode;
   const withFlagValue = (flag: string, value?: string) => {
     if (!value) return [];
     return [`${flag}=${value}`];
@@ -2404,6 +2597,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   const cueCacheRoot = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
   await fs.mkdir(cueCacheRoot, { recursive: true });
   const cuePaths: string[] = [];
+  const ffmpegPath = await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
   for (let i = 0; i < cues.length; i += 1) {
     const cue = cues[i];
     const identity = buildCueCacheIdentity(
@@ -2411,8 +2605,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       cue,
       i,
       voice,
-      rate,
-      pitch,
       volume,
       removeLineBreaks,
       DEFAULT_TTS_OUTPUT_EXT,
@@ -2423,47 +2615,133 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     await fs.mkdir(cacheDir, { recursive: true });
     const existingMeta = await readCueCacheMeta(metaPath);
     const reusable = await fileExists(audioPath) && !!existingMeta && sameCueIdentity(existingMeta.identity, identity);
+    let sourceCuePath = audioPath;
+    let sourceDuration = 0;
+    let sourceSampleRate = 0;
     if (reusable) {
-      cuePaths.push(audioPath);
       const durationFromMeta = Number(existingMeta.durationSeconds);
       if (Number.isFinite(durationFromMeta) && durationFromMeta > 0) {
-        audioDurations.push(durationFromMeta);
+        sourceDuration = durationFromMeta;
       } else {
         const duration = await runFfprobe(audioPath).catch(() => 0);
-        audioDurations.push(duration);
+        sourceDuration = duration;
       }
-      options?.onLog?.(`CACHE HIT (tts cue ${i + 1}/${cues.length}): ${path.relative(projectRoot, audioPath)}\n`);
+      const sampleRateFromMeta = Number((existingMeta as any).sampleRateHz);
+      if (Number.isFinite(sampleRateFromMeta) && sampleRateFromMeta > 0) {
+        sourceSampleRate = sampleRateFromMeta;
+      } else {
+        sourceSampleRate = await runFfprobeSampleRate(audioPath).catch(() => 0);
+      }
+      options?.onLog?.(`CACHE HIT (tts cue raw ${i + 1}/${cues.length}): ${path.relative(projectRoot, audioPath)}\n`);
+    } else {
+      const args = [
+        '--text',
+        cue.text,
+        '--voice',
+        voice,
+        '--write-media',
+        audioPath,
+        ...withFlagValue('--volume', volume)
+      ];
+      const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
+      options?.onLog?.(`COMMAND (tts cue raw ${i + 1}/${cues.length}): ${commandLine}\n`);
+      await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`);
+      sourceDuration = await runFfprobe(audioPath).catch(() => 0);
+      sourceSampleRate = await runFfprobeSampleRate(audioPath).catch(() => 0);
+      const meta: CueCacheMeta = {
+        createdAt: new Date().toISOString(),
+        audioPath: path.relative(projectRoot, audioPath),
+        durationSeconds: sourceDuration,
+        sampleRateHz: sourceSampleRate,
+        identity
+      };
+      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+    }
+
+    if (!sourceSampleRate || sourceSampleRate <= 0) {
+      sourceSampleRate = 24000;
+    }
+    const cueFxFilter = buildCueFxFilter(fxRate, fxPitch, sourceSampleRate);
+
+    if (!cueFxFilter) {
+      cuePaths.push(sourceCuePath);
+      audioDurations.push(sourceDuration);
       options?.onProgress?.(i + 1, cues.length);
       continue;
     }
-    const args = [
-      '--text',
-      cue.text,
-      '--voice',
-      voice,
-      '--write-media',
-      audioPath,
-      ...withFlagValue('--rate', rate),
-      ...withFlagValue('--pitch', pitch),
-      ...withFlagValue('--volume', volume)
-    ];
-    const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
-    options?.onLog?.(`COMMAND (tts cue ${i + 1}/${cues.length}): ${commandLine}\n`);
-    await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`);
-    cuePaths.push(audioPath);
-    const duration = await runFfprobe(audioPath).catch(() => 0);
-    audioDurations.push(duration);
-    const meta: CueCacheMeta = {
-      createdAt: new Date().toISOString(),
-      audioPath: path.relative(projectRoot, audioPath),
-      durationSeconds: duration,
-      identity
+
+    const fxIdentity: CueFxCacheIdentity = {
+      baseCueKey: key,
+      cueIndex: i,
+      rate: roundFactor(fxRate),
+      pitch: roundFactor(fxPitch),
+      outputExt: DEFAULT_TTS_OUTPUT_EXT,
+      engine: 'ffmpeg'
     };
-    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+    const fxKey = crypto.createHash('sha256').update(JSON.stringify(fxIdentity)).digest('hex').slice(0, 24);
+    const fxPaths = buildCueFxCachePaths(projectRoot, i, fxKey, DEFAULT_TTS_OUTPUT_EXT);
+    await fs.mkdir(fxPaths.cacheDir, { recursive: true });
+    const fxMeta = await readCueFxMeta(fxPaths.metaPath);
+    const fxReusable = await fileExists(fxPaths.audioPath)
+      && !!fxMeta
+      && sameCueFxIdentity(fxMeta.identity, fxIdentity)
+      && fxMeta.filter === cueFxFilter;
+
+    if (fxReusable) {
+      cuePaths.push(fxPaths.audioPath);
+      const durationFromMeta = Number(fxMeta.durationSeconds);
+      if (Number.isFinite(durationFromMeta) && durationFromMeta > 0) {
+        audioDurations.push(durationFromMeta);
+      } else {
+        const duration = await runFfprobe(fxPaths.audioPath).catch(() => 0);
+        audioDurations.push(duration);
+      }
+      options?.onLog?.(`CACHE HIT (tts cue fx ${i + 1}/${cues.length}): ${path.relative(projectRoot, fxPaths.audioPath)}\n`);
+      options?.onProgress?.(i + 1, cues.length);
+      continue;
+    }
+
+    const fxArgs = [
+      '-y',
+      '-i',
+      sourceCuePath,
+      '-vn',
+      '-filter:a',
+      cueFxFilter,
+      '-c:a',
+      'libmp3lame',
+      '-q:a',
+      '4',
+      fxPaths.audioPath
+    ];
+    const fxCommand = [ffmpegPath, ...fxArgs].map(formatArg).join(' ');
+    options?.onLog?.(`COMMAND (ffmpeg cue fx ${i + 1}/${cues.length}): ${fxCommand}\n`);
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, fxArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      proc.stderr.on('data', data => {
+        stderr += data.toString();
+      });
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(stderr.trim() || `ffmpeg (cue fx) exited with code ${code}`));
+      });
+    });
+    const fxDuration = await runFfprobe(fxPaths.audioPath).catch(() => 0);
+    const fxMetaPayload: CueFxCacheMeta = {
+      createdAt: new Date().toISOString(),
+      audioPath: path.relative(projectRoot, fxPaths.audioPath),
+      durationSeconds: fxDuration,
+      identity: fxIdentity,
+      filter: cueFxFilter
+    };
+    await fs.writeFile(fxPaths.metaPath, JSON.stringify(fxMetaPayload, null, 2), 'utf-8');
+    cuePaths.push(fxPaths.audioPath);
+    audioDurations.push(fxDuration);
     options?.onProgress?.(i + 1, cues.length);
   }
 
-  const ffmpegPath = await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
   const inputArgs = cuePaths.flatMap(cuePath => ['-i', cuePath]);
   const filterChains: string[] = [];
   const mixInputs: string[] = [];
@@ -2511,12 +2789,14 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   return {
     outputPath,
     outputRelativePath: path.relative(MEDIA_VAULT_ROOT, outputPath),
+    outputSignature,
     voice,
-    rate: options?.rate,
-    pitch: options?.pitch,
-    volume: options?.volume,
+    rate: ttsSettings.rate,
+    pitch: ttsSettings.pitch,
+    volume: ttsSettings.volume,
     overlapSeconds,
-    overlapMode
+    overlapMode,
+    removeLineBreaks
   };
 };
 
@@ -2526,6 +2806,17 @@ const runFfprobe = async (input: string) => {
   } catch (error) {
     if (error instanceof Error && error.message.includes('ENOENT')) {
       return await runFfprobeWithBin('/usr/bin/ffprobe', input);
+    }
+    throw error;
+  }
+};
+
+const runFfprobeSampleRate = async (input: string) => {
+  try {
+    return await runFfprobeSampleRateWithBin(process.env.FFPROBE_PATH ?? 'ffprobe', input);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('ENOENT')) {
+      return await runFfprobeSampleRateWithBin('/usr/bin/ffprobe', input);
     }
     throw error;
   }
@@ -2608,7 +2899,21 @@ const buildTtsOutputMap = (ttsMeta: Map<string, VaultFileDTO['tts']>) => {
   for (const [sourceRelativePath, meta] of ttsMeta.entries()) {
     if (!meta?.outputs?.length) continue;
     meta.outputs.forEach(outputPath => {
-      outputMap.set(outputPath, { ...meta, role: 'output', sourceRelativePath });
+      const details = meta.outputDetails?.[outputPath];
+      outputMap.set(outputPath, {
+        ...meta,
+        processedAt: details?.processedAt || meta.processedAt,
+        voice: details?.voice ?? meta.voice,
+        rate: details?.rate ?? meta.rate,
+        pitch: details?.pitch ?? meta.pitch,
+        volume: details?.volume ?? meta.volume,
+        overlapSeconds: details?.overlapSeconds ?? meta.overlapSeconds,
+        overlapMode: details?.overlapMode ?? meta.overlapMode,
+        removeLineBreaks: details?.removeLineBreaks ?? meta.removeLineBreaks,
+        outputSignature: details?.outputSignature ?? meta.outputSignature,
+        role: 'output',
+        sourceRelativePath
+      });
     });
   }
   return outputMap;
@@ -2795,10 +3100,13 @@ app.delete('/api/vault/file', async (req, res) => {
       }
       Object.keys(ttsMeta).forEach(key => {
         const entry = ttsMeta[key];
-        if (!entry?.outputs?.length) return;
-        const nextOutputs = entry.outputs.filter(output => output !== normalized);
-        if (nextOutputs.length !== entry.outputs.length) {
-          ttsMeta[key] = { ...entry, outputs: nextOutputs };
+        const nextOutputs = entry?.outputs?.filter(output => output !== normalized) ?? [];
+        const outputRemoved = (entry?.outputs?.length ?? 0) !== nextOutputs.length;
+        const nextOutputDetails = { ...(entry?.outputDetails ?? {}) };
+        const hadDetail = Object.prototype.hasOwnProperty.call(nextOutputDetails, normalized);
+        if (hadDetail) delete nextOutputDetails[normalized];
+        if (outputRemoved || hadDetail) {
+          ttsMeta[key] = { ...entry, outputs: nextOutputs, outputDetails: nextOutputDetails };
           ttsChanged = true;
         }
       });
@@ -3377,6 +3685,14 @@ app.post('/api/jobs/run', async (req, res) => {
   const ttsRate = typeof req.body?.rate === 'number' ? req.body.rate : undefined;
   const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
   const ttsVolume = typeof req.body?.volume === 'number' ? req.body.volume : undefined;
+  const requestedTtsSettings = normalizeTtsOutputSettings({
+    voice: ttsVoice || undefined,
+    rate: ttsRate,
+    pitch: ttsPitch,
+    volume: ttsVolume,
+    overlapMode: ttsOverlapMode,
+    removeLineBreaks: ttsRemoveLineBreaks
+  });
   const inputPaths = Array.isArray(req.body?.inputPaths)
     ? req.body.inputPaths.filter((value: unknown) => typeof value === 'string' && value.trim().length > 0)
     : undefined;
@@ -3576,7 +3892,7 @@ app.post('/api/jobs/run', async (req, res) => {
         const hasUvr = tasks.some(task => task.type === 'uvr');
         const hasTts = tasks.some(task => task.type === 'tts');
         if (hasTts) {
-          const ttsName = `${path.parse(fullPath).name}.tts.${DEFAULT_TTS_OUTPUT_EXT}`;
+          const { outputName: ttsName } = buildTtsOutputName(fullPath, requestedTtsSettings);
           const ttsPath = path.join(outputDir, ttsName);
           const ttsExists = await fs.stat(ttsPath).then(stat => stat.isFile()).catch(() => false);
           if (ttsExists) {

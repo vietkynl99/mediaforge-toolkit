@@ -744,6 +744,21 @@ type VaultFileDTO = {
     rate?: number;
     pitch?: number;
     volume?: number;
+    overlapSeconds?: number;
+    overlapMode?: 'overlap' | 'truncate';
+    removeLineBreaks?: boolean;
+    outputSignature?: string;
+    outputDetails?: Record<string, {
+      processedAt?: string;
+      voice?: string;
+      rate?: number;
+      pitch?: number;
+      volume?: number;
+      overlapSeconds?: number;
+      overlapMode?: 'overlap' | 'truncate';
+      removeLineBreaks?: boolean;
+      outputSignature?: string;
+    }>;
     outputs?: string[];
     role?: 'source' | 'output';
     sourceRelativePath?: string;
