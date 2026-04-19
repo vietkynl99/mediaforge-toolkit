@@ -1167,7 +1167,7 @@ export default function App() {
     open: boolean;
     x: number;
     y: number;
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number } | null;
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number } | null;
   }>({
     open: false,
     x: 0,
@@ -3730,6 +3730,109 @@ export default function App() {
     };
   };
 
+  const buildDefaultRenderTemplateConfig = React.useCallback((): RenderConfigV2 => {
+    const files = runPipelineProject?.files ?? [];
+    const firstVideo = files.find(file => file.type === 'video' && file.relativePath);
+    const firstAudio = files.find(file => file.type === 'audio' && file.relativePath);
+    const firstSubtitle = files.find(file => file.type === 'subtitle' && file.relativePath);
+    const inputsMap: Record<string, string> = {};
+    const items: RenderConfigV2['items'] = [];
+    const trackLabels: Record<string, string> = {};
+
+    if (firstVideo?.relativePath) {
+      inputsMap.video = firstVideo.relativePath;
+      trackLabels.video = firstVideo.name || 'video';
+      items.push({
+        id: 'video-1',
+        type: 'video',
+        source: { ref: 'video' },
+        timeline: { start: 0 },
+        layer: 10,
+        transform: {
+          x: coerceNumber(DEFAULT_RENDER_PARAMS.video.positionX, 50),
+          y: coerceNumber(DEFAULT_RENDER_PARAMS.video.positionY, 50),
+          scale: (coerceNumber(DEFAULT_RENDER_PARAMS.video.scale, 100) ?? 100) / 100,
+          rotation: coerceNumber(DEFAULT_RENDER_PARAMS.video.rotation, 0),
+          opacity: coerceNumber(DEFAULT_RENDER_PARAMS.video.opacity, 100),
+          fit: DEFAULT_RENDER_PARAMS.video.fit as 'contain' | 'cover' | 'stretch',
+          crop: {
+            x: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropX, 0),
+            y: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropY, 0),
+            w: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropW, 100),
+            h: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropH, 100)
+          }
+        }
+      });
+    }
+
+    if (firstAudio?.relativePath) {
+      inputsMap.audio = firstAudio.relativePath;
+      trackLabels.audio = firstAudio.name || 'audio';
+      items.push({
+        id: 'audio-1',
+        type: 'audio',
+        source: { ref: 'audio' },
+        timeline: { start: 0 },
+        layer: 0,
+        audioMix: {
+          gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.audio.gainDb, 0),
+          mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute)
+        }
+      });
+    }
+
+    if (firstSubtitle?.relativePath) {
+      inputsMap.subtitle = firstSubtitle.relativePath;
+      trackLabels.subtitle = firstSubtitle.name || 'subtitle';
+      items.push({
+        id: 'subtitle-1',
+        type: 'subtitle',
+        source: { ref: 'subtitle' },
+        timeline: { start: 0 },
+        layer: 0,
+        subtitleStyle: {
+          fontName: DEFAULT_RENDER_PARAMS.subtitle.fontName || 'Arial',
+          fontSize: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.fontSize, 48),
+          primaryColor: DEFAULT_RENDER_PARAMS.subtitle.primaryColor,
+          outlineColor: DEFAULT_RENDER_PARAMS.subtitle.outlineColor,
+          opacity: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.opacity, 100),
+          bold: DEFAULT_RENDER_PARAMS.subtitle.bold === '1',
+          italic: DEFAULT_RENDER_PARAMS.subtitle.italic === '1',
+          spacing: 0,
+          outline: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.outline, 2),
+          shadow: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.shadow, 2),
+          alignment: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.alignment, 2),
+          marginL: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.marginL, 30),
+          marginR: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.marginR, 30),
+          marginV: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.marginV, 36),
+          wrapStyle: 0,
+          positionMode: DEFAULT_RENDER_PARAMS.subtitle.positionMode,
+          positionX: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.positionX, 50),
+          positionY: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.positionY, 50)
+        }
+      });
+    }
+
+    return {
+      version: '2',
+      timeline: {
+        resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
+        framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
+        trackLabels,
+        imageMatchDuration: {}
+      },
+      renderOptions: {
+        codec: 'h264',
+        preset: 'fast',
+        crf: 21,
+        gop: 0,
+        tune: ''
+      },
+      inputsMap,
+      items
+    };
+  }, [runPipelineProject?.files, DEFAULT_RENDER_PARAMS]);
+
   const openRenderTemplateEditor = (config: RenderConfigV2, name = '') => {
     setRenderTemplateNameDraft(name);
     setRenderTemplateJsonDraft(JSON.stringify(buildTemplateFromConfig(config), null, 2));
@@ -3957,6 +4060,21 @@ export default function App() {
     const normalized = buildTemplateFromConfig(renderConfigPreview);
     return JSON.stringify(normalized) !== JSON.stringify(template.config);
   }, [runPipelineRenderTemplateId, renderTemplates, renderConfigPreview]);
+  const renderTemplateSelected = renderTemplates.find(t => t.id === runPipelineRenderTemplateId) ?? null;
+  const renderTemplateDiffCurrentConfig = React.useMemo(() => {
+    if (!renderConfigPreview) return null;
+    return buildTemplateFromConfig(renderConfigPreview);
+  }, [renderConfigPreview]);
+  const renderTemplateDiffBaselineConfig = React.useMemo(() => {
+    if (runPipelineRenderTemplateId === 'custom') {
+      return buildTemplateFromConfig(buildDefaultRenderTemplateConfig());
+    }
+    if (!renderTemplateSelected) return null;
+    return buildTemplateFromConfig(renderTemplateSelected.config);
+  }, [runPipelineRenderTemplateId, renderTemplateSelected, buildDefaultRenderTemplateConfig]);
+  const renderTemplateDiffBaselineLabel = runPipelineRenderTemplateId === 'custom'
+    ? 'Default'
+    : (renderTemplateSelected?.name ?? 'Template');
 
   const saveRenderStudioParamPreset = async (mode: 'save' | 'saveAs') => {
     const defaultName = getDefaultParamPresetName('Render', 'render');
@@ -4635,7 +4753,7 @@ export default function App() {
 
   const openRenderStudioTimelineContextMenu = (
     event: React.MouseEvent,
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number }
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number }
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -4672,9 +4790,25 @@ export default function App() {
     }
   };
 
-  const removeRenderStudioTrackFromTimeline = (track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number }) => {
+  const removeRenderStudioTrackFromTimeline = (track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number }) => {
     if (!track) return;
     if (!runPipelineProject) return;
+    if (track.type === 'text') {
+      setRenderTextTrackEnabled(false);
+      setRenderParams(prev => ({
+        ...prev,
+        text: {
+          ...prev.text,
+          singleText: '',
+          singleTextStart: '0',
+          singleTextEnd: '',
+          singleTextMatchDuration: '0'
+        }
+      }));
+      setRenderStudioFocus('timeline');
+      setRenderStudioItemType(null);
+      return;
+    }
     const targetId =
       track.type === 'image'
         ? track.id
@@ -4710,7 +4844,7 @@ export default function App() {
   };
 
   const resolveRenderStudioTimelineTrackFile = (
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number } | null
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number } | null
   ): VaultFile | null => {
     if (!track || !runPipelineProject) return null;
     let targetId: string | null = null;
@@ -4746,7 +4880,7 @@ export default function App() {
   };
 
   const previewRenderStudioTimelineTrack = (
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number } | null
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number } | null
   ) => {
     const file = resolveRenderStudioTimelineTrackFile(track);
     if (!file) return;
@@ -4887,7 +5021,7 @@ export default function App() {
               className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
               onClick={() => {
                 removeRenderStudioTrackFromTimeline(renderStudioTimelineContextMenu.track as {
-                  type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect';
+                  type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect';
                   id?: string;
                   index?: number;
                 });
@@ -6347,6 +6481,9 @@ export default function App() {
     isRenderTemplateDirty,
     renderConfigV2Override,
     setRenderConfigV2Override,
+    renderTemplateDiffCurrentConfig,
+    renderTemplateDiffBaselineConfig,
+    renderTemplateDiffBaselineLabel,
     setImportPopupOpen,
     subtitleFontOptions,
     subtitleFontLoading,

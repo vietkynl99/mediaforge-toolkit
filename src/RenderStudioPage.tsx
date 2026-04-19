@@ -79,9 +79,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     showRenderTimelineAudioTrack,
     renderAudioDuration,
     renderTimelineScrollRef,
-    onRenderTimelineMouseDown,
-    onRenderTimelineMouseMove,
-    onRenderTimelineMouseUp,
     onRenderTimelineClick,
     renderTimelineWidth,
     renderTimelineTickCount,
@@ -127,6 +124,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     isRenderTemplateDirty,
     renderConfigV2Override,
     setRenderConfigV2Override,
+    renderTemplateDiffCurrentConfig,
+    renderTemplateDiffBaselineConfig,
+    renderTemplateDiffBaselineLabel,
     subtitleFontOptions,
     subtitleFontLoading,
     SUBTITLE_STYLE_PRESETS,
@@ -147,7 +147,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     ? renderImageFiles.filter(file => file.id === selectedImageId)
     : renderImageFiles;
   const [templateMenuOpen, setTemplateMenuOpen] = React.useState(false);
-  const templateMenuCloseRef = React.useRef<number | null>(null);
+  const templateMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const [templateDiffOpen, setTemplateDiffOpen] = React.useState(false);
   const selectedTemplate = renderTemplates.find(template => template.id === runPipelineRenderTemplateId) ?? null;
   const isCustomTemplate = !selectedTemplate || runPipelineRenderTemplateId === 'custom';
   const inputRefPlaceholderType = React.useCallback((key: string) => {
@@ -249,6 +250,76 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
       setSubtitlePreviewPage(subtitleTotalPages);
     }
   }, [subtitlePreviewPage, subtitleTotalPages]);
+  React.useEffect(() => {
+    if (!templateMenuOpen) return;
+    const onWindowMouseDown = (event: MouseEvent) => {
+      if (!templateMenuRef.current?.contains(event.target as Node)) {
+        setTemplateMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onWindowMouseDown);
+    return () => window.removeEventListener('mousedown', onWindowMouseDown);
+  }, [templateMenuOpen]);
+  const templateDiffRows = React.useMemo(() => {
+    const left = renderTemplateDiffBaselineConfig ?? null;
+    const right = renderTemplateDiffCurrentConfig ?? null;
+    if (!left || !right) return [] as Array<{ path: string; before: unknown; after: unknown }>;
+
+    const rows: Array<{ path: string; before: unknown; after: unknown }> = [];
+    const isObject = (value: unknown): value is Record<string, unknown> => (
+      typeof value === 'object' && value !== null && !Array.isArray(value)
+    );
+    const same = (a: unknown, b: unknown) => {
+      if (a === b) return true;
+      if (typeof a !== typeof b) return false;
+      if (Array.isArray(a) && Array.isArray(b)) {
+        if (a.length !== b.length) return false;
+        return a.every((item, idx) => same(item, b[idx]));
+      }
+      if (isObject(a) && isObject(b)) {
+        const keys = Array.from(new Set([...Object.keys(a), ...Object.keys(b)])).sort();
+        return keys.every(key => same(a[key], b[key]));
+      }
+      return false;
+    };
+    const walk = (before: unknown, after: unknown, path: string) => {
+      if (same(before, after)) return;
+      if (Array.isArray(before) && Array.isArray(after)) {
+        const len = Math.max(before.length, after.length);
+        for (let i = 0; i < len; i += 1) {
+          walk(before[i], after[i], `${path}[${i}]`);
+        }
+        return;
+      }
+      if (isObject(before) && isObject(after)) {
+        const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort();
+        keys.forEach((key) => {
+          const nextPath = path ? `${path}.${key}` : key;
+          walk(before[key], after[key], nextPath);
+        });
+        return;
+      }
+      rows.push({ path: path || '(root)', before, after });
+    };
+    walk(left, right, '');
+    return rows;
+  }, [renderTemplateDiffBaselineConfig, renderTemplateDiffCurrentConfig]);
+  const hasTemplateChanges = templateDiffRows.length > 0;
+  React.useEffect(() => {
+    if (templateDiffOpen && !hasTemplateChanges) {
+      setTemplateDiffOpen(false);
+    }
+  }, [templateDiffOpen, hasTemplateChanges]);
+  const formatDiffValue = (value: unknown) => {
+    if (value === undefined) return '(missing)';
+    if (typeof value === 'string') return `"${value}"`;
+    if (typeof value === 'number' || typeof value === 'boolean' || value === null) return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('image:') ? 'image'
       : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
@@ -875,9 +946,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               renderTimelineScrollRef.current = node;
                               timelineScrollContainerRef.current = node;
                             }}
-                            onMouseMove={onRenderTimelineMouseMove}
-                            onMouseUp={onRenderTimelineMouseUp}
-                            onMouseLeave={onRenderTimelineMouseUp}
                             className="flex-1 overflow-x-auto render-timeline-scroll cursor-default"
                           >
                             <div
@@ -897,8 +965,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 </div>
                               )}
                               <div
-                                className="relative h-5 cursor-grab active:cursor-grabbing"
-                                onMouseDown={onRenderTimelineMouseDown}
+                                className="relative h-5"
                                 onClick={event => {
                                   onRenderTimelineClick(event);
                                   resetTrackSelection();
@@ -943,6 +1010,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       setRenderTextTrackEnabled(true);
                                     }
                                     selectTrack('text');
+                                  }}
+                                  onContextMenu={event => {
+                                    openRenderStudioTimelineContextMenu(event, { type: 'text' });
                                   }}
                                   onKeyDown={event => {
                                     if (event.key === 'Enter' || event.key === ' ') {
@@ -1265,33 +1335,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </select>
                             <div
                               className="relative shrink-0"
-                              onMouseEnter={() => {
-                                if (templateMenuCloseRef.current) {
-                                  window.clearTimeout(templateMenuCloseRef.current);
-                                  templateMenuCloseRef.current = null;
-                                }
-                                setTemplateMenuOpen(true);
-                              }}
-                              onMouseLeave={() => {
-                                if (templateMenuCloseRef.current) {
-                                  window.clearTimeout(templateMenuCloseRef.current);
-                                }
-                                templateMenuCloseRef.current = window.setTimeout(() => {
-                                  setTemplateMenuOpen(false);
-                                  templateMenuCloseRef.current = null;
-                                }, 120);
-                              }}
-                              onFocusCapture={() => setTemplateMenuOpen(true)}
-                              onBlurCapture={event => {
-                                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                                  setTemplateMenuOpen(false);
-                                }
-                              }}
+                              ref={templateMenuRef}
                             >
                               <button
                                 type="button"
                                 aria-label="Template options"
                                 title="Template options"
+                                aria-expanded={templateMenuOpen}
+                                onClick={() => setTemplateMenuOpen(prev => !prev)}
                                 className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
                               >
                                 <Menu size={14} />
@@ -1310,6 +1361,18 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   >
                                     Reset to default
                                   </button>
+                                  {hasTemplateChanges && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTemplateMenuOpen(false);
+                                        setTemplateDiffOpen(true);
+                                      }}
+                                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                    >
+                                      Show changes
+                                    </button>
+                                  )}
                                   {!isCustomTemplate && isRenderTemplateDirty && (
                                     <button
                                       type="button"
@@ -1366,6 +1429,82 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                           </div>
                         </div>
+                        {templateDiffOpen && (
+                          <div className="fixed inset-0 z-[80] bg-zinc-950/70 flex items-center justify-center p-4" onClick={() => setTemplateDiffOpen(false)}>
+                            <div className="w-full max-w-5xl max-h-[85vh] rounded-xl border border-zinc-800 bg-zinc-950 shadow-xl flex flex-col overflow-hidden" onClick={event => event.stopPropagation()}>
+                              <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-zinc-100">Template Changes</div>
+                                  <div className="text-xs text-zinc-400 truncate">Comparing current config with {renderTemplateDiffBaselineLabel}</div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (isCustomTemplate) {
+                                        saveRenderTemplateQuick();
+                                      } else if (selectedTemplate) {
+                                        saveRenderTemplateCurrent(selectedTemplate);
+                                      }
+                                      setTemplateDiffOpen(false);
+                                    }}
+                                    className="px-2.5 py-1 text-xs rounded-md border border-lime-600/70 text-lime-300 hover:text-lime-200 hover:border-lime-500"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (isCustomTemplate) {
+                                        resetRenderToDefault();
+                                      } else if (selectedTemplate) {
+                                        restoreRenderTemplateCurrent(selectedTemplate);
+                                      }
+                                      setTemplateDiffOpen(false);
+                                    }}
+                                    className="px-2.5 py-1 text-xs rounded-md border border-amber-600/70 text-amber-300 hover:text-amber-200 hover:border-amber-500"
+                                  >
+                                    Restore
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setTemplateDiffOpen(false)}
+                                    className="px-2.5 py-1 text-xs rounded-md border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:border-zinc-600"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800">
+                                {templateDiffRows.length} change{templateDiffRows.length === 1 ? '' : 's'}
+                              </div>
+                              <div className="overflow-auto">
+                                {templateDiffRows.length === 0 ? (
+                                  <div className="px-4 py-6 text-sm text-zinc-400">No differences.</div>
+                                ) : (
+                                  <table className="w-full border-collapse text-xs">
+                                    <thead className="sticky top-0 bg-zinc-900/95 text-zinc-400">
+                                      <tr>
+                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[28%]">Path</th>
+                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[36%]">{renderTemplateDiffBaselineLabel}</th>
+                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[36%]">Current</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {templateDiffRows.map((row, idx) => (
+                                        <tr key={`${row.path}-${idx}`} className="align-top border-b border-zinc-800/70">
+                                          <td className="px-3 py-2 font-mono text-zinc-300 break-all">{row.path}</td>
+                                          <td className="px-3 py-2 text-zinc-400 whitespace-pre-wrap break-words">{formatDiffValue(row.before)}</td>
+                                          <td className="px-3 py-2 text-zinc-200 whitespace-pre-wrap break-words">{formatDiffValue(row.after)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <div className="rounded-lg border border-zinc-800/70 bg-zinc-950/50 p-2">
                           <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Placeholders</div>
                           <div className="flex flex-col gap-2 text-[10px] text-zinc-400">
