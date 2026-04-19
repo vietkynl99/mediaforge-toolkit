@@ -1235,19 +1235,24 @@ const buildRenderV2FilterGraph = async (
         const main = `ivm${visualIndex}_${effectIndex}`;
         const tmp = `ivt${visualIndex}_${effectIndex}`;
         const out = `ivo${visualIndex}_${effectIndex}`;
-        const boxRadius = Math.max(1, Math.min(24, Math.round(sigma * 0.6)));
+        // Stronger blur for subtitle masking: use gaussian blur instead of boxblur.
+        const gblurSigma = Math.max(2, Math.min(96, Number(sigma) * 1.8));
+        const gblurSteps = Math.max(1, Math.min(6, Math.round(gblurSigma / 10)));
         const bl = `ivb${visualIndex}_${effectIndex}`;
         filters.push(`${blurCurrentLabel}split=2[${main}][${tmp}]`);
         filters.push(
-          `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,boxblur=luma_radius=${boxRadius}:luma_power=1:chroma_radius=${boxRadius}:chroma_power=1[${bl}]`
+          `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,format=rgba,gblur=sigma=${gblurSigma.toFixed(2)}:steps=${gblurSteps}:planes=0x7,format=rgba[${bl}]`
         );
         if (feather > 0) {
           const maskPath = await ensureFeatherMaskPgm(tmpDir, feather);
+          const featherMaskSigma = Math.max(0.8, Math.min(16, feather * 1.2));
           const mu = `ivmu${visualIndex}_${effectIndex}`;
           const mk = `ivmk${visualIndex}_${effectIndex}`;
           const br = `ivbr${visualIndex}_${effectIndex}`;
           const ba = `ivba${visualIndex}_${effectIndex}`;
-          filters.push(`movie='${escapeFilterPath(maskPath)}',format=gray,${STATIC_MASK_LOOP_FILTER}[${mu}]`);
+          filters.push(
+            `movie='${escapeFilterPath(maskPath)}',format=gray,gblur=sigma=${featherMaskSigma.toFixed(2)}:steps=2,${STATIC_MASK_LOOP_FILTER}[${mu}]`
+          );
           filters.push(`[${mu}][${bl}]scale2ref[${mk}][${br}]`);
           filters.push(`[${br}][${mk}]alphamerge[${ba}]`);
           filters.push(`[${main}][${ba}]overlay=W*${x}/100:H*${y}/100:format=auto[${out}]`);
