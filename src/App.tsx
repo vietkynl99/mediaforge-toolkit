@@ -236,6 +236,19 @@ type TaskTemplate = {
   params: Record<string, any>;
 };
 
+type NewJobPopupDraft = {
+  version: 1;
+  projectId?: string | null;
+  projectName?: string | null;
+  pipelineId?: string | null;
+  runPipelineRenderTemplateId?: string | null;
+  runPipelineTaskTemplate?: Record<string, string>;
+  runPipelineInputId?: string | null;
+  renderInputFileIds?: string[];
+  renderTemplateApplyMap?: Record<string, string>;
+  renderTemplateApplyMapById?: Record<string, Record<string, string>>;
+};
+
 /** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
 const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
   fontName: 'Arial',
@@ -386,6 +399,7 @@ const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
 ];
 
 const SHOW_PARAM_PRESETS = false;
+const NEW_JOB_POPUP_DRAFT_STORAGE_KEY = 'mediaforge.newJobPopupDraft.v1';
 
 const VIET_SUBTITLE_FONTS = [
   'Be Vietnam Pro',
@@ -1357,6 +1371,9 @@ export default function App() {
   const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
   const [runPipelineTaskTemplate, setRunPipelineTaskTemplate] = useState<Record<string, string>>({});
+  const newJobDraftLoadedRef = useRef(false);
+  const newJobDraftPendingRef = useRef<NewJobPopupDraft | null>(null);
+  const newJobDraftAppliedRef = useRef(false);
   const [downloadTemplateMenuOpen, setDownloadTemplateMenuOpen] = useState(false);
   const [uvrTemplateMenuOpen, setUvrTemplateMenuOpen] = useState(false);
   const [ttsTemplateMenuOpen, setTtsTemplateMenuOpen] = useState(false);
@@ -5202,6 +5219,152 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (newJobDraftLoadedRef.current) return;
+    newJobDraftLoadedRef.current = true;
+    try {
+      const raw = window.localStorage.getItem(NEW_JOB_POPUP_DRAFT_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as NewJobPopupDraft;
+      if (!parsed || parsed.version !== 1) return;
+      newJobDraftPendingRef.current = parsed;
+      newJobDraftAppliedRef.current = false;
+    } catch {
+      newJobDraftPendingRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showRunPipeline) {
+      newJobDraftAppliedRef.current = false;
+      return;
+    }
+    if (newJobDraftAppliedRef.current) return;
+    const draft = newJobDraftPendingRef.current;
+    if (!draft) {
+      newJobDraftAppliedRef.current = true;
+      return;
+    }
+
+    if (draft.pipelineId && pipelineLibrary.some(item => item.id === draft.pipelineId) && runPipelineId !== draft.pipelineId) {
+      setRunPipelineId(draft.pipelineId);
+    }
+
+    const resolvedProject = (
+      (draft.projectId && vaultFolders.find(folder => folder.id === draft.projectId))
+      || (draft.projectName
+        ? vaultFolders.find(folder => folder.name.toLowerCase() === String(draft.projectName).trim().toLowerCase())
+        : undefined)
+      || null
+    );
+    if (resolvedProject && runPipelineProjectId !== resolvedProject.id) {
+      setRunPipelineProjectId(resolvedProject.id);
+    }
+    if (draft.projectName && runPipelineHasDownload && downloadProjectName !== draft.projectName) {
+      setDownloadProjectName(draft.projectName);
+    }
+
+    if (draft.runPipelineRenderTemplateId) {
+      const templateId = draft.runPipelineRenderTemplateId;
+      if (templateId === 'custom' || renderTemplates.some(template => template.id === templateId)) {
+        if (runPipelineRenderTemplateId !== templateId) {
+          setRunPipelineRenderTemplateId(templateId);
+        }
+      }
+    }
+
+    if (draft.runPipelineTaskTemplate && Object.keys(draft.runPipelineTaskTemplate).length > 0) {
+      setRunPipelineTaskTemplate(prev => ({ ...prev, ...draft.runPipelineTaskTemplate }));
+    }
+
+    if (draft.renderTemplateApplyMapById && Object.keys(draft.renderTemplateApplyMapById).length > 0) {
+      setRenderTemplateApplyMapById(prev => ({ ...prev, ...draft.renderTemplateApplyMapById }));
+    }
+
+    const targetProject = resolvedProject ?? runPipelineProject ?? null;
+    const validFileIds = new Set((targetProject?.files ?? []).map(file => file.id));
+    const projectReadyForDraft = Boolean(targetProject) || (!vaultLoading && hasLoadedOnce);
+
+    if (targetProject) {
+      if (draft.runPipelineInputId && validFileIds.has(draft.runPipelineInputId) && runPipelineInputId !== draft.runPipelineInputId) {
+        setRunPipelineInputId(draft.runPipelineInputId);
+      }
+
+      if (Array.isArray(draft.renderInputFileIds)) {
+        const filtered = draft.renderInputFileIds.filter(id => validFileIds.has(id));
+        if (filtered.length > 0) {
+          setRenderInputFileIds(filtered);
+        }
+      }
+
+      if (draft.renderTemplateApplyMap && Object.keys(draft.renderTemplateApplyMap).length > 0) {
+        const filteredMap = Object.fromEntries(
+          Object.entries(draft.renderTemplateApplyMap).filter(([, fileId]) => validFileIds.has(fileId))
+        );
+        if (Object.keys(filteredMap).length > 0) {
+          setRenderTemplateApplyMap(filteredMap);
+        }
+      }
+    }
+
+    if (projectReadyForDraft) {
+      newJobDraftPendingRef.current = null;
+      newJobDraftAppliedRef.current = true;
+    }
+  }, [
+    showRunPipeline,
+    pipelineLibrary,
+    runPipelineId,
+    vaultFolders,
+    runPipelineProjectId,
+    runPipelineProject,
+    runPipelineHasDownload,
+    downloadProjectName,
+    runPipelineRenderTemplateId,
+    renderTemplates,
+    runPipelineInputId,
+    vaultLoading,
+    hasLoadedOnce
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!showRunPipeline) return;
+    const draft: NewJobPopupDraft = {
+      version: 1,
+      projectId: runPipelineProjectId ?? null,
+      projectName: runPipelineHasDownload
+        ? (downloadProjectName || runPipelineProject?.name || null)
+        : (runPipelineProject?.name ?? null),
+      pipelineId: runPipelineId ?? null,
+      runPipelineRenderTemplateId,
+      runPipelineTaskTemplate,
+      runPipelineInputId: runPipelineInputId ?? null,
+      renderInputFileIds,
+      renderTemplateApplyMap,
+      renderTemplateApplyMapById
+    };
+    try {
+      window.localStorage.setItem(NEW_JOB_POPUP_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    showRunPipeline,
+    runPipelineProjectId,
+    runPipelineProject?.name,
+    runPipelineHasDownload,
+    downloadProjectName,
+    runPipelineId,
+    runPipelineRenderTemplateId,
+    runPipelineTaskTemplate,
+    runPipelineInputId,
+    renderInputFileIds,
+    renderTemplateApplyMap,
+    renderTemplateApplyMapById
+  ]);
+
+  useEffect(() => {
     if (!authUser) return;
     loadJobs();
     const interval = window.setInterval(loadJobs, 3000);
@@ -5291,11 +5454,17 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedFolder) return;
+    const currentInput = selectedFolder.files.find(file => file.id === runPipelineInputId);
+    const currentInputValid = Boolean(
+      currentInput
+      && (runPipelineHasTts ? currentInput.type === 'subtitle' : (currentInput.type === 'video' || currentInput.type === 'audio'))
+    );
+    if (currentInputValid) return;
     const firstInput = runPipelineHasTts
       ? selectedFolder.files.find(file => file.type === 'subtitle')
       : selectedFolder.files.find(file => file.type === 'video' || file.type === 'audio');
     setRunPipelineInputId(firstInput?.id ?? null);
-  }, [selectedFolder?.id, runPipelineHasTts]);
+  }, [selectedFolder?.id, runPipelineHasTts, runPipelineInputId]);
 
   useEffect(() => {
     let active = true;
@@ -5338,11 +5507,17 @@ export default function App() {
 
   useEffect(() => {
     if (!runPipelineProject) return;
+    const currentInput = runPipelineProject.files.find(file => file.id === runPipelineInputId);
+    const currentInputValid = Boolean(
+      currentInput
+      && (runPipelineHasTts ? currentInput.type === 'subtitle' : (currentInput.type === 'video' || currentInput.type === 'audio'))
+    );
+    if (currentInputValid) return;
     const firstInput = runPipelineHasTts
       ? runPipelineProject.files.find(file => file.type === 'subtitle')
       : runPipelineProject.files.find(file => file.type === 'video' || file.type === 'audio');
     setRunPipelineInputId(firstInput?.id ?? null);
-  }, [runPipelineProject?.id, runPipelineHasTts]);
+  }, [runPipelineProject?.id, runPipelineHasTts, runPipelineInputId]);
 
   useEffect(() => {
     if (!runPipelineProject || !runPipelineHasRender) return;
@@ -5926,6 +6101,7 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load vault';
       setVaultError(message);
+      setHasLoadedOnce(true);
     } finally {
       setVaultLoading(false);
     }
@@ -6568,6 +6744,18 @@ export default function App() {
       effectCounts
     };
   }, [selectedRenderTemplate, runPipelineRenderTemplateId]);
+  const isNewJobProjectLoading = React.useMemo(() => {
+    if (!showRunPipeline) return false;
+    if (vaultLoading || runPipelineLoading) return true;
+    if (!hasLoadedOnce && vaultFolders.length === 0) return true;
+    return false;
+  }, [
+    showRunPipeline,
+    vaultLoading,
+    runPipelineLoading,
+    hasLoadedOnce,
+    vaultFolders.length
+  ]);
 
   if (!authChecked) {
     return (
@@ -8558,7 +8746,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-zinc-500 uppercase tracking-widest">New Job</div>
                   <div className="flex items-center gap-2">
-                    {runPipelineHasRender && (
+                    {!isNewJobProjectLoading && runPipelineHasRender && (
                       <button
                         onClick={() => setRenderStudioOpen(true)}
                         disabled={!runPipelineProject}
@@ -8567,13 +8755,15 @@ export default function App() {
                         Preview
                       </button>
                     )}
-                    <button
-                      onClick={runPipelineJob}
-                      disabled={runPipelineSubmitting}
-                      className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {runPipelineSubmitting ? 'Queuing...' : 'Run'}
-                    </button>
+                    {!isNewJobProjectLoading && (
+                      <button
+                        onClick={runPipelineJob}
+                        disabled={runPipelineSubmitting}
+                        className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {runPipelineSubmitting ? 'Queuing...' : 'Run'}
+                      </button>
+                    )}
                     <button
                       onClick={() => {
                         setShowRunPipeline(false);
@@ -8586,6 +8776,11 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+                {isNewJobProjectLoading && (
+                  <div className="absolute inset-x-0 top-14 bottom-0 z-20 bg-zinc-900/95 rounded-b-2xl flex items-center justify-center">
+                    <div className="text-sm text-zinc-400">Loading project...</div>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs text-zinc-500 uppercase tracking-widest">
