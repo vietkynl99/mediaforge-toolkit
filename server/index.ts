@@ -912,6 +912,7 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
 
 const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
 const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = true;
+const BLUR_FEATHER_MAX = 10;
 
 const normalizeFfmpegColor = (value: string) => {
   const trimmed = value.trim();
@@ -919,6 +920,54 @@ const normalizeFfmpegColor = (value: string) => {
     return `0x${trimmed.slice(1)}`;
   }
   return trimmed;
+};
+
+const ensureCircleMaskPgm = async (tmpDir: string) => {
+  const size = 256;
+  const maskPath = path.join(tmpDir, `circle-mask-${size}.pgm`);
+  try {
+    await fs.access(maskPath);
+    return maskPath;
+  } catch {
+    const radius = size / 2;
+    const cx = (size - 1) / 2;
+    const cy = (size - 1) / 2;
+    const pixels = Buffer.alloc(size * size);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const inside = (dx * dx + dy * dy) <= (radius * radius);
+        pixels[y * size + x] = inside ? 255 : 0;
+      }
+    }
+    const header = Buffer.from(`P5\n${size} ${size}\n255\n`, 'ascii');
+    await fs.writeFile(maskPath, Buffer.concat([header, pixels]));
+    return maskPath;
+  }
+};
+
+const ensureFeatherMaskPgm = async (tmpDir: string, featherPct: number) => {
+  const f = Math.max(0, Math.min(BLUR_FEATHER_MAX, Math.round(featherPct)));
+  const size = 256;
+  const maskPath = path.join(tmpDir, `feather-mask-${f}-${size}.pgm`);
+  try {
+    await fs.access(maskPath);
+    return maskPath;
+  } catch {
+    const edge = f <= 0 ? 0 : (f / 100) * (size / 2);
+    const pixels = Buffer.alloc(size * size);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const d = Math.min(x, y, size - 1 - x, size - 1 - y);
+        const alpha = edge <= 0 ? 255 : Math.max(0, Math.min(255, Math.round((d / edge) * 255)));
+        pixels[y * size + x] = alpha;
+      }
+    }
+    const header = Buffer.from(`P5\n${size} ${size}\n255\n`, 'ascii');
+    await fs.writeFile(maskPath, Buffer.concat([header, pixels]));
+    return maskPath;
+  }
 };
 
 const buildRenderV2FilterGraph = async (
@@ -1046,6 +1095,7 @@ const buildRenderV2FilterGraph = async (
 
   let currentVideo = '[base]';
   let visualIndex = 0;
+  let circleMaskPath: string | null = null;
   const sortedVisual = [...visualItems].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
   for (const item of sortedVisual) {
     const timing = finalItemTiming.find(t => t.entry.item === item);
@@ -1107,27 +1157,56 @@ const buildRenderV2FilterGraph = async (
       const my = Math.max(0, Math.min(100, Number(item.mask.y ?? 0)));
       const mw = Math.max(0.1, Math.min(100, Number(item.mask.w ?? 100)));
       const mh = Math.max(0.1, Math.min(100, Number(item.mask.h ?? 100)));
-      const x1 = `(${mx / 100})*W`;
-      const y1 = `(${my / 100})*H`;
-      const x2 = `(${mx / 100 + mw / 100})*W`;
-      const y2 = `(${my / 100 + mh / 100})*H`;
-      const maskExpr = item.mask.type === 'circle'
-        ? `if(lte(((X-(${x1}+(${mw / 200})*W))*(X-(${x1}+(${mw / 200})*W)))/((${mw / 200})*W*((${mw / 200})*W)) + ((Y-(${y1}+(${mh / 200})*H))*(Y-(${y1}+(${mh / 200})*H)))/((${mh / 200})*H*((${mh / 200})*H)),1),255,0)`
-        : `if(between(X,${x1},${x2})*between(Y,${y1},${y2}),255,0)`;
       const splitLabelA = `[vms${visualIndex}a]`;
       const splitLabelB = `[vms${visualIndex}b]`;
-      const maskLabel = `[vmask${visualIndex}]`;
       const outLabel = `[v${visualIndex}]`;
       const splitChain = chain.endsWith(']')
         ? `${chain}split=2${splitLabelA}${splitLabelB}`
         : `${chain},split=2${splitLabelA}${splitLabelB}`;
       filters.push(splitChain);
-      filters.push(`${splitLabelB}geq=lum='${maskExpr}'${maskLabel}`);
-      let mergeChain = `${splitLabelA}${maskLabel}alphamerge`;
-      if (opacity < 1) {
-        mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
+      if (item.mask.type === 'rect') {
+        const cropLabel = `[vmcrop${visualIndex}]`;
+        const clearLabel = `[vmclr${visualIndex}]`;
+        const mxNorm = (mx / 100).toFixed(4);
+        const myNorm = (my / 100).toFixed(4);
+        const mwNorm = (mw / 100).toFixed(4);
+        const mhNorm = (mh / 100).toFixed(4);
+        filters.push(
+          `${splitLabelA}crop=iw*${mwNorm}:ih*${mhNorm}:iw*${mxNorm}:ih*${myNorm}${cropLabel}`
+        );
+        filters.push(`${splitLabelB}colorchannelmixer=aa=0${clearLabel}`);
+        let mergeChain = `${clearLabel}${cropLabel}overlay=x=W*${mxNorm}:y=H*${myNorm}:format=auto`;
+        if (opacity < 1) {
+          mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
+        }
+        filters.push(`${mergeChain}${outLabel}`);
+      } else {
+        if (!circleMaskPath) {
+          circleMaskPath = await ensureCircleMaskPgm(tmpDir);
+        }
+        const cropLabel = `[vmcrop${visualIndex}]`;
+        const maskUnitLabel = `[vmmu${visualIndex}]`;
+        const maskLabel = `[vmask${visualIndex}]`;
+        const cropRefLabel = `[vmcr${visualIndex}]`;
+        const maskedCropLabel = `[vmcm${visualIndex}]`;
+        const clearLabel = `[vmclr${visualIndex}]`;
+        const mxNorm = (mx / 100).toFixed(4);
+        const myNorm = (my / 100).toFixed(4);
+        const mwNorm = (mw / 100).toFixed(4);
+        const mhNorm = (mh / 100).toFixed(4);
+        filters.push(
+          `${splitLabelA}crop=iw*${mwNorm}:ih*${mhNorm}:iw*${mxNorm}:ih*${myNorm}${cropLabel}`
+        );
+        filters.push(`movie='${escapeFilterPath(circleMaskPath)}',format=gray${maskUnitLabel}`);
+        filters.push(`${maskUnitLabel}${cropLabel}scale2ref${maskLabel}${cropRefLabel}`);
+        filters.push(`${cropRefLabel}${maskLabel}alphamerge${maskedCropLabel}`);
+        filters.push(`${splitLabelB}colorchannelmixer=aa=0${clearLabel}`);
+        let mergeChain = `${clearLabel}${maskedCropLabel}overlay=x=W*${mxNorm}:y=H*${myNorm}:format=auto`;
+        if (opacity < 1) {
+          mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
+        }
+        filters.push(`${mergeChain}${outLabel}`);
       }
-      filters.push(`${mergeChain}${outLabel}`);
     } else {
       if (opacity < 1) {
         addFilter(`colorchannelmixer=aa=${opacity.toFixed(3)}`);
@@ -1144,47 +1223,38 @@ const buildRenderV2FilterGraph = async (
     let overlayInputLabel = label;
     if (itemBlurEffects.length > 0) {
       let blurCurrentLabel = label;
-      itemBlurEffects.forEach((effect, effectIndex) => {
+      for (let effectIndex = 0; effectIndex < itemBlurEffects.length; effectIndex += 1) {
+        const effect = itemBlurEffects[effectIndex];
         const x = effect.left;
         const y = effect.top;
         const w = 100 - effect.left - effect.right;
         const h = 100 - effect.top - effect.bottom;
         const sigma = effect.sigma;
         const feather = effect.feather > 0 ? effect.feather : 0;
-        const lumExpr = blurFeatherGeqLum(feather);
         const main = `ivm${visualIndex}_${effectIndex}`;
         const tmp = `ivt${visualIndex}_${effectIndex}`;
         const out = `ivo${visualIndex}_${effectIndex}`;
-        let blurChain: string;
-        if (!lumExpr) {
-          const bl = `ivb${visualIndex}_${effectIndex}`;
-          blurChain =
-            `${blurCurrentLabel}split=2[${main}][${tmp}];` +
-            `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,gblur=sigma=${sigma}[${bl}];` +
-            `[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`;
-        } else {
-          const co = `ivco${visualIndex}_${effectIndex}`;
-          const cb = `ivcb${visualIndex}_${effectIndex}`;
-          const gb = `ivgb${visualIndex}_${effectIndex}`;
+        const boxRadius = Math.max(1, Math.min(24, Math.round(sigma * 0.6)));
+        const bl = `ivb${visualIndex}_${effectIndex}`;
+        filters.push(`${blurCurrentLabel}split=2[${main}][${tmp}]`);
+        filters.push(
+          `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,boxblur=luma_radius=${boxRadius}:luma_power=1:chroma_radius=${boxRadius}:chroma_power=1[${bl}]`
+        );
+        if (feather > 0) {
+          const maskPath = await ensureFeatherMaskPgm(tmpDir, feather);
+          const mu = `ivmu${visualIndex}_${effectIndex}`;
           const mk = `ivmk${visualIndex}_${effectIndex}`;
-          const pa = `ivpa${visualIndex}_${effectIndex}`;
-          const prgb = `ivprgb${visualIndex}_${effectIndex}`;
-          const mr = `ivmr${visualIndex}_${effectIndex}`;
-          const vor = `ivovl${visualIndex}_${effectIndex}`;
-          blurChain =
-            `${blurCurrentLabel}split=2[${main}][${tmp}];` +
-            `[${main}]format=rgb24[${mr}];` +
-            `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,split=2[${co}][${cb}];` +
-            `[${cb}]gblur=sigma=${sigma},format=bgra[${gb}];` +
-            `[${co}]format=gray,geq=lum='${lumExpr}'[${mk}];` +
-            `[${gb}][${mk}]alphamerge[${pa}];` +
-            `[${pa}]format=rgba[${prgb}];` +
-            `[${mr}][${prgb}]overlay=W*${x}/100:H*${y}/100:format=auto[${vor}];` +
-            `[${vor}]format=rgba[${out}]`;
+          const br = `ivbr${visualIndex}_${effectIndex}`;
+          const ba = `ivba${visualIndex}_${effectIndex}`;
+          filters.push(`movie='${escapeFilterPath(maskPath)}',format=gray[${mu}]`);
+          filters.push(`[${mu}][${bl}]scale2ref[${mk}][${br}]`);
+          filters.push(`[${br}][${mk}]alphamerge[${ba}]`);
+          filters.push(`[${main}][${ba}]overlay=W*${x}/100:H*${y}/100:format=auto[${out}]`);
+        } else {
+          filters.push(`[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`);
         }
-        filters.push(blurChain);
         blurCurrentLabel = `[${out}]`;
-      });
+      }
       overlayInputLabel = blurCurrentLabel;
     }
     const overlayFilter = sampleAt === null
@@ -4720,12 +4790,11 @@ type BlurRegionEffect = {
   top: number;
   bottom: number;
   sigma: number;
-  /** 0 = hard edge; 1–20 = feather width as % of half the shorter crop side. */
+  /** 0 = hard edge; 1–10 = feather width as % of half the shorter crop side. */
   feather: number;
 };
 
 const clampRender = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
-const BLUR_FEATHER_MAX = 10;
 
 const parseBlurRegionEffects = (raw: unknown): BlurRegionEffect[] => {
   if (!Array.isArray(raw)) return [];
@@ -4771,23 +4840,6 @@ const parseBlurRegionEffects = (raw: unknown): BlurRegionEffect[] => {
     out.push({ type: 'blur_region', left, right, top, bottom, sigma, feather });
   });
   return out;
-};
-
-/** Distance-to-edge mask (0–255) for feathered blur; d = min dist to crop border in px. */
-const blurFeatherGeqLum = (featherPct: number) => {
-  const f = Math.max(0, Math.min(BLUR_FEATHER_MAX, Math.round(featherPct)));
-  if (f <= 0) return '';
-  /**
-   * ffmpeg 4.x geq splits `lum` on commas and treats `:` as filter opt separator — use only + - * / abs ().
-   * Use W/H (not w/h): lowercase w is not a valid width variable in this evaluator.
-   * min(a,b)=(a+b-abs(a-b))/2; ramp to 255 past edge via min(1,d/edge)=(1+t-abs(1-t))/2, t=d/(edge+eps).
-   */
-  const edge = `${f}*sqrt(W*W+H*H)/200`;
-  const dx = '(W-1-abs(2*X-(W-1)))/2';
-  const dy = '(H-1-abs(2*Y-(H-1)))/2';
-  const d = `((${dx})+(${dy})-abs((${dx})-(${dy})))/2`;
-  const t = `(${d})/((${edge})+0.001)`;
-  return `255*(1+(${t})-abs(1-(${t})))/2`;
 };
 
 app.get('/api/vault/thumb', async (req, res) => {

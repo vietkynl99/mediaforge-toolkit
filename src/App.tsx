@@ -107,7 +107,7 @@ type RenderBlurRegionEffect = {
   top: number;
   bottom: number;
   sigma: number;
-  /** 0 = hard edge; 1–20 softer transition toward full blur at center. */
+  /** 0 = hard edge; 1–10 softer transition toward full blur at center. */
   feather: number;
 };
 
@@ -1052,7 +1052,7 @@ const computeFolderStatus = (files: VaultFile[]) => {
 /** Render Studio: extra strip after content end (pixels only); logical duration = longest track. */
 const RENDER_TIMELINE_VIEW_PAD = 0.12;
 
-const RENDER_BLUR_FEATHER_MAX = 20;
+const RENDER_BLUR_FEATHER_MAX = 10;
 
 /** Solid black JPEG when preview cannot be loaded (matches server fallback). */
 const RENDER_PREVIEW_BLACK_DATA_URL =
