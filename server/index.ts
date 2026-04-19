@@ -136,7 +136,6 @@ const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
 const AUTH_SESSION_TTL_MS = Math.max(1, AUTH_SESSION_TTL_DAYS) * 24 * 60 * 60 * 1000;
-const PREVIEW_SEEK_WINDOW_SECONDS = 1;
 
 const app = express();
 const PORT = Number(process.env.VAULT_PORT ?? 3001);
@@ -912,6 +911,7 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
 };
 
 const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
+const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = true;
 
 const normalizeFfmpegColor = (value: string) => {
   const trimmed = value.trim();
@@ -924,21 +924,25 @@ const normalizeFfmpegColor = (value: string) => {
 const buildRenderV2FilterGraph = async (
   config: RenderConfigV2,
   tmpDir: string,
-  options?: { includeAudio?: boolean }
+  options?: { includeAudio?: boolean; outputStart?: number; outputDuration?: number; allowShortDuration?: boolean; sampleAt?: number }
 ) => {
   const includeAudio = options?.includeAudio !== false;
   const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
   const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
   const background = normalizeFfmpegColor(config.timeline.backgroundColor || '#000000');
-  const outputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
+  const configOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
+  const outputStart = Number.isFinite(options?.outputStart) ? Math.max(0, Number(options?.outputStart)) : configOutputStart;
 
   const visualItems = config.items.filter(item => item.type === 'video' || item.type === 'image');
   const audioItems = config.items.filter(item => item.type === 'audio');
   const subtitleItems = config.items.filter(item => item.type === 'subtitle');
   const textItems = config.items.filter(item => item.type === 'text');
 
+  const sourceItems = includeAudio
+    ? [...visualItems, ...audioItems, ...subtitleItems]
+    : [...visualItems, ...subtitleItems];
   const inputs: Array<{ path: string; type: RenderItemV2['type']; item: RenderItemV2; duration?: number }> = [];
-  for (const item of [...visualItems, ...audioItems, ...subtitleItems]) {
+  for (const item of sourceItems) {
     const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
     const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path) : null);
     if (!sourcePath) continue;
@@ -955,6 +959,10 @@ const buildRenderV2FilterGraph = async (
     const startRaw = Math.max(0, entry.item.timeline?.start ?? 0);
     const trimStartRaw = Math.max(0, entry.item.timeline?.trimStart ?? 0);
     const trimEndRaw = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
+    const hasExplicitDuration = (
+      (typeof entry.duration === 'number' && Number.isFinite(entry.duration) && entry.duration > 0) ||
+      Number.isFinite(entry.item.timeline?.duration)
+    );
     const baseDuration = entry.duration && entry.duration > 0
       ? Math.max(0.1, entry.duration - trimStartRaw - trimEndRaw)
       : defaultDuration;
@@ -962,13 +970,19 @@ const buildRenderV2FilterGraph = async (
       ? Math.max(0.1, Number(entry.item.timeline?.duration))
       : baseDuration;
     const endRaw = startRaw + durationRaw;
-    return { entry, startRaw, durationRaw, trimStartRaw, endRaw };
+    return { entry, startRaw, durationRaw, trimStartRaw, endRaw, hasExplicitDuration };
   });
 
   const outputDurationFromItems = rawItemTiming.reduce((max, t) => Math.max(max, t.endRaw - outputStart), 0);
-  const outputDuration = Number.isFinite(config.timeline.duration)
-    ? Math.max(0.1, Number(config.timeline.duration))
-    : Math.max(0.1, outputDurationFromItems);
+  const minOutputDuration = options?.allowShortDuration ? 0.001 : 0.1;
+  const trimThreshold = options?.allowShortDuration ? 0.001 : 0.1;
+  const sampleAt = Number.isFinite(options?.sampleAt) ? Math.max(0, Number(options?.sampleAt)) : null;
+  const outputDurationRaw = Number.isFinite(options?.outputDuration)
+    ? Number(options?.outputDuration)
+    : (Number.isFinite(config.timeline.duration)
+      ? Number(config.timeline.duration)
+      : outputDurationFromItems);
+  const outputDuration = Math.max(minOutputDuration, outputDurationRaw);
 
   const inputArgs: string[] = [];
   const inputEntries: Array<{
@@ -983,15 +997,33 @@ const buildRenderV2FilterGraph = async (
   inputs.forEach((entry, idx) => {
     const args: string[] = [];
     const rawT = rawItemTiming[idx];
-    
-    if (rawT.endRaw <= outputStart || rawT.startRaw >= outputStart + outputDuration) {
-      return;
+    let start = 0;
+    let duration = 0;
+    let trimStart = 0;
+    if (sampleAt !== null) {
+      // When source duration is unknown (ffprobe/parse failure), don't drop the item only because
+      // of a fallback duration estimate. Keep it active after its start in preview sampling mode.
+      if (rawT.hasExplicitDuration) {
+        if (rawT.startRaw > sampleAt || rawT.endRaw <= sampleAt) return;
+      } else if (rawT.startRaw > sampleAt) {
+        return;
+      }
+      start = 0;
+      duration = Math.max(trimThreshold, outputDuration);
+      trimStart = entry.type === 'image'
+        ? rawT.trimStartRaw
+        : rawT.trimStartRaw + Math.max(0, sampleAt - rawT.startRaw);
+    } else {
+      if (rawT.endRaw <= outputStart || rawT.startRaw >= outputStart + outputDuration) {
+        return;
+      }
+      start = Math.max(0, rawT.startRaw - outputStart);
+      const end = Math.min(outputDuration, rawT.endRaw - outputStart);
+      duration = Math.max(0.01, end - start);
+      trimStart = entry.type === 'image'
+        ? rawT.trimStartRaw
+        : rawT.trimStartRaw + Math.max(0, outputStart - rawT.startRaw);
     }
-
-    const start = Math.max(0, rawT.startRaw - outputStart);
-    const end = Math.min(outputDuration, rawT.endRaw - outputStart);
-    const duration = Math.max(0.01, end - start);
-    const trimStart = rawT.trimStartRaw + Math.max(0, outputStart - rawT.startRaw);
 
     const timing = { entry, start, duration, trimStart };
     finalItemTiming.push(timing);
@@ -1042,7 +1074,7 @@ const buildRenderV2FilterGraph = async (
     };
     const trimStart = timing?.trimStart ?? 0;
     const trimEndValue = trimStart + duration;
-    if (trimStart > 0 || duration > 0.1) {
+    if (trimStart > 0 || duration > trimThreshold) {
       addFilter(`trim=start=${trimStart}:end=${trimEndValue}`);
     }
     addFilter('setpts=PTS-STARTPTS');
@@ -1155,7 +1187,10 @@ const buildRenderV2FilterGraph = async (
       });
       overlayInputLabel = blurCurrentLabel;
     }
-    filters.push(`${currentVideo}${overlayInputLabel}overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'[v${visualIndex}o]`);
+    const overlayFilter = sampleAt === null
+      ? `overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'`
+      : `overlay=x=${xExpr}:y=${yExpr}`;
+    filters.push(`${currentVideo}${overlayInputLabel}${overlayFilter}[v${visualIndex}o]`);
     currentVideo = `[v${visualIndex}o]`;
     visualIndex += 1;
   }
@@ -1247,7 +1282,7 @@ const buildRenderV2FilterGraph = async (
     const trimStart = timing.trimStart;
     const duration = timing.duration;
     const endValue = trimStart + duration;
-    if (trimStart > 0 || duration > 0.1) {
+    if (trimStart > 0 || duration > trimThreshold) {
       addFilter(`atrim=start=${trimStart}:end=${endValue}`);
     }
     addFilter('asetpts=PTS-STARTPTS');
@@ -4800,40 +4835,29 @@ app.post('/api/render-preview-v2', async (req, res) => {
   let previewBuf: Buffer = RENDER_PREVIEW_BLACK_JPEG;
   let previewError: string | null = null;
   try {
-    const graph = await buildRenderV2FilterGraph(config, tmpDir, { includeAudio: false });
+    const baseOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
+    const timelineDuration = Number.isFinite(config.timeline.duration) ? Math.max(0, Number(config.timeline.duration)) : 0;
+    const framerate = Number.isFinite(config.timeline.framerate) && Number(config.timeline.framerate) > 0
+      ? Number(config.timeline.framerate)
+      : 30;
+    const frameDuration = 1 / framerate;
     let atSeconds = Number.isFinite(at) ? Math.max(0, at) : 0;
-    if (graph.outputDuration > 0) {
-      atSeconds = Math.min(atSeconds, Math.max(0, graph.outputDuration - 0.05));
+    if (timelineDuration > 0) {
+      atSeconds = Math.min(atSeconds, Math.max(0, timelineDuration - frameDuration));
     }
+    const previewOutputStart = baseOutputStart + atSeconds;
+    const graph = await buildRenderV2FilterGraph(config, tmpDir, {
+      includeAudio: false,
+      outputStart: previewOutputStart,
+      outputDuration: frameDuration,
+      allowShortDuration: true,
+      sampleAt: previewOutputStart
+    });
     const ffmpegPath = await getFfmpegPath();
-    const hasTimedText = config.items.some(item => item.type === 'subtitle' || item.type === 'text');
     const args: string[] = ['-y'];
     const inputArgs: string[] = [];
-    graph.inputEntries.forEach(entry => {
-      if (entry.type === 'video') {
-        const start = entry.timing?.start ?? 0;
-        const trimStart = entry.timing?.trimStart ?? 0;
-        let seek = atSeconds - start + trimStart;
-        if (!Number.isFinite(seek)) seek = atSeconds;
-        if (seek < 0) seek = 0;
-        if (hasTimedText) {
-          const coarse = Math.max(0, seek - PREVIEW_SEEK_WINDOW_SECONDS);
-          inputArgs.push('-ss', coarse.toFixed(3));
-        } else {
-          inputArgs.push('-ss', seek.toFixed(3));
-        }
-      }
-      inputArgs.push(...entry.args);
-    });
-    if (hasTimedText) {
-      // Keep timestamps so subtitles stay aligned; still seek output for accuracy.
-      args.push('-copyts');
-    }
+    graph.inputEntries.forEach(entry => inputArgs.push(...entry.args));
     args.push(...inputArgs);
-    if (hasTimedText) {
-      // Accurate seek on output timeline for subtitles/text.
-      args.push('-ss', String(atSeconds));
-    }
     args.push(
       '-filter_complex',
       graph.filterComplex,
@@ -4845,6 +4869,10 @@ app.post('/api/render-preview-v2', async (req, res) => {
       '3',
       outputPath
     );
+    if (LOG_RENDER_PREVIEW_FFMPEG_COMMAND) {
+      const commandLine = [ffmpegPath, ...args].map(formatArg).join(' ');
+      console.log(`COMMAND (render preview v2): ${commandLine}`);
+    }
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';

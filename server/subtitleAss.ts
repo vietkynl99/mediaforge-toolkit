@@ -204,24 +204,40 @@ export const buildAssDocument = (cues: SubtitleCue[], style: AssRenderStyle): st
     dialogueLines.push(`Dialogue: 0,${t0},${t1},Default,,0,0,0,,${tag}${text}`);
   };
   cues.forEach(c => {
-    const start = Math.max(0, c.start + shift);
-    const end = Math.max(start + 0.01, c.end + shift);
+    const shiftedStart = c.start + shift;
+    const shiftedEnd = c.end + shift;
+    // Drop cues that are completely before timeline zero after shift (preview mode).
+    if (shiftedEnd <= 0) return;
     const tx = escapeAssDialogueText(c.text);
     if (!autoMoveEnabled) {
+      const start = Math.max(0, shiftedStart);
+      const end = Math.max(start + 0.01, shiftedEnd);
       pushDialogue(start, end, posOverride, tx);
       return;
     }
     const interval = style.autoMoveInterval;
-    const duration = Math.max(0.01, end - start);
-    const steps = Math.max(1, Math.ceil(duration / interval));
-    for (let i = 0; i < steps; i += 1) {
-      const segStart = start + i * interval;
-      if (segStart >= end) break;
-      const segEnd = Math.min(end, segStart + interval);
-      const from = style.autoMovePositions[i % style.autoMovePositions.length];
-      const to = style.autoMovePositions[(i + 1) % style.autoMovePositions.length];
-      const moveTag = `{\\move(${from.x},${from.y},${to.x},${to.y})}`;
-      pushDialogue(segStart, segEnd, moveTag, tx);
+    const motionStart = shiftedStart;
+    const motionEnd = Math.max(motionStart + 0.01, shiftedEnd);
+    const firstStep = motionStart < 0 ? Math.floor((-motionStart) / interval) : 0;
+    for (let step = firstStep; ; step += 1) {
+      const segStart = motionStart + step * interval;
+      if (segStart >= motionEnd) break;
+      const segEnd = Math.min(motionEnd, segStart + interval);
+      if (segEnd <= 0) continue;
+      const clippedStart = Math.max(0, segStart);
+      const clippedEnd = Math.max(clippedStart + 0.01, segEnd);
+      const from = style.autoMovePositions[step % style.autoMovePositions.length];
+      const to = style.autoMovePositions[(step + 1) % style.autoMovePositions.length];
+      const segDuration = Math.max(0.001, segEnd - segStart);
+      const progressStart = Math.max(0, Math.min(1, (clippedStart - segStart) / segDuration));
+      const progressEnd = Math.max(0, Math.min(1, (clippedEnd - segStart) / segDuration));
+      const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+      const fromX = Math.round(lerp(from.x, to.x, progressStart));
+      const fromY = Math.round(lerp(from.y, to.y, progressStart));
+      const toX = Math.round(lerp(from.x, to.x, progressEnd));
+      const toY = Math.round(lerp(from.y, to.y, progressEnd));
+      const moveTag = `{\\move(${fromX},${fromY},${toX},${toY})}`;
+      pushDialogue(clippedStart, clippedEnd, moveTag, tx);
     }
   });
   const dialogue = dialogueLines.join('\n');
