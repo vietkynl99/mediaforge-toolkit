@@ -913,6 +913,7 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
 const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
 const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = false;
 const BLUR_FEATHER_MAX = 10;
+const STATIC_MASK_LOOP_FILTER = 'loop=loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB';
 
 const normalizeFfmpegColor = (value: string) => {
   const trimmed = value.trim();
@@ -1197,7 +1198,7 @@ const buildRenderV2FilterGraph = async (
         filters.push(
           `${splitLabelA}crop=iw*${mwNorm}:ih*${mhNorm}:iw*${mxNorm}:ih*${myNorm}${cropLabel}`
         );
-        filters.push(`movie='${escapeFilterPath(circleMaskPath)}',format=gray${maskUnitLabel}`);
+        filters.push(`movie='${escapeFilterPath(circleMaskPath)}',format=gray,${STATIC_MASK_LOOP_FILTER}${maskUnitLabel}`);
         filters.push(`${maskUnitLabel}${cropLabel}scale2ref${maskLabel}${cropRefLabel}`);
         filters.push(`${cropRefLabel}${maskLabel}alphamerge${maskedCropLabel}`);
         filters.push(`${splitLabelB}colorchannelmixer=aa=0${clearLabel}`);
@@ -1246,7 +1247,7 @@ const buildRenderV2FilterGraph = async (
           const mk = `ivmk${visualIndex}_${effectIndex}`;
           const br = `ivbr${visualIndex}_${effectIndex}`;
           const ba = `ivba${visualIndex}_${effectIndex}`;
-          filters.push(`movie='${escapeFilterPath(maskPath)}',format=gray[${mu}]`);
+          filters.push(`movie='${escapeFilterPath(maskPath)}',format=gray,${STATIC_MASK_LOOP_FILTER}[${mu}]`);
           filters.push(`[${mu}][${bl}]scale2ref[${mk}][${br}]`);
           filters.push(`[${br}][${mk}]alphamerge[${ba}]`);
           filters.push(`[${main}][${ba}]overlay=W*${x}/100:H*${y}/100:format=auto[${out}]`);
