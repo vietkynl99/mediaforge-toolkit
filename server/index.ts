@@ -911,7 +911,7 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
 };
 
 const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
-const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = true;
+const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = false;
 const BLUR_FEATHER_MAX = 10;
 
 const normalizeFfmpegColor = (value: string) => {

@@ -3325,27 +3325,17 @@ export default function App() {
       params: [
         { name: 'timeline.framerate', desc: 'Frame rate', type: 'number', default: 30 },
         { name: 'timeline.resolution', desc: 'Output resolution (e.g. 1920x1080)', type: 'string', default: '1920x1080' },
-        { name: 'video.trimStart', desc: 'Trim start (s)', type: 'number', default: 0 },
-        { name: 'video.trimEnd', desc: 'Trim end (s)', type: 'number', default: 0 },
         { name: 'video.speed', desc: 'Playback speed', type: 'number', default: 1 },
         { name: 'video.volume', desc: 'Video audio volume (%)', type: 'number', default: 100 },
-        { name: 'video.fit', desc: 'contain | cover | stretch', type: 'string', default: 'contain' },
-        { name: 'video.positionX', desc: 'Position X (%)', type: 'number', default: 50 },
-        { name: 'video.positionY', desc: 'Position Y (%)', type: 'number', default: 50 },
         { name: 'video.scale', desc: 'Scale (%)', type: 'number', default: 100 },
-        { name: 'video.rotation', desc: 'Rotation (deg)', type: 'number', default: 0 },
         { name: 'video.opacity', desc: 'Opacity (%)', type: 'number', default: 100 },
         { name: 'video.colorLut', desc: 'Color LUT id', type: 'string', default: '' },
         { name: 'video.cropX', desc: 'Crop X (%)', type: 'number', default: 0 },
         { name: 'video.cropY', desc: 'Crop Y (%)', type: 'number', default: 0 },
         { name: 'video.cropW', desc: 'Crop W (%)', type: 'number', default: 100 },
         { name: 'video.cropH', desc: 'Crop H (%)', type: 'number', default: 100 },
-        { name: 'video.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
-        { name: 'video.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
         { name: 'audio.gainDb', desc: 'Gain (dB)', type: 'number', default: 0 },
         { name: 'audio.mute', desc: 'Mute audio', type: 'boolean', default: false },
-        { name: 'audio.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
-        { name: 'audio.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
         { name: 'subtitle.fontName', desc: 'ASS Fontname (libass)', type: 'string', default: 'Arial' },
         { name: 'subtitle.fontSize', desc: 'Font size (px at PlayRes)', type: 'number', default: 72 },
         { name: 'subtitle.primaryColor', desc: 'Primary fill #RRGGBB', type: 'string', default: '#ffffff' },
@@ -3652,9 +3642,7 @@ export default function App() {
       if (file.type === 'audio') {
         baseItem.audioMix = {
           gainDb: coerceNumber(renderParams.audio.gainDb, 0),
-          mute: Boolean(renderParams.audio.mute),
-          fadeIn: coerceNumber(renderParams.audio.fadeIn, 0),
-          fadeOut: coerceNumber(renderParams.audio.fadeOut, 0)
+          mute: Boolean(renderParams.audio.mute)
         };
       }
 
@@ -5447,9 +5435,7 @@ export default function App() {
         audio: {
           ...prev.audio,
           gainDb: String(firstAudioItem.audioMix?.gainDb ?? prev.audio.gainDb),
-          mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute),
-          fadeIn: String(firstAudioItem.audioMix?.fadeIn ?? prev.audio.fadeIn),
-          fadeOut: String(firstAudioItem.audioMix?.fadeOut ?? prev.audio.fadeOut)
+          mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute)
         }
       }));
     }
@@ -5979,17 +5965,9 @@ export default function App() {
             playhead: renderPlayheadSeconds
           },
           video: {
-            trimStart: coerceNumber(renderParams.video.trimStart, 0),
-            trimEnd: coerceNumber(renderParams.video.trimEnd, 0),
             speed: coerceNumber(renderParams.video.speed, 1),
             volume: coerceNumber(renderParams.video.volume, 100),
-            fit: renderParams.video.fit,
-            position: {
-              x: coerceNumber(renderParams.video.positionX, 50),
-              y: coerceNumber(renderParams.video.positionY, 50)
-            },
             scale: coerceNumber(renderParams.video.scale, 1),
-            rotation: coerceNumber(renderParams.video.rotation, 0),
             opacity: coerceNumber(renderParams.video.opacity, 100),
             colorLut: renderParams.video.colorLut || null,
             crop: {
@@ -5997,15 +5975,11 @@ export default function App() {
               y: coerceNumber(renderParams.video.cropY, 0),
               w: coerceNumber(renderParams.video.cropW, 100),
               h: coerceNumber(renderParams.video.cropH, 100)
-            },
-            fadeIn: coerceNumber(renderParams.video.fadeIn, 0),
-            fadeOut: coerceNumber(renderParams.video.fadeOut, 0)
+            }
           },
           audio: {
             gainDb: coerceNumber(renderParams.audio.gainDb, 0),
-            mute: Boolean(renderParams.audio.mute),
-            fadeIn: coerceNumber(renderParams.audio.fadeIn, 0),
-            fadeOut: coerceNumber(renderParams.audio.fadeOut, 0)
+            mute: Boolean(renderParams.audio.mute)
           },
           subtitle: {
             playResX,

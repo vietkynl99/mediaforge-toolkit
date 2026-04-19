@@ -1675,34 +1675,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   <div className="flex items-center gap-2 text-sm text-zinc-100">
                                     <span className="text-[11px] truncate font-semibold">{renderVideoFile.name}</span>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2 pt-1">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim Start (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.video.trimStart}
-                                        onChange={e => updateRenderParamDraft('video', 'trimStart', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'trimStart'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'trimStart'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim End (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.video.trimEnd}
-                                        onChange={e => updateRenderParamDraft('video', 'trimEnd', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'trimEnd'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'trimEnd'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Speed</label>
@@ -1735,22 +1707,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fit</label>
-                                      <select
-                                        value={renderParamsDraft.video.fit}
-                                        onChange={e => {
-                                          const v = e.target.value;
-                                          updateRenderParamDraft('video', 'fit', v);
-                                          updateRenderParam('video', 'fit', v);
-                                        }}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      >
-                                        <option value="contain">Contain</option>
-                                        <option value="cover">Cover</option>
-                                        <option value="stretch">Stretch</option>
-                                      </select>
-                                    </div>
-                                    <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale (%)</label>
                                       <input
                                         type="number"
@@ -1761,49 +1717,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         onFocus={holdPreview}
                                         onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'scale'))}
                                         onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'scale'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position X (%)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.video.positionX}
-                                        onChange={e => updateRenderParamDraft('video', 'positionX', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'positionX'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'positionX'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position Y (%)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.video.positionY}
-                                        onChange={e => updateRenderParamDraft('video', 'positionY', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'positionY'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'positionY'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Rotation (deg)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        value={renderParamsDraft.video.rotation}
-                                        onChange={e => updateRenderParamDraft('video', 'rotation', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'rotation'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'rotation'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -2110,34 +2023,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       </div>
                                     )}
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade In (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.video.fadeIn}
-                                        onChange={e => updateRenderParamDraft('video', 'fadeIn', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'fadeIn'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'fadeIn'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade Out (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.video.fadeOut}
-                                        onChange={e => updateRenderParamDraft('video', 'fadeOut', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'fadeOut'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'fadeOut'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                  </div>
                                   <div className="flex flex-col gap-1">
                                     <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Color LUT</label>
                                     <input
@@ -2220,34 +2105,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       />
                                       Mute
                                     </label>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade In (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.audio.fadeIn}
-                                        onChange={e => updateRenderParamDraft('audio', 'fadeIn', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'fadeIn'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'fadeIn'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade Out (s)</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        value={renderParamsDraft.audio.fadeOut}
-                                        onChange={e => updateRenderParamDraft('audio', 'fadeOut', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'fadeOut'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'fadeOut'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
-                                    </div>
                                   </div>
                                 </>
                               ) : (
