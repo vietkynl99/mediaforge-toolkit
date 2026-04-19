@@ -408,15 +408,16 @@ if (!hasParamPresetId) {
   db.run('DROP TABLE IF EXISTS pipeline_defaults');
   db.run('ALTER TABLE param_presets_new RENAME TO param_presets');
 } else {
-db.run(
-  `CREATE TABLE IF NOT EXISTS param_presets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_type TEXT NOT NULL,
-      params_json TEXT NOT NULL,
-      label TEXT,
-      updated_at TEXT NOT NULL
-    )`
-);
+  db.run(
+    `CREATE TABLE IF NOT EXISTS param_presets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_type TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        label TEXT,
+        updated_at TEXT NOT NULL
+      )`
+  );
+}
 
 db.run(
   `CREATE TABLE IF NOT EXISTS render_templates (
@@ -426,10 +427,25 @@ db.run(
       updated_at TEXT NOT NULL
     )`
 );
-}
+
+db.run(
+  `CREATE TABLE IF NOT EXISTS task_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      task_type TEXT NOT NULL,
+      params_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`
+);
 
 try {
   db.run('CREATE INDEX IF NOT EXISTS idx_param_presets_task_type ON param_presets (task_type)');
+} catch {
+  // ignore
+}
+
+try {
+  db.run('CREATE INDEX IF NOT EXISTS idx_task_templates_task_type ON task_templates (task_type)');
 } catch {
   // ignore
 }
@@ -3519,6 +3535,92 @@ app.delete('/api/render-templates/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to delete template';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.get('/api/task-templates', async (_req, res) => {
+  try {
+    const result = db.exec(
+      'SELECT id, name, task_type, params_json, updated_at FROM task_templates ORDER BY updated_at DESC'
+    );
+    const rows = result[0]?.values ?? [];
+    const templates = rows.map((row: any[]) => {
+      const [id, name, taskType, paramsJson, updatedAt] = row;
+      let params: any = null;
+      try {
+        params = JSON.parse(String(paramsJson));
+      } catch {
+        params = null;
+      }
+      return {
+        id: String(id),
+        name: String(name),
+        taskType: String(taskType),
+        updatedAt,
+        params
+      };
+    }).filter((entry: any) => entry.params && typeof entry.params === 'object');
+    res.json({ templates });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load task templates';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post('/api/task-templates', async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const taskType = typeof req.body?.taskType === 'string' ? req.body.taskType.trim() : '';
+  const params = typeof req.body?.params === 'object' && req.body.params ? req.body.params : null;
+  const id = Number.isFinite(Number(req.body?.id)) ? Number(req.body.id) : null;
+  if (!name || !params) {
+    res.status(400).json({ error: 'Missing name or params' });
+    return;
+  }
+  if (taskType !== 'download' && taskType !== 'uvr' && taskType !== 'tts') {
+    res.status(400).json({ error: 'Invalid task type' });
+    return;
+  }
+  try {
+    const updatedAt = new Date().toISOString();
+    if (id) {
+      db.run(
+        `UPDATE task_templates
+         SET name = ?, task_type = ?, params_json = ?, updated_at = ?
+         WHERE id = ?`,
+        [name, taskType, JSON.stringify(params), updatedAt, id]
+      );
+      await persistDb();
+      res.json({ template: { id: String(id), name, taskType, updatedAt, params } });
+      return;
+    }
+    db.run(
+      `INSERT INTO task_templates (name, task_type, params_json, updated_at)
+       VALUES (?, ?, ?, ?)`,
+      [name, taskType, JSON.stringify(params), updatedAt]
+    );
+    await persistDb();
+    const idRow = db.exec('SELECT last_insert_rowid() as id');
+    const nextId = idRow[0]?.values?.[0]?.[0] ?? null;
+    res.json({ template: { id: String(nextId), name, taskType, updatedAt, params } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to save task template';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.delete('/api/task-templates/:id', async (req, res) => {
+  const id = Number(req.params?.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: 'Missing id' });
+    return;
+  }
+  try {
+    db.run('DELETE FROM task_templates WHERE id = ?', [id]);
+    await persistDb();
+    res.json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to delete task template';
     res.status(500).json({ error: message });
   }
 });

@@ -1344,6 +1344,8 @@ export default function App() {
   const [renderTemplateApplyTarget, setRenderTemplateApplyTarget] = useState<RenderTemplate | null>(null);
   const [renderTemplateApplyMap, setRenderTemplateApplyMap] = useState<Record<string, string>>({});
   const [renderTemplateApplyMapById, setRenderTemplateApplyMapById] = useState<Record<string, Record<string, string>>>({});
+  const [newJobRenderTemplateMenuOpen, setNewJobRenderTemplateMenuOpen] = useState(false);
+  const newJobRenderTemplateMenuCloseRef = React.useRef<number | null>(null);
   const lastAutoTemplateApplyKeyRef = useRef<string | null>(null);
   const lastRenderConfigSyncRef = useRef<RenderConfigV2 | null>(null);
   const [runPipelineRenderTemplateId, setRunPipelineRenderTemplateId] = useState('custom');
@@ -1355,6 +1357,12 @@ export default function App() {
   const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
   const [runPipelineTaskTemplate, setRunPipelineTaskTemplate] = useState<Record<string, string>>({});
+  const [downloadTemplateMenuOpen, setDownloadTemplateMenuOpen] = useState(false);
+  const [uvrTemplateMenuOpen, setUvrTemplateMenuOpen] = useState(false);
+  const [ttsTemplateMenuOpen, setTtsTemplateMenuOpen] = useState(false);
+  const downloadTemplateMenuCloseRef = React.useRef<number | null>(null);
+  const uvrTemplateMenuCloseRef = React.useRef<number | null>(null);
+  const ttsTemplateMenuCloseRef = React.useRef<number | null>(null);
   const [renderTimelineScale, setRenderTimelineScale] = useState(1);
   const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
   const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
@@ -2509,6 +2517,30 @@ export default function App() {
     return {};
   };
 
+  const getDefaultTaskTemplateParams = (taskType: 'download' | 'uvr' | 'tts'): Record<string, any> => {
+    if (taskType === 'download') {
+      return {
+        downloadMode: 'all',
+        subLangs: 'ai-zh',
+        noPlaylist: true
+      };
+    }
+    if (taskType === 'uvr') {
+      return {
+        backend: 'vr',
+        model: 'MGM_MAIN_v4.pth',
+        outputFormat: 'Mp3'
+      };
+    }
+    return {
+      voice: 'vi-VN-HoaiMyNeural',
+      rate: '',
+      pitch: '',
+      overlapMode: 'overlap',
+      removeLineBreaks: true
+    };
+  };
+
   const openTemplateSaveModal = (
     taskType: 'render' | 'download' | 'uvr' | 'tts',
     defaultName: string,
@@ -2527,6 +2559,127 @@ export default function App() {
     setTemplateSaveParams(buildTaskTemplateParams(taskType));
     setTemplateSaveRenderConfig(null);
     openTemplateSaveModal(taskType, defaultName);
+  };
+
+  const saveTaskTemplateRecord = async (payload: {
+    id?: string | null;
+    name: string;
+    taskType: 'download' | 'uvr' | 'tts';
+    params: Record<string, any>;
+  }) => {
+    const body: Record<string, any> = {
+      name: payload.name,
+      taskType: payload.taskType,
+      params: payload.params
+    };
+    const numericId = payload.id ? Number(payload.id) : null;
+    if (Number.isFinite(numericId)) body.id = numericId;
+    const response = await fetch('/api/task-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Unable to save task template');
+    }
+    const data = await response.json();
+    return data.template as TaskTemplate;
+  };
+
+  const deleteTaskTemplate = async (id: string) => {
+    const numericId = Number(id);
+    if (!Number.isFinite(numericId)) {
+      throw new Error('Invalid template id');
+    }
+    const response = await fetch(`/api/task-templates/${numericId}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Unable to delete task template');
+    }
+  };
+
+  const isTaskTemplateDirty = (taskType: 'download' | 'uvr' | 'tts') => {
+    const selected = getSelectedTaskTemplate(taskType);
+    const currentParams = buildTaskTemplateParams(taskType);
+    if (selected) {
+      return JSON.stringify(currentParams) !== JSON.stringify(selected.params ?? {});
+    }
+    const defaultParams = getDefaultTaskTemplateParams(taskType);
+    return JSON.stringify(currentParams) !== JSON.stringify(defaultParams);
+  };
+
+  const saveTaskTemplateCurrent = async (taskType: 'download' | 'uvr' | 'tts', template: TaskTemplate) => {
+    const params = buildTaskTemplateParams(taskType);
+    try {
+      const saved = await saveTaskTemplateRecord({
+        id: template.id,
+        name: template.name,
+        taskType,
+        params
+      });
+      setTaskTemplates(prev => prev.map(item => (
+        item.id === template.id ? saved : item
+      )));
+      showToast('Saved template.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to save template';
+      showToast(message, 'error');
+    }
+  };
+
+  const restoreTaskTemplateCurrent = (taskType: 'download' | 'uvr' | 'tts', template: TaskTemplate) => {
+    applyTaskTemplateParams(taskType, template.params);
+    showToast('Restored template values.', 'success');
+  };
+
+  const deleteTaskTemplateWithConfirm = (taskType: 'download' | 'uvr' | 'tts', id: string, name?: string) => {
+    const label = (availableTasks.find(task => task.type === taskType)?.label ?? taskType).toLowerCase();
+    openConfirm(
+      {
+        title: `Delete ${label} template?`,
+        description: name ? `Template "${name}" will be removed permanently.` : 'This template will be removed permanently.',
+        confirmLabel: 'Delete',
+        variant: 'danger'
+      },
+      () => {
+        deleteTaskTemplate(id)
+          .then(() => {
+            setTaskTemplates(prev => prev.filter(template => template.id !== id));
+            setRunPipelineTaskTemplate(prev => (
+              prev[taskType] === id
+                ? { ...prev, [taskType]: 'custom' }
+                : prev
+            ));
+            showToast('Deleted template.', 'success');
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : 'Unable to delete template';
+            showToast(message, 'error');
+          });
+      }
+    );
+  };
+
+  const resetTaskTemplateToDefault = (taskType: 'download' | 'uvr' | 'tts') => {
+    setRunPipelineTaskTemplate(prev => ({ ...prev, [taskType]: 'custom' }));
+    if (taskType === 'download') {
+      setDownloadMode('all');
+      setDownloadSubtitleLang('ai-zh');
+      setDownloadNoPlaylist(true);
+      return;
+    }
+    if (taskType === 'uvr') {
+      setRunPipelineBackend('vr');
+      setVrModel('MGM_MAIN_v4.pth');
+      setVrOutputType('Mp3');
+      return;
+    }
+    setRunPipelineTtsVoice('vi-VN-HoaiMyNeural');
+    setRunPipelineTtsRate('');
+    setRunPipelineTtsPitch('');
+    setRunPipelineTtsOverlapMode('overlap');
+    setRunPipelineTtsRemoveLineBreaks(true);
   };
 
   const saveRenderTemplateQuick = () => {
@@ -2689,17 +2842,18 @@ export default function App() {
       }
     } else {
       if (!templateSaveParams) return;
-      const now = new Date().toISOString();
-      setTaskTemplates(prev => ([
-        {
-          id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      try {
+        const saved = await saveTaskTemplateRecord({
           name: label,
           taskType: templateSaveTaskType,
-          updatedAt: now,
           params: templateSaveParams
-        },
-        ...prev
-      ]));
+        });
+        setTaskTemplates(prev => ([saved, ...prev]));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to save template';
+        showToast(message, 'error');
+        return;
+      }
       showToast('Saved template.', 'success');
     }
     setTemplateSaveOpen(false);
@@ -5003,7 +5157,23 @@ export default function App() {
         showToast('Không thể tải render templates.', 'error');
       }
     };
+    const loadTaskTemplates = async () => {
+      if (!authUser) return;
+      try {
+        const response = await fetch('/api/task-templates');
+        if (!response.ok) throw new Error('Unable to load task templates');
+        const data = await response.json();
+        if (!active) return;
+        if (Array.isArray(data?.templates)) {
+          setTaskTemplates(data.templates as TaskTemplate[]);
+        }
+      } catch {
+        if (!active) return;
+        showToast('Không thể tải task templates.', 'error');
+      }
+    };
     loadRenderTemplates();
+    loadTaskTemplates();
     return () => {
       active = false;
     };
@@ -6178,6 +6348,13 @@ export default function App() {
   };
 
   const selectedRenderTemplate = renderTemplates.find(t => t.id === runPipelineRenderTemplateId) ?? null;
+  const isCustomRenderTemplate = !selectedRenderTemplate || runPipelineRenderTemplateId === 'custom';
+  const selectedDownloadTemplate = getSelectedTaskTemplate('download');
+  const selectedUvrTemplate = getSelectedTaskTemplate('uvr');
+  const selectedTtsTemplate = getSelectedTaskTemplate('tts');
+  const isDownloadTemplateDirty = isTaskTemplateDirty('download');
+  const isUvrTemplateDirty = isTaskTemplateDirty('uvr');
+  const isTtsTemplateDirty = isTaskTemplateDirty('tts');
   const renderTemplatePlaceholders = React.useMemo(() => {
     if (!selectedRenderTemplate || runPipelineRenderTemplateId === 'custom') return [];
     const keys = Object.keys(selectedRenderTemplate.config.inputsMap ?? {});
@@ -8571,17 +8748,128 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Render</div>
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <select
                           value={runPipelineRenderTemplateId}
                           onChange={e => handleRenderTemplateChange(e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                          onContextMenu={event => {
+                            if (runPipelineRenderTemplateId === 'custom' || !selectedRenderTemplate) return;
+                            event.preventDefault();
+                            deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
+                          }}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
                         >
                           <option value="custom">Custom</option>
-                          {renderTemplates.map(template => (
-                            <option key={template.id} value={template.id}>{template.name}</option>
-                          ))}
+                          {renderTemplates.map(template => {
+                            const isSelected = runPipelineRenderTemplateId === template.id;
+                            const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
+                            return (
+                              <option key={template.id} value={template.id}>{label}</option>
+                            );
+                          })}
                         </select>
+                        <div
+                          className="relative shrink-0"
+                          onMouseEnter={() => {
+                            if (newJobRenderTemplateMenuCloseRef.current) {
+                              window.clearTimeout(newJobRenderTemplateMenuCloseRef.current);
+                              newJobRenderTemplateMenuCloseRef.current = null;
+                            }
+                            setNewJobRenderTemplateMenuOpen(true);
+                          }}
+                          onMouseLeave={() => {
+                            if (newJobRenderTemplateMenuCloseRef.current) {
+                              window.clearTimeout(newJobRenderTemplateMenuCloseRef.current);
+                            }
+                            newJobRenderTemplateMenuCloseRef.current = window.setTimeout(() => {
+                              setNewJobRenderTemplateMenuOpen(false);
+                              newJobRenderTemplateMenuCloseRef.current = null;
+                            }, 120);
+                          }}
+                          onFocusCapture={() => setNewJobRenderTemplateMenuOpen(true)}
+                          onBlurCapture={event => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setNewJobRenderTemplateMenuOpen(false);
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            aria-label="Template options"
+                            title="Template options"
+                            onClick={() => setNewJobRenderTemplateMenuOpen(prev => !prev)}
+                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                          >
+                            <Menu size={14} />
+                          </button>
+                          {newJobRenderTemplateMenuOpen && (
+                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setNewJobRenderTemplateMenuOpen(false);
+                                  resetRenderToDefault();
+                                }}
+                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                  isCustomRenderTemplate ? 'rounded-lg' : 'rounded-t-lg'
+                                }`}
+                              >
+                                Reset to default
+                              </button>
+                              {!isCustomRenderTemplate && isRenderTemplateDirty && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!selectedRenderTemplate) return;
+                                    setNewJobRenderTemplateMenuOpen(false);
+                                    saveRenderTemplateCurrent(selectedRenderTemplate);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                >
+                                  Save
+                                </button>
+                              )}
+                              {!isCustomRenderTemplate && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setNewJobRenderTemplateMenuOpen(false);
+                                      saveRenderTemplateQuick();
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                  >
+                                    Save As
+                                  </button>
+                                  {isRenderTemplateDirty && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!selectedRenderTemplate) return;
+                                        setNewJobRenderTemplateMenuOpen(false);
+                                        restoreRenderTemplateCurrent(selectedRenderTemplate);
+                                      }}
+                                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                    >
+                                      Restore
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!selectedRenderTemplate) return;
+                                      setNewJobRenderTemplateMenuOpen(false);
+                                      deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                     {renderTemplateSummary && (
@@ -8647,127 +8935,231 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Download</div>
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <select
                           value={runPipelineTaskTemplate.download ?? 'custom'}
                           onChange={e => handleTaskTemplateChange('download', e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                          onContextMenu={event => {
+                            if (!selectedDownloadTemplate) return;
+                            event.preventDefault();
+                            deleteTaskTemplateWithConfirm('download', selectedDownloadTemplate.id, selectedDownloadTemplate.name);
+                          }}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
                         >
-                          <option value="custom">Custom</option>
-                          {getTaskTemplatesForType('download').map(template => (
-                            <option key={template.id} value={template.id}>{template.name}</option>
-                          ))}
+                          <option value="custom">{isDownloadTemplateDirty ? '*Custom' : 'Custom'}</option>
+                          {getTaskTemplatesForType('download').map(template => {
+                            const isSelected = runPipelineTaskTemplate.download === template.id;
+                            const label = isSelected && isDownloadTemplateDirty ? `*${template.name}` : template.name;
+                            return (
+                              <option key={template.id} value={template.id}>{label}</option>
+                            );
+                          })}
                         </select>
-                      </div>
-                    </div>
-                    {getSelectedTaskTemplate('download') ? (
-                      <div className="mt-3">
-                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('download'))}
-                      </div>
-                    ) : (
-                      <>
-                        {SHOW_PARAM_PRESETS && (
-                          hasParamPresets('download') ? (
-                            <div className="flex flex-col gap-2">
-                              <div className="flex items-center justify-between">
-                                <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                                {runPipelineParamPreset.download !== 'custom' && null}
-                              </div>
-                              <select
-                                value={runPipelineParamPreset.download ?? 'custom'}
-                                onChange={e => handleParamPresetChange('download', e.target.value)}
-                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                        <div
+                          className="relative shrink-0"
+                          onMouseEnter={() => {
+                            if (downloadTemplateMenuCloseRef.current) {
+                              window.clearTimeout(downloadTemplateMenuCloseRef.current);
+                              downloadTemplateMenuCloseRef.current = null;
+                            }
+                            setDownloadTemplateMenuOpen(true);
+                          }}
+                          onMouseLeave={() => {
+                            if (downloadTemplateMenuCloseRef.current) {
+                              window.clearTimeout(downloadTemplateMenuCloseRef.current);
+                            }
+                            downloadTemplateMenuCloseRef.current = window.setTimeout(() => {
+                              setDownloadTemplateMenuOpen(false);
+                              downloadTemplateMenuCloseRef.current = null;
+                            }, 120);
+                          }}
+                          onFocusCapture={() => setDownloadTemplateMenuOpen(true)}
+                          onBlurCapture={event => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setDownloadTemplateMenuOpen(false);
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            aria-label="Template options"
+                            title="Template options"
+                            onClick={() => setDownloadTemplateMenuOpen(prev => !prev)}
+                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                          >
+                            <Menu size={14} />
+                          </button>
+                          {downloadTemplateMenuOpen && (
+                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDownloadTemplateMenuOpen(false);
+                                  resetTaskTemplateToDefault('download');
+                                }}
+                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                  selectedDownloadTemplate || isDownloadTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
+                                }`}
                               >
-                                <option value="custom">Manual</option>
-                                {getParamPresetsForType('download').map(preset => (
-                                  <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                                ))}
-                              </select>
-                              {runPipelineParamPreset.download !== 'custom' && (
-                                <div
-                                  role="button"
-                                  tabIndex={0}
-                                  onClick={() => switchPresetToManual('download')}
-                                  onKeyDown={e => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault();
-                                      switchPresetToManual('download');
-                                    }
+                                Reset to default
+                              </button>
+                              {selectedDownloadTemplate && isDownloadTemplateDirty && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDownloadTemplateMenuOpen(false);
+                                    saveTaskTemplateCurrent('download', selectedDownloadTemplate);
                                   }}
-                                  title="Switch to manual and load these params"
-                                  className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
                                 >
-                                  <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                                    {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
-                                      <div key={key} className="flex items-center justify-between gap-2">
-                                        <span className="font-mono text-zinc-500">{key}</span>
-                                        <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
+                                  Save
+                                </button>
+                              )}
+                              {(selectedDownloadTemplate || isDownloadTemplateDirty) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDownloadTemplateMenuOpen(false);
+                                    saveTaskTemplate('download');
+                                  }}
+                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                    selectedDownloadTemplate ? '' : 'rounded-b-lg'
+                                  }`}
+                                >
+                                  Save As
+                                </button>
+                              )}
+                              {selectedDownloadTemplate && isDownloadTemplateDirty && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDownloadTemplateMenuOpen(false);
+                                    restoreTaskTemplateCurrent('download', selectedDownloadTemplate);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                >
+                                  Restore
+                                </button>
+                              )}
+                              {selectedDownloadTemplate && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDownloadTemplateMenuOpen(false);
+                                    deleteTaskTemplateWithConfirm('download', selectedDownloadTemplate.id, selectedDownloadTemplate.name);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                                >
+                                  Delete
+                                </button>
                               )}
                             </div>
-                          ) : (
-                            <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
-                          )
-                        )}
-                        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
-                          <div className="mt-3 grid grid-cols-2 gap-2">
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <>
+                      {SHOW_PARAM_PRESETS && (
+                        hasParamPresets('download') ? (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                              {runPipelineParamPreset.download !== 'custom' && null}
+                            </div>
                             <select
-                              value={downloadMode}
-                              onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
+                              value={runPipelineParamPreset.download ?? 'custom'}
+                              onChange={e => handleParamPresetChange('download', e.target.value)}
                               className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                             >
-                              <option value="all">Download: All (subs + audio + video)</option>
-                              <option value="subs">Download: Subtitles only</option>
-                              <option value="media">Download: Audio + Video only</option>
+                              <option value="custom">Manual</option>
+                              {getParamPresetsForType('download').map(preset => (
+                                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                              ))}
                             </select>
-                            <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
-                              <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
-                              <input
-                                type="file"
-                                accept=".txt"
-                                onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
-                                className="hidden"
-                              />
-                            </label>
-                            <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
-                              <input
-                                type="checkbox"
-                                checked={downloadNoPlaylist}
-                                onChange={e => setDownloadNoPlaylist(e.target.checked)}
-                                className="accent-lime-400"
-                              />
-                              No playlist
-                            </label>
-                            {downloadMode !== 'media' ? (
-                              <>
-                                <input
-                                  value={downloadSubtitleLang}
-                                  onChange={e => setDownloadSubtitleLang(e.target.value)}
-                                  list="ytdlp-sub-langs"
-                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                                  placeholder="Subtitle language (e.g. ai-zh)"
-                                  title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
-                                />
-                                {downloadAnalyzeListSubs.length > 0 && (
-                                  <datalist id="ytdlp-sub-langs">
-                                    {downloadAnalyzeListSubs.map((entry: any) => (
-                                      <option key={entry.lang} value={entry.lang} />
-                                    ))}
-                                  </datalist>
-                                )}
-                              </>
-                            ) : (
-                              <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
-                                Subtitles disabled for media-only.
+                            {runPipelineParamPreset.download !== 'custom' && (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => switchPresetToManual('download')}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    switchPresetToManual('download');
+                                  }
+                                }}
+                                title="Switch to manual and load these params"
+                                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                              >
+                                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                                  {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
+                                    <div key={key} className="flex items-center justify-between gap-2">
+                                      <span className="font-mono text-zinc-500">{key}</span>
+                                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </div>
-                        )}
-                      </>
-                    )}
+                        ) : (
+                          <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
+                        )
+                      )}
+                      {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <select
+                            value={downloadMode}
+                            onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
+                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                          >
+                            <option value="all">Download: All (subs + audio + video)</option>
+                            <option value="subs">Download: Subtitles only</option>
+                            <option value="media">Download: Audio + Video only</option>
+                          </select>
+                          <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
+                            <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
+                            <input
+                              type="file"
+                              accept=".txt"
+                              onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
+                              className="hidden"
+                            />
+                          </label>
+                          <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
+                            <input
+                              type="checkbox"
+                              checked={downloadNoPlaylist}
+                              onChange={e => setDownloadNoPlaylist(e.target.checked)}
+                              className="accent-lime-400"
+                            />
+                            No playlist
+                          </label>
+                          {downloadMode !== 'media' ? (
+                            <>
+                              <input
+                                value={downloadSubtitleLang}
+                                onChange={e => setDownloadSubtitleLang(e.target.value)}
+                                list="ytdlp-sub-langs"
+                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                                placeholder="Subtitle language (e.g. ai-zh)"
+                                title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
+                              />
+                              {downloadAnalyzeListSubs.length > 0 && (
+                                <datalist id="ytdlp-sub-langs">
+                                  {downloadAnalyzeListSubs.map((entry: any) => (
+                                    <option key={entry.lang} value={entry.lang} />
+                                  ))}
+                                </datalist>
+                              )}
+                            </>
+                          ) : (
+                            <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
+                              Subtitles disabled for media-only.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
                   </div>
                 )}
 
@@ -8776,25 +9168,130 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: VR (UVR)</div>
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <select
                           value={runPipelineTaskTemplate.uvr ?? 'custom'}
                           onChange={e => handleTaskTemplateChange('uvr', e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                          onContextMenu={event => {
+                            if (!selectedUvrTemplate) return;
+                            event.preventDefault();
+                            deleteTaskTemplateWithConfirm('uvr', selectedUvrTemplate.id, selectedUvrTemplate.name);
+                          }}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
                         >
-                          <option value="custom">Custom</option>
-                          {getTaskTemplatesForType('uvr').map(template => (
-                            <option key={template.id} value={template.id}>{template.name}</option>
-                          ))}
+                          <option value="custom">{isUvrTemplateDirty ? '*Custom' : 'Custom'}</option>
+                          {getTaskTemplatesForType('uvr').map(template => {
+                            const isSelected = runPipelineTaskTemplate.uvr === template.id;
+                            const label = isSelected && isUvrTemplateDirty ? `*${template.name}` : template.name;
+                            return (
+                              <option key={template.id} value={template.id}>{label}</option>
+                            );
+                          })}
                         </select>
+                        <div
+                          className="relative shrink-0"
+                          onMouseEnter={() => {
+                            if (uvrTemplateMenuCloseRef.current) {
+                              window.clearTimeout(uvrTemplateMenuCloseRef.current);
+                              uvrTemplateMenuCloseRef.current = null;
+                            }
+                            setUvrTemplateMenuOpen(true);
+                          }}
+                          onMouseLeave={() => {
+                            if (uvrTemplateMenuCloseRef.current) {
+                              window.clearTimeout(uvrTemplateMenuCloseRef.current);
+                            }
+                            uvrTemplateMenuCloseRef.current = window.setTimeout(() => {
+                              setUvrTemplateMenuOpen(false);
+                              uvrTemplateMenuCloseRef.current = null;
+                            }, 120);
+                          }}
+                          onFocusCapture={() => setUvrTemplateMenuOpen(true)}
+                          onBlurCapture={event => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setUvrTemplateMenuOpen(false);
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            aria-label="Template options"
+                            title="Template options"
+                            onClick={() => setUvrTemplateMenuOpen(prev => !prev)}
+                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                          >
+                            <Menu size={14} />
+                          </button>
+                          {uvrTemplateMenuOpen && (
+                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUvrTemplateMenuOpen(false);
+                                  resetTaskTemplateToDefault('uvr');
+                                }}
+                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                  selectedUvrTemplate || isUvrTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
+                                }`}
+                              >
+                                Reset to default
+                              </button>
+                              {selectedUvrTemplate && isUvrTemplateDirty && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUvrTemplateMenuOpen(false);
+                                    saveTaskTemplateCurrent('uvr', selectedUvrTemplate);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                >
+                                  Save
+                                </button>
+                              )}
+                              {(selectedUvrTemplate || isUvrTemplateDirty) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUvrTemplateMenuOpen(false);
+                                    saveTaskTemplate('uvr');
+                                  }}
+                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                    selectedUvrTemplate ? '' : 'rounded-b-lg'
+                                  }`}
+                                >
+                                  Save As
+                                </button>
+                              )}
+                              {selectedUvrTemplate && isUvrTemplateDirty && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUvrTemplateMenuOpen(false);
+                                    restoreTaskTemplateCurrent('uvr', selectedUvrTemplate);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                >
+                                  Restore
+                                </button>
+                              )}
+                              {selectedUvrTemplate && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUvrTemplateMenuOpen(false);
+                                    deleteTaskTemplateWithConfirm('uvr', selectedUvrTemplate.id, selectedUvrTemplate.name);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    {getSelectedTaskTemplate('uvr') ? (
-                      <div className="mt-3">
-                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('uvr'))}
-                      </div>
-                    ) : (
-                      <>
+                    <>
                         {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
                           <div className="mb-3 flex flex-col gap-2">
                             <div className="flex items-center justify-between">
@@ -8907,8 +9404,7 @@ export default function App() {
                             </div>
                           </div>
                         )}
-                      </>
-                    )}
+                    </>
                   </div>
                 )}
 
@@ -8917,25 +9413,130 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: TTS</div>
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <select
                           value={runPipelineTaskTemplate.tts ?? 'custom'}
                           onChange={e => handleTaskTemplateChange('tts', e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                          onContextMenu={event => {
+                            if (!selectedTtsTemplate) return;
+                            event.preventDefault();
+                            deleteTaskTemplateWithConfirm('tts', selectedTtsTemplate.id, selectedTtsTemplate.name);
+                          }}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
                         >
-                          <option value="custom">Custom</option>
-                          {getTaskTemplatesForType('tts').map(template => (
-                            <option key={template.id} value={template.id}>{template.name}</option>
-                          ))}
+                          <option value="custom">{isTtsTemplateDirty ? '*Custom' : 'Custom'}</option>
+                          {getTaskTemplatesForType('tts').map(template => {
+                            const isSelected = runPipelineTaskTemplate.tts === template.id;
+                            const label = isSelected && isTtsTemplateDirty ? `*${template.name}` : template.name;
+                            return (
+                              <option key={template.id} value={template.id}>{label}</option>
+                            );
+                          })}
                         </select>
+                        <div
+                          className="relative shrink-0"
+                          onMouseEnter={() => {
+                            if (ttsTemplateMenuCloseRef.current) {
+                              window.clearTimeout(ttsTemplateMenuCloseRef.current);
+                              ttsTemplateMenuCloseRef.current = null;
+                            }
+                            setTtsTemplateMenuOpen(true);
+                          }}
+                          onMouseLeave={() => {
+                            if (ttsTemplateMenuCloseRef.current) {
+                              window.clearTimeout(ttsTemplateMenuCloseRef.current);
+                            }
+                            ttsTemplateMenuCloseRef.current = window.setTimeout(() => {
+                              setTtsTemplateMenuOpen(false);
+                              ttsTemplateMenuCloseRef.current = null;
+                            }, 120);
+                          }}
+                          onFocusCapture={() => setTtsTemplateMenuOpen(true)}
+                          onBlurCapture={event => {
+                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                              setTtsTemplateMenuOpen(false);
+                            }
+                          }}
+                        >
+                          <button
+                            type="button"
+                            aria-label="Template options"
+                            title="Template options"
+                            onClick={() => setTtsTemplateMenuOpen(prev => !prev)}
+                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
+                          >
+                            <Menu size={14} />
+                          </button>
+                          {ttsTemplateMenuOpen && (
+                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTtsTemplateMenuOpen(false);
+                                  resetTaskTemplateToDefault('tts');
+                                }}
+                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                  selectedTtsTemplate || isTtsTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
+                                }`}
+                              >
+                                Reset to default
+                              </button>
+                              {selectedTtsTemplate && isTtsTemplateDirty && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTtsTemplateMenuOpen(false);
+                                    saveTaskTemplateCurrent('tts', selectedTtsTemplate);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                >
+                                  Save
+                                </button>
+                              )}
+                              {(selectedTtsTemplate || isTtsTemplateDirty) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTtsTemplateMenuOpen(false);
+                                    saveTaskTemplate('tts');
+                                  }}
+                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
+                                    selectedTtsTemplate ? '' : 'rounded-b-lg'
+                                  }`}
+                                >
+                                  Save As
+                                </button>
+                              )}
+                              {selectedTtsTemplate && isTtsTemplateDirty && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTtsTemplateMenuOpen(false);
+                                    restoreTaskTemplateCurrent('tts', selectedTtsTemplate);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                                >
+                                  Restore
+                                </button>
+                              )}
+                              {selectedTtsTemplate && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTtsTemplateMenuOpen(false);
+                                    deleteTaskTemplateWithConfirm('tts', selectedTtsTemplate.id, selectedTtsTemplate.name);
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    {getSelectedTaskTemplate('tts') ? (
-                      <div className="mt-3">
-                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('tts'))}
-                      </div>
-                    ) : (
-                      <>
+                    <>
                         {SHOW_PARAM_PRESETS && hasParamPresets('tts') && (
                           <div className="mb-3 flex flex-col gap-2">
                             <div className="flex items-center justify-between">
@@ -9109,8 +9710,7 @@ export default function App() {
                             )}
                           </div>
                         )}
-                      </>
-                    )}
+                    </>
                   </div>
                 )}
 
