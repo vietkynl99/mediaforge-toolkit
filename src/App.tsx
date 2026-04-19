@@ -3737,13 +3737,105 @@ export default function App() {
     };
   }
 
-  const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 => {
+  const renderTemplateKeyRank = (key: string) => {
+    const normalized = (key || '').toLowerCase();
+    if (normalized === 'video' || normalized.startsWith('video')) return 0;
+    if (normalized === 'audio' || normalized.startsWith('audio')) return 1;
+    if (normalized === 'subtitle' || normalized.startsWith('subtitle')) return 2;
+    if (normalized === 'image' || normalized.startsWith('image')) return 3;
+    if (normalized === 'text') return 4;
+    return 9;
+  };
+
+  const parseTemplateKey = (key: string) => {
+    const normalized = (key || '').toLowerCase();
+    const match = normalized.match(/^([a-z_]+?)(\d+)?$/i);
+    if (!match) {
+      return { base: normalized, index: Number.MAX_SAFE_INTEGER };
+    }
+    const base = match[1] || normalized;
+    const index = match[2] ? Number(match[2]) : 1;
     return {
-      ...config,
-      inputsMap: Object.keys(config.inputsMap).reduce((acc, key) => {
+      base,
+      index: Number.isFinite(index) ? index : Number.MAX_SAFE_INTEGER
+    };
+  };
+
+  const compareTemplateKeys = (left: string, right: string) => {
+    const rankDiff = renderTemplateKeyRank(left) - renderTemplateKeyRank(right);
+    if (rankDiff !== 0) return rankDiff;
+    const l = parseTemplateKey(left);
+    const r = parseTemplateKey(right);
+    if (l.base !== r.base) return l.base.localeCompare(r.base);
+    if (l.index !== r.index) return l.index - r.index;
+    return left.localeCompare(right);
+  };
+
+  const sortRecordByTemplateKey = <T,>(record: Record<string, T> | undefined) => {
+    if (!record || typeof record !== 'object') return record;
+    return Object.keys(record)
+      .sort(compareTemplateKeys)
+      .reduce((acc, key) => {
+        acc[key] = record[key];
+        return acc;
+      }, {} as Record<string, T>);
+  };
+
+  const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 => {
+    const normalizedInputsMap = Object.keys(config.inputsMap ?? {})
+      .sort(compareTemplateKeys)
+      .reduce((acc, key) => {
         acc[key] = '';
         return acc;
-      }, {} as Record<string, string>)
+      }, {} as Record<string, string>);
+    const normalizedTrackLabels = sortRecordByTemplateKey(config.timeline?.trackLabels);
+    const normalizedItems = [...(config.items ?? [])].sort((a, b) => {
+      const aRef = (a.source?.ref ?? '').trim();
+      const bRef = (b.source?.ref ?? '').trim();
+      const aHasRef = aRef.length > 0;
+      const bHasRef = bRef.length > 0;
+      if (aHasRef !== bHasRef) return aHasRef ? -1 : 1;
+      if (aHasRef && bHasRef) {
+        const refCmp = compareTemplateKeys(aRef, bRef);
+        if (refCmp !== 0) return refCmp;
+      }
+      const typeCmp = compareTemplateKeys(a.type, b.type);
+      if (typeCmp !== 0) return typeCmp;
+      return String(a.id ?? '').localeCompare(String(b.id ?? ''));
+    });
+
+    return {
+      ...config,
+      timeline: {
+        ...config.timeline,
+        ...(normalizedTrackLabels ? { trackLabels: normalizedTrackLabels } : {})
+      },
+      inputsMap: normalizedInputsMap,
+      items: normalizedItems
+    };
+  };
+
+  // For comparison only: ignore layer noise when a type has only one item.
+  // In that case, changing layer value usually has no visual impact.
+  const normalizeTemplateForComparison = (config: RenderConfigV2): RenderConfigV2 => {
+    const typeCounts = (config.items ?? []).reduce((acc, item) => {
+      const key = String(item.type || '');
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const items = (config.items ?? []).map(item => {
+      const typeKey = String(item.type || '');
+      if ((typeCounts[typeKey] ?? 0) <= 1 && item.layer !== undefined) {
+        const { layer: _layer, ...rest } = item;
+        return rest as RenderConfigV2['items'][number];
+      }
+      return item;
+    });
+
+    return {
+      ...config,
+      items
     };
   };
 
@@ -4074,20 +4166,21 @@ export default function App() {
     if (runPipelineRenderTemplateId === 'custom') return false;
     const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
     if (!template || !renderConfigPreview) return false;
-    const normalized = buildTemplateFromConfig(renderConfigPreview);
-    return JSON.stringify(normalized) !== JSON.stringify(template.config);
+    const normalizedCurrent = normalizeTemplateForComparison(buildTemplateFromConfig(renderConfigPreview));
+    const normalizedTemplate = normalizeTemplateForComparison(buildTemplateFromConfig(template.config));
+    return JSON.stringify(normalizedCurrent) !== JSON.stringify(normalizedTemplate);
   }, [runPipelineRenderTemplateId, renderTemplates, renderConfigPreview]);
   const renderTemplateSelected = renderTemplates.find(t => t.id === runPipelineRenderTemplateId) ?? null;
   const renderTemplateDiffCurrentConfig = React.useMemo(() => {
     if (!renderConfigPreview) return null;
-    return buildTemplateFromConfig(renderConfigPreview);
+    return normalizeTemplateForComparison(buildTemplateFromConfig(renderConfigPreview));
   }, [renderConfigPreview]);
   const renderTemplateDiffBaselineConfig = React.useMemo(() => {
     if (runPipelineRenderTemplateId === 'custom') {
-      return buildTemplateFromConfig(buildDefaultRenderTemplateConfig());
+      return normalizeTemplateForComparison(buildTemplateFromConfig(buildDefaultRenderTemplateConfig()));
     }
     if (!renderTemplateSelected) return null;
-    return buildTemplateFromConfig(renderTemplateSelected.config);
+    return normalizeTemplateForComparison(buildTemplateFromConfig(renderTemplateSelected.config));
   }, [runPipelineRenderTemplateId, renderTemplateSelected, buildDefaultRenderTemplateConfig]);
   const renderTemplateDiffBaselineLabel = runPipelineRenderTemplateId === 'custom'
     ? 'Default'

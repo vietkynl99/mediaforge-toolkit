@@ -173,6 +173,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const [addTrackMenuOpen, setAddTrackMenuOpen] = React.useState(false);
   const addTrackMenuCloseRef = React.useRef<number | null>(null);
   const [renderConfirmOpen, setRenderConfirmOpen] = React.useState(false);
+  const [templateSaveConfirmOpen, setTemplateSaveConfirmOpen] = React.useState(false);
   const singleTextStartDraft = `${renderParamsDraft?.text?.singleTextStart ?? ''}`;
   const singleTextEndDraft = `${renderParamsDraft?.text?.singleTextEnd ?? ''}`;
   const singleTextEndFallback = renderTimelineDuration > 0
@@ -305,11 +306,17 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     return rows;
   }, [renderTemplateDiffBaselineConfig, renderTemplateDiffCurrentConfig]);
   const hasTemplateChanges = templateDiffRows.length > 0;
-  React.useEffect(() => {
-    if (templateDiffOpen && !hasTemplateChanges) {
-      setTemplateDiffOpen(false);
-    }
-  }, [templateDiffOpen, hasTemplateChanges]);
+  const templateChangeCount = templateDiffRows.length;
+  const requestSaveTemplateConfirm = React.useCallback(() => {
+    if (isCustomTemplate || !selectedTemplate) return;
+    setTemplateSaveConfirmOpen(true);
+  }, [isCustomTemplate, selectedTemplate]);
+  const confirmSaveTemplate = React.useCallback(() => {
+    if (isCustomTemplate || !selectedTemplate) return;
+    saveRenderTemplateCurrent(selectedTemplate);
+    setTemplateSaveConfirmOpen(false);
+    setTemplateDiffOpen(false);
+  }, [isCustomTemplate, selectedTemplate, saveRenderTemplateCurrent]);
   const formatDiffValue = (value: unknown) => {
     if (value === undefined) return '(missing)';
     if (typeof value === 'string') return `"${value}"`;
@@ -320,6 +327,21 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
       return String(value);
     }
   };
+  const getTemplateDiffTrackLabel = React.useCallback((path: string) => {
+    const match = path.match(/^items\[(\d+)\](?:\.|$)/);
+    if (!match) return '--';
+    const index = Number(match[1]);
+    if (!Number.isFinite(index) || index < 0) return '--';
+    const currentItem = renderTemplateDiffCurrentConfig?.items?.[index];
+    const baselineItem = renderTemplateDiffBaselineConfig?.items?.[index];
+    const item = currentItem ?? baselineItem;
+    if (!item) return `items[${index}]`;
+    const ref = typeof item.source?.ref === 'string' ? item.source.ref.trim() : '';
+    if (ref) return ref;
+    if (item.type === 'text') return 'text';
+    if (typeof item.type === 'string' && item.type.trim() !== '') return item.type;
+    return `items[${index}]`;
+  }, [renderTemplateDiffCurrentConfig, renderTemplateDiffBaselineConfig]);
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('image:') ? 'image'
       : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
@@ -438,6 +460,35 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {templateSaveConfirmOpen && (
+                  <div className="fixed inset-0 z-[90] bg-zinc-950/70 flex items-center justify-center p-4">
+                    <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 shadow-xl p-4">
+                      <div className="text-sm font-semibold text-zinc-100">Save Template?</div>
+                      <div className="mt-2 text-xs text-zinc-400">
+                        This will overwrite template <span className="text-zinc-200">{selectedTemplate?.name ?? 'current template'}</span>.
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-500">
+                        {templateChangeCount} parameter change{templateChangeCount === 1 ? '' : 's'} will be saved.
+                      </div>
+                      <div className="mt-4 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTemplateSaveConfirmOpen(false)}
+                          className="px-3 py-1.5 text-xs rounded-md border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:border-zinc-600"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={confirmSaveTemplate}
+                          className="px-3 py-1.5 text-xs rounded-md border border-lime-600/70 text-lime-300 hover:text-lime-200 hover:border-lime-500"
+                        >
+                          Confirm Save
                         </button>
                       </div>
                     </div>
@@ -1361,7 +1412,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   >
                                     Reset to default
                                   </button>
-                                  {hasTemplateChanges && (
+                                  {(isRenderTemplateDirty || hasTemplateChanges) && (
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -1379,7 +1430,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       onClick={() => {
                                         if (!selectedTemplate) return;
                                         setTemplateMenuOpen(false);
-                                        saveRenderTemplateCurrent(selectedTemplate);
+                                        requestSaveTemplateConfirm();
                                       }}
                                       className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
                                     >
@@ -1444,9 +1495,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       if (isCustomTemplate) {
                                         saveRenderTemplateQuick();
                                       } else if (selectedTemplate) {
-                                        saveRenderTemplateCurrent(selectedTemplate);
+                                        requestSaveTemplateConfirm();
                                       }
-                                      setTemplateDiffOpen(false);
+                                      if (isCustomTemplate) setTemplateDiffOpen(false);
                                     }}
                                     className="px-2.5 py-1 text-xs rounded-md border border-lime-600/70 text-lime-300 hover:text-lime-200 hover:border-lime-500"
                                   >
@@ -1482,20 +1533,22 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 {templateDiffRows.length === 0 ? (
                                   <div className="px-4 py-6 text-sm text-zinc-400">No differences.</div>
                                 ) : (
-                                  <table className="w-full border-collapse text-xs">
+                                  <table className="w-full table-fixed border-collapse text-xs">
                                     <thead className="sticky top-0 bg-zinc-900/95 text-zinc-400">
                                       <tr>
-                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[28%]">Path</th>
-                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[36%]">{renderTemplateDiffBaselineLabel}</th>
-                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[36%]">Current</th>
+                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[24%]">Path</th>
+                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[16%]">Track</th>
+                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[30%]">{renderTemplateDiffBaselineLabel}</th>
+                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[30%]">Current</th>
                                       </tr>
                                     </thead>
                                     <tbody>
                                       {templateDiffRows.map((row, idx) => (
                                         <tr key={`${row.path}-${idx}`} className="align-top border-b border-zinc-800/70">
                                           <td className="px-3 py-2 font-mono text-zinc-300 break-all">{row.path}</td>
-                                          <td className="px-3 py-2 text-zinc-400 whitespace-pre-wrap break-words">{formatDiffValue(row.before)}</td>
-                                          <td className="px-3 py-2 text-zinc-200 whitespace-pre-wrap break-words">{formatDiffValue(row.after)}</td>
+                                          <td className="px-3 py-2 text-zinc-300 break-all">{getTemplateDiffTrackLabel(row.path)}</td>
+                                          <td className="px-3 py-2 text-zinc-400 whitespace-pre-wrap break-all">{formatDiffValue(row.before)}</td>
+                                          <td className="px-3 py-2 text-zinc-200 whitespace-pre-wrap break-all">{formatDiffValue(row.after)}</td>
                                         </tr>
                                       ))}
                                     </tbody>
