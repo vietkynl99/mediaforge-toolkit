@@ -4709,6 +4709,19 @@ export default function App() {
     setRenderStudioItemType(null);
   };
 
+  const resolveRenderStudioTimelineTrackFile = (
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number } | null
+  ): VaultFile | null => {
+    if (!track || !runPipelineProject) return null;
+    let targetId: string | null = null;
+    if (track.type === 'video') targetId = renderVideoId;
+    else if (track.type === 'audio') targetId = renderAudioId;
+    else if (track.type === 'subtitle') targetId = renderSubtitleId;
+    else if (track.type === 'image') targetId = track.id ?? null;
+    if (!targetId) return null;
+    return runPipelineProject.files.find(file => file.id === targetId) ?? null;
+  };
+
   const previewRenderStudioMediaBinFile = (file: VaultFile) => {
     if (!file || !file.id) return;
     if (file.type === 'video') {
@@ -4730,6 +4743,14 @@ export default function App() {
       return;
     }
     setRenderStudioFocus('item');
+  };
+
+  const previewRenderStudioTimelineTrack = (
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number } | null
+  ) => {
+    const file = resolveRenderStudioTimelineTrackFile(track);
+    if (!file) return;
+    previewRenderStudioMediaBinFile(file);
   };
 
   const performDeleteVaultFile = async (file: VaultFile) => {
@@ -4848,6 +4869,20 @@ export default function App() {
             style={{ top: renderStudioTimelineContextMenu.y, left: renderStudioTimelineContextMenu.x }}
             onClick={(event) => event.stopPropagation()}
           >
+            {resolveRenderStudioTimelineTrackFile(renderStudioTimelineContextMenu.track) && (
+              <button
+                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+                onClick={() => {
+                  previewRenderStudioTimelineTrack(renderStudioTimelineContextMenu.track);
+                  closeRenderStudioTimelineContextMenu();
+                }}
+              >
+                <span className="flex items-center gap-2">
+                  <MousePointer2 size={12} />
+                  Preview
+                </span>
+              </button>
+            )}
             <button
               className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
               onClick={() => {

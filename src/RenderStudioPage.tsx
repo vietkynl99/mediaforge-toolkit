@@ -226,6 +226,29 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const previewSubtitleFile = renderStudioPreviewFileId && runPipelineProject
     ? runPipelineProject.files.find(file => file.id === renderStudioPreviewFileId && file.type === 'subtitle')
     : renderSubtitleFile;
+  const SUBTITLE_CUES_PER_PAGE = 20;
+  const [subtitlePreviewPage, setSubtitlePreviewPage] = React.useState(1);
+  const subtitleTotalPages = Math.max(1, Math.ceil(renderSubtitleCues.length / SUBTITLE_CUES_PER_PAGE));
+  const subtitlePageSafe = Math.min(subtitleTotalPages, Math.max(1, subtitlePreviewPage));
+  const subtitlePageStart = (subtitlePageSafe - 1) * SUBTITLE_CUES_PER_PAGE;
+  const subtitlePageCues = renderSubtitleCues.slice(subtitlePageStart, subtitlePageStart + SUBTITLE_CUES_PER_PAGE);
+  const formatSubtitleCueTime = (seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return '00:00:00.000';
+    const totalMs = Math.max(0, Math.round(seconds * 1000));
+    const hours = Math.floor(totalMs / 3600000);
+    const minutes = Math.floor((totalMs % 3600000) / 60000);
+    const secs = Math.floor((totalMs % 60000) / 1000);
+    const ms = totalMs % 1000;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+  };
+  React.useEffect(() => {
+    setSubtitlePreviewPage(1);
+  }, [previewSubtitleFile?.id]);
+  React.useEffect(() => {
+    if (subtitlePreviewPage > subtitleTotalPages) {
+      setSubtitlePreviewPage(subtitleTotalPages);
+    }
+  }, [subtitlePreviewPage, subtitleTotalPages]);
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('image:') ? 'image'
       : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
@@ -567,10 +590,68 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               </div>
                             )
                           ) : renderStudioFocus === 'item' && renderStudioItemType === 'subtitle' ? (
-                            <div className="flex flex-col items-center gap-2 text-sm text-zinc-400 text-center px-6">
-                              <Type size={22} className="text-zinc-500" />
-                              <div>{previewSubtitleFile?.name ?? 'Subtitle preview'}</div>
-                              <div className="text-[11px] text-zinc-500">Use timeline preview to see subtitles over video.</div>
+                            <div className="w-full h-full flex flex-col p-4 gap-3 text-zinc-300">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-xs uppercase tracking-wider text-zinc-500">Subtitle Preview</div>
+                                  <div className="text-sm text-zinc-200 truncate">{previewSubtitleFile?.name ?? 'Subtitle preview'}</div>
+                                </div>
+                                <div className="text-[11px] text-zinc-500 whitespace-nowrap">
+                                  {renderSubtitleCues.length} cue{renderSubtitleCues.length === 1 ? '' : 's'}
+                                </div>
+                              </div>
+                              {renderSubtitleCues.length > 0 ? (
+                                <>
+                                  <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-zinc-800 bg-zinc-900/70">
+                                    <table className="w-full text-xs border-collapse">
+                                      <thead className="sticky top-0 bg-zinc-900/95 text-zinc-400">
+                                        <tr>
+                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-14">#</th>
+                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-32">Start</th>
+                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-32">End</th>
+                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800">Text</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {subtitlePageCues.map((cue, cueIndex) => (
+                                          <tr key={`${cue.start}-${cue.end}-${subtitlePageStart + cueIndex}`} className="border-b border-zinc-800/70 align-top">
+                                            <td className="px-3 py-2 text-zinc-500">{subtitlePageStart + cueIndex + 1}</td>
+                                            <td className="px-3 py-2 font-mono text-zinc-300">{formatSubtitleCueTime(cue.start)}</td>
+                                            <td className="px-3 py-2 font-mono text-zinc-300">{formatSubtitleCueTime(cue.end)}</td>
+                                            <td className="px-3 py-2 whitespace-pre-wrap break-words text-zinc-200">{cue.text || '...'}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-2 text-xs">
+                                    <button
+                                      type="button"
+                                      className="px-2.5 py-1 rounded-md border border-zinc-700 text-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      onClick={() => setSubtitlePreviewPage(prev => Math.max(1, prev - 1))}
+                                      disabled={subtitlePageSafe <= 1}
+                                    >
+                                      Prev
+                                    </button>
+                                    <div className="text-zinc-400">
+                                      Page {subtitlePageSafe}/{subtitleTotalPages}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="px-2.5 py-1 rounded-md border border-zinc-700 text-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                      onClick={() => setSubtitlePreviewPage(prev => Math.min(subtitleTotalPages, prev + 1))}
+                                      disabled={subtitlePageSafe >= subtitleTotalPages}
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-sm text-zinc-400 text-center px-6">
+                                  <Type size={22} className="text-zinc-500" />
+                                  <div>No subtitle cues found.</div>
+                                </div>
+                              )}
                             </div>
                           ) : renderPreviewUrl ? (
                             <img
