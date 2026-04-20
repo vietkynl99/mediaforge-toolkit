@@ -132,6 +132,13 @@ const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
 const TTS_PITCH_BASE_HZ = 200;
 const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
+const RENDER_V2_CACHE_DIRNAME = '.mediaforge/render-v2-cache';
+const RENDER_V2_SEGMENT_SECONDS = Math.max(
+  5,
+  Number.isFinite(Number(process.env.RENDER_V2_SEGMENT_SECONDS))
+    ? Number(process.env.RENDER_V2_SEGMENT_SECONDS)
+    : 60
+);
 const MAX_AMIX_INPUTS = 1024;
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
@@ -1411,9 +1418,10 @@ const buildRenderV2FilterGraph = async (
 const buildRenderV2FfmpegArgs = async (
   config: RenderConfigV2,
   outputPath: string,
-  tmpDir: string
+  tmpDir: string,
+  options?: { outputStart?: number; outputDuration?: number; allowShortDuration?: boolean }
 ) => {
-  const graph = await buildRenderV2FilterGraph(config, tmpDir);
+  const graph = await buildRenderV2FilterGraph(config, tmpDir, options);
   const renderOptions = config.renderOptions ?? {};
   const codec = renderOptions.codec === 'h265' ? 'libx265' : 'libx264';
   const preset = typeof renderOptions.preset === 'string' && renderOptions.preset.trim()
@@ -1456,6 +1464,110 @@ const buildRenderV2FfmpegArgs = async (
   return { args, outputDuration: graph.outputDuration };
 };
 
+const parseFfmpegProgressSeconds = (text: string) => {
+  const match = text.match(/time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  const s = Number(match[3]);
+  if (!Number.isFinite(h) || !Number.isFinite(m) || !Number.isFinite(s)) return null;
+  return h * 3600 + m * 60 + s;
+};
+
+const runFfmpegLoggedCommand = async (
+  ffmpegPath: string,
+  args: string[],
+  label: string,
+  onLog?: (chunk: string) => void,
+  onSpawn?: (proc: ReturnType<typeof spawn>) => void,
+  onProgressSeconds?: (seconds: number) => void
+) => {
+  const commandLine = [ffmpegPath, ...args].map(formatArg).join(' ');
+  onLog?.(`COMMAND (${label}): ${commandLine}\n`);
+  let lastProgressSeconds = 0;
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    onSpawn?.(proc);
+    proc.stdout.on('data', data => onLog?.(data.toString()));
+    proc.stderr.on('data', data => {
+      const text = data.toString();
+      onLog?.(text);
+      if (!onProgressSeconds) return;
+      const seconds = parseFfmpegProgressSeconds(text);
+      if (seconds === null) return;
+      if (seconds <= lastProgressSeconds) return;
+      lastProgressSeconds = seconds;
+      onProgressSeconds(seconds);
+    });
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited with code ${code}`));
+    });
+  });
+};
+
+const buildRenderInputFingerprints = async (config: RenderConfigV2) => {
+  const sourceItems = config.items.filter(item => (
+    item.type === 'video'
+    || item.type === 'audio'
+    || item.type === 'image'
+    || item.type === 'subtitle'
+  ));
+  const fingerprints: Array<{ resolvedPath: string; size: number; mtimeMs: number }> = [];
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  for (const item of sourceItems) {
+    const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
+    const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path) : null);
+    if (!sourcePath) {
+      missing.push(`${item.id}:${item.source?.ref ?? item.source?.path ?? ''}`);
+      continue;
+    }
+    if (seen.has(sourcePath)) continue;
+    seen.add(sourcePath);
+    try {
+      const stats = await fs.stat(sourcePath);
+      fingerprints.push({
+        resolvedPath: sourcePath,
+        size: Number(stats.size),
+        mtimeMs: Math.round(Number(stats.mtimeMs))
+      });
+    } catch {
+      missing.push(`${item.id}:${sourcePath}`);
+    }
+  }
+  fingerprints.sort((a, b) => a.resolvedPath.localeCompare(b.resolvedPath));
+  missing.sort((a, b) => a.localeCompare(b));
+  return { fingerprints, missing };
+};
+
+const buildRenderV2Signature = async (config: RenderConfigV2) => {
+  const inputFingerprint = await buildRenderInputFingerprints(config);
+  const payload = {
+    version: 1,
+    segmentSeconds: RENDER_V2_SEGMENT_SECONDS,
+    inputs: inputFingerprint,
+    config
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 20);
+};
+
+const isReusableRenderSegment = async (segmentPath: string, expectedDuration: number) => {
+  try {
+    const stats = await fs.stat(segmentPath);
+    if (!stats.isFile() || stats.size <= 0) return false;
+    const duration = await runFfprobe(segmentPath).catch(() => 0);
+    if (!Number.isFinite(duration) || duration <= 0) return false;
+    const tolerance = Math.max(0.5, expectedDuration * 0.03);
+    return Math.abs(duration - expectedDuration) <= tolerance;
+  } catch {
+    return false;
+  }
+};
+
+const escapeConcatFilePath = (value: string) => value.replace(/'/g, `'\\''`);
+
 const runRenderV2Task = async (
   config: RenderConfigV2,
   projectRoot: string,
@@ -1478,37 +1590,95 @@ const runRenderV2Task = async (
   const outputPath = path.join(outputDir, outputName);
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-v2-'));
   try {
-    const { args, outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir);
     const ffmpegPath = await getFfmpegPath();
-    const commandLine = [ffmpegPath, ...args].map(formatArg).join(' ');
-    onLog?.(`COMMAND (render v2): ${commandLine}\n`);
+    const { outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir);
     const totalSeconds = Number.isFinite(outputDuration) && outputDuration > 0 ? outputDuration : 0;
-    let lastProgressSeconds = 0;
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      onSpawn?.(proc);
-      proc.stdout.on('data', data => onLog?.(data.toString()));
-      proc.stderr.on('data', data => {
-        const text = data.toString();
-        onLog?.(text);
-        if (!onProgress || totalSeconds <= 0) return;
-        const match = text.match(/time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-        if (!match) return;
-        const h = Number(match[1]);
-        const m = Number(match[2]);
-        const s = Number(match[3]);
-        if (!Number.isFinite(h) || !Number.isFinite(m) || !Number.isFinite(s)) return;
-        const seconds = h * 3600 + m * 60 + s;
-        if (seconds <= lastProgressSeconds) return;
-        lastProgressSeconds = seconds;
-        onProgress(seconds, totalSeconds);
-      });
-      proc.on('error', reject);
-      proc.on('close', code => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg exited with code ${code}`));
-      });
-    });
+    if (totalSeconds <= 0) {
+      throw new Error('Render has no output duration');
+    }
+    const segmentSeconds = Math.min(RENDER_V2_SEGMENT_SECONDS, Math.max(1, totalSeconds));
+    const signature = await buildRenderV2Signature(config);
+    const cacheRoot = path.join(projectRoot, RENDER_V2_CACHE_DIRNAME, signature);
+    const segmentsDir = path.join(cacheRoot, 'segments');
+    await fs.mkdir(segmentsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(cacheRoot, 'meta.json'),
+      JSON.stringify({
+        createdAt: new Date().toISOString(),
+        segmentSeconds,
+        totalSeconds,
+        signature
+      }, null, 2),
+      'utf-8'
+    ).catch(() => null);
+
+    const segmentCount = Math.max(1, Math.ceil(totalSeconds / segmentSeconds));
+    let completedSeconds = 0;
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+      const startSeconds = segmentIndex * segmentSeconds;
+      const expectedDuration = Math.max(0.001, Math.min(segmentSeconds, totalSeconds - startSeconds));
+      const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}.mp4`;
+      const segmentPath = path.join(segmentsDir, segmentName);
+      // Keep ".mp4" extension on temporary segment files so older ffmpeg builds
+      // can infer output format without requiring an explicit "-f mp4".
+      const partialSegmentPath = `${segmentPath.replace(/\.mp4$/i, '')}.part.mp4`;
+      const reusable = await isReusableRenderSegment(segmentPath, expectedDuration);
+      if (reusable) {
+        completedSeconds = Math.min(totalSeconds, startSeconds + expectedDuration);
+        onLog?.(`CACHE HIT (render segment ${segmentIndex + 1}/${segmentCount}): ${path.relative(projectRoot, segmentPath)}\n`);
+        onProgress?.(completedSeconds, totalSeconds);
+        continue;
+      }
+      await fs.rm(partialSegmentPath, { force: true }).catch(() => null);
+      const { args } = await buildRenderV2FfmpegArgs(
+        config,
+        partialSegmentPath,
+        tmpDir,
+        {
+          outputStart: startSeconds,
+          outputDuration: expectedDuration,
+          allowShortDuration: true
+        }
+      );
+      await runFfmpegLoggedCommand(
+        ffmpegPath,
+        args,
+        `render v2 segment ${segmentIndex + 1}/${segmentCount}`,
+        onLog,
+        onSpawn,
+        seconds => {
+          if (!onProgress) return;
+          const bounded = Math.min(expectedDuration, Math.max(0, seconds));
+          onProgress(Math.min(totalSeconds, startSeconds + bounded), totalSeconds);
+        }
+      );
+      await fs.rename(partialSegmentPath, segmentPath);
+      completedSeconds = Math.min(totalSeconds, startSeconds + expectedDuration);
+      onProgress?.(completedSeconds, totalSeconds);
+    }
+
+    const concatListPath = path.join(cacheRoot, 'concat.txt');
+    const concatLines: string[] = [];
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+      const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}.mp4`;
+      const segmentPath = path.join(segmentsDir, segmentName);
+      concatLines.push(`file '${escapeConcatFilePath(segmentPath)}'`);
+    }
+    await fs.writeFile(concatListPath, `${concatLines.join('\n')}\n`, 'utf-8');
+    const concatArgs = [
+      '-y',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      concatListPath,
+      '-c',
+      'copy',
+      outputPath
+    ];
+    await runFfmpegLoggedCommand(ffmpegPath, concatArgs, 'render v2 concat', onLog, onSpawn);
+    onProgress?.(totalSeconds, totalSeconds);
     return {
       outputPath,
       outputRelativePath: path.relative(MEDIA_VAULT_ROOT, outputPath)
@@ -4055,7 +4225,8 @@ app.post('/api/jobs/run', async (req, res) => {
       }
       const projectRoot = path.join(MEDIA_VAULT_ROOT, safeProjectName);
       const sourceDir = path.join(projectRoot, 'source');
-      const workingDir = path.join(projectRoot, 'working');
+      const mediaforgeDir = path.join(projectRoot, '.mediaforge');
+      const downloadRuntimeDir = path.join(mediaforgeDir, 'download');
       const outputDir = path.join(projectRoot, UVR_OUTPUT_DIRNAME);
       const projectExists = await fs.stat(projectRoot).then(stat => stat.isDirectory()).catch(() => false);
       if (projectExists) {
@@ -4074,12 +4245,12 @@ app.post('/api/jobs/run', async (req, res) => {
         }
       }
       await fs.mkdir(sourceDir, { recursive: true });
-      await fs.mkdir(workingDir, { recursive: true });
+      await fs.mkdir(downloadRuntimeDir, { recursive: true });
       await fs.mkdir(outputDir, { recursive: true });
       let cookiesFile: string | null = null;
       if (downloadCookiesContent) {
         const filename = sanitizeFileName(downloadCookiesFileName || 'cookies.txt');
-        cookiesFile = path.join(workingDir, filename);
+        cookiesFile = path.join(downloadRuntimeDir, filename);
         await fs.writeFile(cookiesFile, downloadCookiesContent, 'utf-8');
       } else if (downloadCookiesFile) {
         cookiesFile = resolveCookiesPath(downloadCookiesFile);
