@@ -1501,6 +1501,12 @@ export default function App() {
   const runPipelineHasTts = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
     ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'tts'
     : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'tts'));
+  const runPipelineEligibleInputs = runPipelineProject?.files.filter(file => (
+    runPipelineHasTts
+      ? file.type === 'subtitle'
+      : file.type === 'video' || file.type === 'audio'
+  )) ?? [];
+  const runPipelineResolvedInput = runPipelineInput ?? runPipelineEligibleInputs[0] ?? null;
   const runPipelineHasDownload = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
     ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'download'
     : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'download'));
@@ -5546,20 +5552,6 @@ export default function App() {
 
 
   useEffect(() => {
-    if (!selectedFolder) return;
-    const currentInput = selectedFolder.files.find(file => file.id === runPipelineInputId);
-    const currentInputValid = Boolean(
-      currentInput
-      && (runPipelineHasTts ? currentInput.type === 'subtitle' : (currentInput.type === 'video' || currentInput.type === 'audio'))
-    );
-    if (currentInputValid) return;
-    const firstInput = runPipelineHasTts
-      ? selectedFolder.files.find(file => file.type === 'subtitle')
-      : selectedFolder.files.find(file => file.type === 'video' || file.type === 'audio');
-    setRunPipelineInputId(firstInput?.id ?? null);
-  }, [selectedFolder?.id, runPipelineHasTts, runPipelineInputId]);
-
-  useEffect(() => {
     let active = true;
     const loadRenderTemplates = async () => {
       if (!authUser) return;
@@ -6355,7 +6347,7 @@ export default function App() {
         showToast('Select a video track first', 'warning');
         return;
       }
-    } else if (!runPipelineInput?.relativePath) {
+    } else if (!runPipelineResolvedInput?.relativePath) {
       showToast('Select an input file first', 'warning');
       return;
     }
@@ -6374,8 +6366,8 @@ export default function App() {
             outputFormat: vrOutputType
           }
         : {
-            inputPath: runPipelineInput?.relativePath,
-            inputPaths: runPipelineInput?.relativePath ? [runPipelineInput.relativePath] : undefined,
+            inputPath: runPipelineResolvedInput?.relativePath,
+            inputPaths: runPipelineResolvedInput?.relativePath ? [runPipelineResolvedInput.relativePath] : undefined,
             model: vrModel,
             backend: runPipelineBackend,
             outputFormat: vrOutputType
@@ -9155,6 +9147,7 @@ export default function App() {
                                 onChange={e => setRunPipelineInputId(e.target.value || null)}
                                 className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                               >
+                                <option value="">Select input file</option>
                                 {runPipelineProject?.files
                                   .filter(file => (runPipelineHasTts ? file.type === 'subtitle' : file.type === 'video' || file.type === 'audio'))
                                   .map(file => (
