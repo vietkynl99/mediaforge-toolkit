@@ -79,6 +79,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     showRenderTimelineAudioTrack,
     renderAudioDuration,
     renderTimelineScrollRef,
+    onRenderTimelineMouseDown,
+    onRenderTimelineMouseMove,
+    onRenderTimelineMouseUp,
     onRenderTimelineClick,
     renderTimelineWidth,
     renderTimelineTickCount,
@@ -124,9 +127,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     isRenderTemplateDirty,
     renderConfigV2Override,
     setRenderConfigV2Override,
-    renderTemplateDiffCurrentConfig,
-    renderTemplateDiffBaselineConfig,
-    renderTemplateDiffBaselineLabel,
     subtitleFontOptions,
     subtitleFontLoading,
     SUBTITLE_STYLE_PRESETS,
@@ -147,8 +147,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     ? renderImageFiles.filter(file => file.id === selectedImageId)
     : renderImageFiles;
   const [templateMenuOpen, setTemplateMenuOpen] = React.useState(false);
-  const templateMenuRef = React.useRef<HTMLDivElement | null>(null);
-  const [templateDiffOpen, setTemplateDiffOpen] = React.useState(false);
+  const templateMenuCloseRef = React.useRef<number | null>(null);
   const selectedTemplate = renderTemplates.find(template => template.id === runPipelineRenderTemplateId) ?? null;
   const isCustomTemplate = !selectedTemplate || runPipelineRenderTemplateId === 'custom';
   const inputRefPlaceholderType = React.useCallback((key: string) => {
@@ -173,7 +172,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const [addTrackMenuOpen, setAddTrackMenuOpen] = React.useState(false);
   const addTrackMenuCloseRef = React.useRef<number | null>(null);
   const [renderConfirmOpen, setRenderConfirmOpen] = React.useState(false);
-  const [templateSaveConfirmOpen, setTemplateSaveConfirmOpen] = React.useState(false);
   const singleTextStartDraft = `${renderParamsDraft?.text?.singleTextStart ?? ''}`;
   const singleTextEndDraft = `${renderParamsDraft?.text?.singleTextEnd ?? ''}`;
   const singleTextEndFallback = renderTimelineDuration > 0
@@ -228,120 +226,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const previewSubtitleFile = renderStudioPreviewFileId && runPipelineProject
     ? runPipelineProject.files.find(file => file.id === renderStudioPreviewFileId && file.type === 'subtitle')
     : renderSubtitleFile;
-  const SUBTITLE_CUES_PER_PAGE = 20;
-  const [subtitlePreviewPage, setSubtitlePreviewPage] = React.useState(1);
-  const subtitleTotalPages = Math.max(1, Math.ceil(renderSubtitleCues.length / SUBTITLE_CUES_PER_PAGE));
-  const subtitlePageSafe = Math.min(subtitleTotalPages, Math.max(1, subtitlePreviewPage));
-  const subtitlePageStart = (subtitlePageSafe - 1) * SUBTITLE_CUES_PER_PAGE;
-  const subtitlePageCues = renderSubtitleCues.slice(subtitlePageStart, subtitlePageStart + SUBTITLE_CUES_PER_PAGE);
-  const formatSubtitleCueTime = (seconds: number) => {
-    if (!Number.isFinite(seconds) || seconds < 0) return '00:00:00.000';
-    const totalMs = Math.max(0, Math.round(seconds * 1000));
-    const hours = Math.floor(totalMs / 3600000);
-    const minutes = Math.floor((totalMs % 3600000) / 60000);
-    const secs = Math.floor((totalMs % 60000) / 1000);
-    const ms = totalMs % 1000;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
-  };
-  React.useEffect(() => {
-    setSubtitlePreviewPage(1);
-  }, [previewSubtitleFile?.id]);
-  React.useEffect(() => {
-    if (subtitlePreviewPage > subtitleTotalPages) {
-      setSubtitlePreviewPage(subtitleTotalPages);
-    }
-  }, [subtitlePreviewPage, subtitleTotalPages]);
-  React.useEffect(() => {
-    if (!templateMenuOpen) return;
-    const onWindowMouseDown = (event: MouseEvent) => {
-      if (!templateMenuRef.current?.contains(event.target as Node)) {
-        setTemplateMenuOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', onWindowMouseDown);
-    return () => window.removeEventListener('mousedown', onWindowMouseDown);
-  }, [templateMenuOpen]);
-  const templateDiffRows = React.useMemo(() => {
-    const left = renderTemplateDiffBaselineConfig ?? null;
-    const right = renderTemplateDiffCurrentConfig ?? null;
-    if (!left || !right) return [] as Array<{ path: string; before: unknown; after: unknown }>;
-
-    const rows: Array<{ path: string; before: unknown; after: unknown }> = [];
-    const isObject = (value: unknown): value is Record<string, unknown> => (
-      typeof value === 'object' && value !== null && !Array.isArray(value)
-    );
-    const same = (a: unknown, b: unknown) => {
-      if (a === b) return true;
-      if (typeof a !== typeof b) return false;
-      if (Array.isArray(a) && Array.isArray(b)) {
-        if (a.length !== b.length) return false;
-        return a.every((item, idx) => same(item, b[idx]));
-      }
-      if (isObject(a) && isObject(b)) {
-        const keys = Array.from(new Set([...Object.keys(a), ...Object.keys(b)])).sort();
-        return keys.every(key => same(a[key], b[key]));
-      }
-      return false;
-    };
-    const walk = (before: unknown, after: unknown, path: string) => {
-      if (same(before, after)) return;
-      if (Array.isArray(before) && Array.isArray(after)) {
-        const len = Math.max(before.length, after.length);
-        for (let i = 0; i < len; i += 1) {
-          walk(before[i], after[i], `${path}[${i}]`);
-        }
-        return;
-      }
-      if (isObject(before) && isObject(after)) {
-        const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort();
-        keys.forEach((key) => {
-          const nextPath = path ? `${path}.${key}` : key;
-          walk(before[key], after[key], nextPath);
-        });
-        return;
-      }
-      rows.push({ path: path || '(root)', before, after });
-    };
-    walk(left, right, '');
-    return rows;
-  }, [renderTemplateDiffBaselineConfig, renderTemplateDiffCurrentConfig]);
-  const hasTemplateChanges = templateDiffRows.length > 0;
-  const templateChangeCount = templateDiffRows.length;
-  const requestSaveTemplateConfirm = React.useCallback(() => {
-    if (isCustomTemplate || !selectedTemplate) return;
-    setTemplateSaveConfirmOpen(true);
-  }, [isCustomTemplate, selectedTemplate]);
-  const confirmSaveTemplate = React.useCallback(() => {
-    if (isCustomTemplate || !selectedTemplate) return;
-    saveRenderTemplateCurrent(selectedTemplate);
-    setTemplateSaveConfirmOpen(false);
-    setTemplateDiffOpen(false);
-  }, [isCustomTemplate, selectedTemplate, saveRenderTemplateCurrent]);
-  const formatDiffValue = (value: unknown) => {
-    if (value === undefined) return '(missing)';
-    if (typeof value === 'string') return `"${value}"`;
-    if (typeof value === 'number' || typeof value === 'boolean' || value === null) return String(value);
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  };
-  const getTemplateDiffTrackLabel = React.useCallback((path: string) => {
-    const match = path.match(/^items\[(\d+)\](?:\.|$)/);
-    if (!match) return '--';
-    const index = Number(match[1]);
-    if (!Number.isFinite(index) || index < 0) return '--';
-    const currentItem = renderTemplateDiffCurrentConfig?.items?.[index];
-    const baselineItem = renderTemplateDiffBaselineConfig?.items?.[index];
-    const item = currentItem ?? baselineItem;
-    if (!item) return `items[${index}]`;
-    const ref = typeof item.source?.ref === 'string' ? item.source.ref.trim() : '';
-    if (ref) return ref;
-    if (item.type === 'text') return 'text';
-    if (typeof item.type === 'string' && item.type.trim() !== '') return item.type;
-    return `items[${index}]`;
-  }, [renderTemplateDiffCurrentConfig, renderTemplateDiffBaselineConfig]);
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('image:') ? 'image'
       : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
@@ -460,35 +344,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                           Cancel
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {templateSaveConfirmOpen && (
-                  <div className="fixed inset-0 z-[90] bg-zinc-950/70 flex items-center justify-center p-4">
-                    <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 shadow-xl p-4">
-                      <div className="text-sm font-semibold text-zinc-100">Save Template?</div>
-                      <div className="mt-2 text-xs text-zinc-400">
-                        This will overwrite template <span className="text-zinc-200">{selectedTemplate?.name ?? 'current template'}</span>.
-                      </div>
-                      <div className="mt-1 text-xs text-zinc-500">
-                        {templateChangeCount} parameter change{templateChangeCount === 1 ? '' : 's'} will be saved.
-                      </div>
-                      <div className="mt-4 flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setTemplateSaveConfirmOpen(false)}
-                          className="px-3 py-1.5 text-xs rounded-md border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:border-zinc-600"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={confirmSaveTemplate}
-                          className="px-3 py-1.5 text-xs rounded-md border border-lime-600/70 text-lime-300 hover:text-lime-200 hover:border-lime-500"
-                        >
-                          Confirm Save
                         </button>
                       </div>
                     </div>
@@ -712,68 +567,10 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               </div>
                             )
                           ) : renderStudioFocus === 'item' && renderStudioItemType === 'subtitle' ? (
-                            <div className="w-full h-full flex flex-col p-4 gap-3 text-zinc-300">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="text-xs uppercase tracking-wider text-zinc-500">Subtitle Preview</div>
-                                  <div className="text-sm text-zinc-200 truncate">{previewSubtitleFile?.name ?? 'Subtitle preview'}</div>
-                                </div>
-                                <div className="text-[11px] text-zinc-500 whitespace-nowrap">
-                                  {renderSubtitleCues.length} cue{renderSubtitleCues.length === 1 ? '' : 's'}
-                                </div>
-                              </div>
-                              {renderSubtitleCues.length > 0 ? (
-                                <>
-                                  <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-zinc-800 bg-zinc-900/70">
-                                    <table className="w-full text-xs border-collapse">
-                                      <thead className="sticky top-0 bg-zinc-900/95 text-zinc-400">
-                                        <tr>
-                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-14">#</th>
-                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-32">Start</th>
-                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-32">End</th>
-                                          <th className="text-left font-medium px-3 py-2 border-b border-zinc-800">Text</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {subtitlePageCues.map((cue, cueIndex) => (
-                                          <tr key={`${cue.start}-${cue.end}-${subtitlePageStart + cueIndex}`} className="border-b border-zinc-800/70 align-top">
-                                            <td className="px-3 py-2 text-zinc-500">{subtitlePageStart + cueIndex + 1}</td>
-                                            <td className="px-3 py-2 font-mono text-zinc-300">{formatSubtitleCueTime(cue.start)}</td>
-                                            <td className="px-3 py-2 font-mono text-zinc-300">{formatSubtitleCueTime(cue.end)}</td>
-                                            <td className="px-3 py-2 whitespace-pre-wrap break-words text-zinc-200">{cue.text || '...'}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-2 text-xs">
-                                    <button
-                                      type="button"
-                                      className="px-2.5 py-1 rounded-md border border-zinc-700 text-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
-                                      onClick={() => setSubtitlePreviewPage(prev => Math.max(1, prev - 1))}
-                                      disabled={subtitlePageSafe <= 1}
-                                    >
-                                      Prev
-                                    </button>
-                                    <div className="text-zinc-400">
-                                      Page {subtitlePageSafe}/{subtitleTotalPages}
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className="px-2.5 py-1 rounded-md border border-zinc-700 text-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
-                                      onClick={() => setSubtitlePreviewPage(prev => Math.min(subtitleTotalPages, prev + 1))}
-                                      disabled={subtitlePageSafe >= subtitleTotalPages}
-                                    >
-                                      Next
-                                    </button>
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-sm text-zinc-400 text-center px-6">
-                                  <Type size={22} className="text-zinc-500" />
-                                  <div>No subtitle cues found.</div>
-                                </div>
-                              )}
+                            <div className="flex flex-col items-center gap-2 text-sm text-zinc-400 text-center px-6">
+                              <Type size={22} className="text-zinc-500" />
+                              <div>{previewSubtitleFile?.name ?? 'Subtitle preview'}</div>
+                              <div className="text-[11px] text-zinc-500">Use timeline preview to see subtitles over video.</div>
                             </div>
                           ) : renderPreviewUrl ? (
                             <img
@@ -997,6 +794,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               renderTimelineScrollRef.current = node;
                               timelineScrollContainerRef.current = node;
                             }}
+                            onMouseMove={onRenderTimelineMouseMove}
+                            onMouseUp={onRenderTimelineMouseUp}
+                            onMouseLeave={onRenderTimelineMouseUp}
                             className="flex-1 overflow-x-auto render-timeline-scroll cursor-default"
                           >
                             <div
@@ -1016,7 +816,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 </div>
                               )}
                               <div
-                                className="relative h-5"
+                                className="relative h-5 cursor-grab active:cursor-grabbing"
+                                onMouseDown={onRenderTimelineMouseDown}
                                 onClick={event => {
                                   onRenderTimelineClick(event);
                                   resetTrackSelection();
@@ -1061,9 +862,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       setRenderTextTrackEnabled(true);
                                     }
                                     selectTrack('text');
-                                  }}
-                                  onContextMenu={event => {
-                                    openRenderStudioTimelineContextMenu(event, { type: 'text' });
                                   }}
                                   onKeyDown={event => {
                                     if (event.key === 'Enter' || event.key === ' ') {
@@ -1386,14 +1184,33 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </select>
                             <div
                               className="relative shrink-0"
-                              ref={templateMenuRef}
+                              onMouseEnter={() => {
+                                if (templateMenuCloseRef.current) {
+                                  window.clearTimeout(templateMenuCloseRef.current);
+                                  templateMenuCloseRef.current = null;
+                                }
+                                setTemplateMenuOpen(true);
+                              }}
+                              onMouseLeave={() => {
+                                if (templateMenuCloseRef.current) {
+                                  window.clearTimeout(templateMenuCloseRef.current);
+                                }
+                                templateMenuCloseRef.current = window.setTimeout(() => {
+                                  setTemplateMenuOpen(false);
+                                  templateMenuCloseRef.current = null;
+                                }, 120);
+                              }}
+                              onFocusCapture={() => setTemplateMenuOpen(true)}
+                              onBlurCapture={event => {
+                                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                                  setTemplateMenuOpen(false);
+                                }
+                              }}
                             >
                               <button
                                 type="button"
                                 aria-label="Template options"
                                 title="Template options"
-                                aria-expanded={templateMenuOpen}
-                                onClick={() => setTemplateMenuOpen(prev => !prev)}
                                 className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
                               >
                                 <Menu size={14} />
@@ -1412,25 +1229,13 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   >
                                     Reset to default
                                   </button>
-                                  {(isRenderTemplateDirty || hasTemplateChanges) && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setTemplateMenuOpen(false);
-                                        setTemplateDiffOpen(true);
-                                      }}
-                                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                    >
-                                      Show changes
-                                    </button>
-                                  )}
                                   {!isCustomTemplate && isRenderTemplateDirty && (
                                     <button
                                       type="button"
                                       onClick={() => {
                                         if (!selectedTemplate) return;
                                         setTemplateMenuOpen(false);
-                                        requestSaveTemplateConfirm();
+                                        saveRenderTemplateCurrent(selectedTemplate);
                                       }}
                                       className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
                                     >
@@ -1480,84 +1285,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                           </div>
                         </div>
-                        {templateDiffOpen && (
-                          <div className="fixed inset-0 z-[80] bg-zinc-950/70 flex items-center justify-center p-4" onClick={() => setTemplateDiffOpen(false)}>
-                            <div className="w-full max-w-5xl max-h-[85vh] rounded-xl border border-zinc-800 bg-zinc-950 shadow-xl flex flex-col overflow-hidden" onClick={event => event.stopPropagation()}>
-                              <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="text-sm font-semibold text-zinc-100">Template Changes</div>
-                                  <div className="text-xs text-zinc-400 truncate">Comparing current config with {renderTemplateDiffBaselineLabel}</div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (isCustomTemplate) {
-                                        saveRenderTemplateQuick();
-                                      } else if (selectedTemplate) {
-                                        requestSaveTemplateConfirm();
-                                      }
-                                      if (isCustomTemplate) setTemplateDiffOpen(false);
-                                    }}
-                                    className="px-2.5 py-1 text-xs rounded-md border border-lime-600/70 text-lime-300 hover:text-lime-200 hover:border-lime-500"
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (isCustomTemplate) {
-                                        resetRenderToDefault();
-                                      } else if (selectedTemplate) {
-                                        restoreRenderTemplateCurrent(selectedTemplate);
-                                      }
-                                      setTemplateDiffOpen(false);
-                                    }}
-                                    className="px-2.5 py-1 text-xs rounded-md border border-amber-600/70 text-amber-300 hover:text-amber-200 hover:border-amber-500"
-                                  >
-                                    Restore
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setTemplateDiffOpen(false)}
-                                    className="px-2.5 py-1 text-xs rounded-md border border-zinc-700 text-zinc-300 hover:text-zinc-100 hover:border-zinc-600"
-                                  >
-                                    Close
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800">
-                                {templateDiffRows.length} change{templateDiffRows.length === 1 ? '' : 's'}
-                              </div>
-                              <div className="overflow-auto">
-                                {templateDiffRows.length === 0 ? (
-                                  <div className="px-4 py-6 text-sm text-zinc-400">No differences.</div>
-                                ) : (
-                                  <table className="w-full table-fixed border-collapse text-xs">
-                                    <thead className="sticky top-0 bg-zinc-900/95 text-zinc-400">
-                                      <tr>
-                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[24%]">Path</th>
-                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[16%]">Track</th>
-                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[30%]">{renderTemplateDiffBaselineLabel}</th>
-                                        <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[30%]">Current</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {templateDiffRows.map((row, idx) => (
-                                        <tr key={`${row.path}-${idx}`} className="align-top border-b border-zinc-800/70">
-                                          <td className="px-3 py-2 font-mono text-zinc-300 break-all">{row.path}</td>
-                                          <td className="px-3 py-2 text-zinc-300 break-all">{getTemplateDiffTrackLabel(row.path)}</td>
-                                          <td className="px-3 py-2 text-zinc-400 whitespace-pre-wrap break-all">{formatDiffValue(row.before)}</td>
-                                          <td className="px-3 py-2 text-zinc-200 whitespace-pre-wrap break-all">{formatDiffValue(row.after)}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )}
                         <div className="rounded-lg border border-zinc-800/70 bg-zinc-950/50 p-2">
                           <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Placeholders</div>
                           <div className="flex flex-col gap-2 text-[10px] text-zinc-400">
@@ -1948,6 +1675,34 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   <div className="flex items-center gap-2 text-sm text-zinc-100">
                                     <span className="text-[11px] truncate font-semibold">{renderVideoFile.name}</span>
                                   </div>
+                                  <div className="grid grid-cols-2 gap-2 pt-1">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim Start (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParamsDraft.video.trimStart}
+                                        onChange={e => updateRenderParamDraft('video', 'trimStart', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'trimStart'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'trimStart'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Trim End (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParamsDraft.video.trimEnd}
+                                        onChange={e => updateRenderParamDraft('video', 'trimEnd', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'trimEnd'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'trimEnd'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Speed</label>
@@ -1980,6 +1735,22 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">
                                     <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fit</label>
+                                      <select
+                                        value={renderParamsDraft.video.fit}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('video', 'fit', v);
+                                          updateRenderParam('video', 'fit', v);
+                                        }}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="contain">Contain</option>
+                                        <option value="cover">Cover</option>
+                                        <option value="stretch">Stretch</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Scale (%)</label>
                                       <input
                                         type="number"
@@ -1990,6 +1761,49 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         onFocus={holdPreview}
                                         onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'scale'))}
                                         onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'scale'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position X (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.video.positionX}
+                                        onChange={e => updateRenderParamDraft('video', 'positionX', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'positionX'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'positionX'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Position Y (%)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.video.positionY}
+                                        onChange={e => updateRenderParamDraft('video', 'positionY', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'positionY'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'positionY'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Rotation (deg)</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        value={renderParamsDraft.video.rotation}
+                                        onChange={e => updateRenderParamDraft('video', 'rotation', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'rotation'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'rotation'))}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
@@ -2296,6 +2110,34 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       </div>
                                     )}
                                   </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade In (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParamsDraft.video.fadeIn}
+                                        onChange={e => updateRenderParamDraft('video', 'fadeIn', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'fadeIn'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'fadeIn'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade Out (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParamsDraft.video.fadeOut}
+                                        onChange={e => updateRenderParamDraft('video', 'fadeOut', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'fadeOut'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'fadeOut'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  </div>
                                   <div className="flex flex-col gap-1">
                                     <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Color LUT</label>
                                     <input
@@ -2378,6 +2220,34 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       />
                                       Mute
                                     </label>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade In (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParamsDraft.audio.fadeIn}
+                                        onChange={e => updateRenderParamDraft('audio', 'fadeIn', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'fadeIn'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'fadeIn'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Fade Out (s)</label>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        value={renderParamsDraft.audio.fadeOut}
+                                        onChange={e => updateRenderParamDraft('audio', 'fadeOut', e.target.value)}
+                                        onFocus={holdPreview}
+                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'fadeOut'))}
+                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'fadeOut'))}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
                                   </div>
                                 </>
                               ) : (

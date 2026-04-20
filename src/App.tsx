@@ -107,7 +107,7 @@ type RenderBlurRegionEffect = {
   top: number;
   bottom: number;
   sigma: number;
-  /** 0 = hard edge; 1–10 softer transition toward full blur at center. */
+  /** 0 = hard edge; 1–20 softer transition toward full blur at center. */
   feather: number;
 };
 
@@ -234,19 +234,6 @@ type TaskTemplate = {
   taskType: string;
   updatedAt: string;
   params: Record<string, any>;
-};
-
-type NewJobPopupDraft = {
-  version: 1;
-  projectId?: string | null;
-  projectName?: string | null;
-  pipelineId?: string | null;
-  runPipelineRenderTemplateId?: string | null;
-  runPipelineTaskTemplate?: Record<string, string>;
-  runPipelineInputId?: string | null;
-  renderInputFileIds?: string[];
-  renderTemplateApplyMap?: Record<string, string>;
-  renderTemplateApplyMapById?: Record<string, Record<string, string>>;
 };
 
 /** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
@@ -399,7 +386,6 @@ const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
 ];
 
 const SHOW_PARAM_PRESETS = false;
-const NEW_JOB_POPUP_DRAFT_STORAGE_KEY = 'mediaforge.newJobPopupDraft.v1';
 
 const VIET_SUBTITLE_FONTS = [
   'Be Vietnam Pro',
@@ -1066,7 +1052,7 @@ const computeFolderStatus = (files: VaultFile[]) => {
 /** Render Studio: extra strip after content end (pixels only); logical duration = longest track. */
 const RENDER_TIMELINE_VIEW_PAD = 0.12;
 
-const RENDER_BLUR_FEATHER_MAX = 10;
+const RENDER_BLUR_FEATHER_MAX = 20;
 
 /** Solid black JPEG when preview cannot be loaded (matches server fallback). */
 const RENDER_PREVIEW_BLACK_DATA_URL =
@@ -1181,7 +1167,7 @@ export default function App() {
     open: boolean;
     x: number;
     y: number;
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number } | null;
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number } | null;
   }>({
     open: false,
     x: 0,
@@ -1358,8 +1344,6 @@ export default function App() {
   const [renderTemplateApplyTarget, setRenderTemplateApplyTarget] = useState<RenderTemplate | null>(null);
   const [renderTemplateApplyMap, setRenderTemplateApplyMap] = useState<Record<string, string>>({});
   const [renderTemplateApplyMapById, setRenderTemplateApplyMapById] = useState<Record<string, Record<string, string>>>({});
-  const [newJobRenderTemplateMenuOpen, setNewJobRenderTemplateMenuOpen] = useState(false);
-  const newJobRenderTemplateMenuCloseRef = React.useRef<number | null>(null);
   const lastAutoTemplateApplyKeyRef = useRef<string | null>(null);
   const lastRenderConfigSyncRef = useRef<RenderConfigV2 | null>(null);
   const [runPipelineRenderTemplateId, setRunPipelineRenderTemplateId] = useState('custom');
@@ -1371,15 +1355,6 @@ export default function App() {
   const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
   const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
   const [runPipelineTaskTemplate, setRunPipelineTaskTemplate] = useState<Record<string, string>>({});
-  const newJobDraftLoadedRef = useRef(false);
-  const newJobDraftPendingRef = useRef<NewJobPopupDraft | null>(null);
-  const newJobDraftAppliedRef = useRef(false);
-  const [downloadTemplateMenuOpen, setDownloadTemplateMenuOpen] = useState(false);
-  const [uvrTemplateMenuOpen, setUvrTemplateMenuOpen] = useState(false);
-  const [ttsTemplateMenuOpen, setTtsTemplateMenuOpen] = useState(false);
-  const downloadTemplateMenuCloseRef = React.useRef<number | null>(null);
-  const uvrTemplateMenuCloseRef = React.useRef<number | null>(null);
-  const ttsTemplateMenuCloseRef = React.useRef<number | null>(null);
   const [renderTimelineScale, setRenderTimelineScale] = useState(1);
   const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
   const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
@@ -2534,30 +2509,6 @@ export default function App() {
     return {};
   };
 
-  const getDefaultTaskTemplateParams = (taskType: 'download' | 'uvr' | 'tts'): Record<string, any> => {
-    if (taskType === 'download') {
-      return {
-        downloadMode: 'all',
-        subLangs: 'ai-zh',
-        noPlaylist: true
-      };
-    }
-    if (taskType === 'uvr') {
-      return {
-        backend: 'vr',
-        model: 'MGM_MAIN_v4.pth',
-        outputFormat: 'Mp3'
-      };
-    }
-    return {
-      voice: 'vi-VN-HoaiMyNeural',
-      rate: '',
-      pitch: '',
-      overlapMode: 'overlap',
-      removeLineBreaks: true
-    };
-  };
-
   const openTemplateSaveModal = (
     taskType: 'render' | 'download' | 'uvr' | 'tts',
     defaultName: string,
@@ -2576,127 +2527,6 @@ export default function App() {
     setTemplateSaveParams(buildTaskTemplateParams(taskType));
     setTemplateSaveRenderConfig(null);
     openTemplateSaveModal(taskType, defaultName);
-  };
-
-  const saveTaskTemplateRecord = async (payload: {
-    id?: string | null;
-    name: string;
-    taskType: 'download' | 'uvr' | 'tts';
-    params: Record<string, any>;
-  }) => {
-    const body: Record<string, any> = {
-      name: payload.name,
-      taskType: payload.taskType,
-      params: payload.params
-    };
-    const numericId = payload.id ? Number(payload.id) : null;
-    if (Number.isFinite(numericId)) body.id = numericId;
-    const response = await fetch('/api/task-templates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || 'Unable to save task template');
-    }
-    const data = await response.json();
-    return data.template as TaskTemplate;
-  };
-
-  const deleteTaskTemplate = async (id: string) => {
-    const numericId = Number(id);
-    if (!Number.isFinite(numericId)) {
-      throw new Error('Invalid template id');
-    }
-    const response = await fetch(`/api/task-templates/${numericId}`, { method: 'DELETE' });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || 'Unable to delete task template');
-    }
-  };
-
-  const isTaskTemplateDirty = (taskType: 'download' | 'uvr' | 'tts') => {
-    const selected = getSelectedTaskTemplate(taskType);
-    const currentParams = buildTaskTemplateParams(taskType);
-    if (selected) {
-      return JSON.stringify(currentParams) !== JSON.stringify(selected.params ?? {});
-    }
-    const defaultParams = getDefaultTaskTemplateParams(taskType);
-    return JSON.stringify(currentParams) !== JSON.stringify(defaultParams);
-  };
-
-  const saveTaskTemplateCurrent = async (taskType: 'download' | 'uvr' | 'tts', template: TaskTemplate) => {
-    const params = buildTaskTemplateParams(taskType);
-    try {
-      const saved = await saveTaskTemplateRecord({
-        id: template.id,
-        name: template.name,
-        taskType,
-        params
-      });
-      setTaskTemplates(prev => prev.map(item => (
-        item.id === template.id ? saved : item
-      )));
-      showToast('Saved template.', 'success');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to save template';
-      showToast(message, 'error');
-    }
-  };
-
-  const restoreTaskTemplateCurrent = (taskType: 'download' | 'uvr' | 'tts', template: TaskTemplate) => {
-    applyTaskTemplateParams(taskType, template.params);
-    showToast('Restored template values.', 'success');
-  };
-
-  const deleteTaskTemplateWithConfirm = (taskType: 'download' | 'uvr' | 'tts', id: string, name?: string) => {
-    const label = (availableTasks.find(task => task.type === taskType)?.label ?? taskType).toLowerCase();
-    openConfirm(
-      {
-        title: `Delete ${label} template?`,
-        description: name ? `Template "${name}" will be removed permanently.` : 'This template will be removed permanently.',
-        confirmLabel: 'Delete',
-        variant: 'danger'
-      },
-      () => {
-        deleteTaskTemplate(id)
-          .then(() => {
-            setTaskTemplates(prev => prev.filter(template => template.id !== id));
-            setRunPipelineTaskTemplate(prev => (
-              prev[taskType] === id
-                ? { ...prev, [taskType]: 'custom' }
-                : prev
-            ));
-            showToast('Deleted template.', 'success');
-          })
-          .catch((error) => {
-            const message = error instanceof Error ? error.message : 'Unable to delete template';
-            showToast(message, 'error');
-          });
-      }
-    );
-  };
-
-  const resetTaskTemplateToDefault = (taskType: 'download' | 'uvr' | 'tts') => {
-    setRunPipelineTaskTemplate(prev => ({ ...prev, [taskType]: 'custom' }));
-    if (taskType === 'download') {
-      setDownloadMode('all');
-      setDownloadSubtitleLang('ai-zh');
-      setDownloadNoPlaylist(true);
-      return;
-    }
-    if (taskType === 'uvr') {
-      setRunPipelineBackend('vr');
-      setVrModel('MGM_MAIN_v4.pth');
-      setVrOutputType('Mp3');
-      return;
-    }
-    setRunPipelineTtsVoice('vi-VN-HoaiMyNeural');
-    setRunPipelineTtsRate('');
-    setRunPipelineTtsPitch('');
-    setRunPipelineTtsOverlapMode('overlap');
-    setRunPipelineTtsRemoveLineBreaks(true);
   };
 
   const saveRenderTemplateQuick = () => {
@@ -2859,18 +2689,17 @@ export default function App() {
       }
     } else {
       if (!templateSaveParams) return;
-      try {
-        const saved = await saveTaskTemplateRecord({
+      const now = new Date().toISOString();
+      setTaskTemplates(prev => ([
+        {
+          id: `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           name: label,
           taskType: templateSaveTaskType,
+          updatedAt: now,
           params: templateSaveParams
-        });
-        setTaskTemplates(prev => ([saved, ...prev]));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to save template';
-        showToast(message, 'error');
-        return;
-      }
+        },
+        ...prev
+      ]));
       showToast('Saved template.', 'success');
     }
     setTemplateSaveOpen(false);
@@ -3342,17 +3171,27 @@ export default function App() {
       params: [
         { name: 'timeline.framerate', desc: 'Frame rate', type: 'number', default: 30 },
         { name: 'timeline.resolution', desc: 'Output resolution (e.g. 1920x1080)', type: 'string', default: '1920x1080' },
+        { name: 'video.trimStart', desc: 'Trim start (s)', type: 'number', default: 0 },
+        { name: 'video.trimEnd', desc: 'Trim end (s)', type: 'number', default: 0 },
         { name: 'video.speed', desc: 'Playback speed', type: 'number', default: 1 },
         { name: 'video.volume', desc: 'Video audio volume (%)', type: 'number', default: 100 },
+        { name: 'video.fit', desc: 'contain | cover | stretch', type: 'string', default: 'contain' },
+        { name: 'video.positionX', desc: 'Position X (%)', type: 'number', default: 50 },
+        { name: 'video.positionY', desc: 'Position Y (%)', type: 'number', default: 50 },
         { name: 'video.scale', desc: 'Scale (%)', type: 'number', default: 100 },
+        { name: 'video.rotation', desc: 'Rotation (deg)', type: 'number', default: 0 },
         { name: 'video.opacity', desc: 'Opacity (%)', type: 'number', default: 100 },
         { name: 'video.colorLut', desc: 'Color LUT id', type: 'string', default: '' },
         { name: 'video.cropX', desc: 'Crop X (%)', type: 'number', default: 0 },
         { name: 'video.cropY', desc: 'Crop Y (%)', type: 'number', default: 0 },
         { name: 'video.cropW', desc: 'Crop W (%)', type: 'number', default: 100 },
         { name: 'video.cropH', desc: 'Crop H (%)', type: 'number', default: 100 },
+        { name: 'video.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
+        { name: 'video.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
         { name: 'audio.gainDb', desc: 'Gain (dB)', type: 'number', default: 0 },
         { name: 'audio.mute', desc: 'Mute audio', type: 'boolean', default: false },
+        { name: 'audio.fadeIn', desc: 'Fade in (s)', type: 'number', default: 0 },
+        { name: 'audio.fadeOut', desc: 'Fade out (s)', type: 'number', default: 0 },
         { name: 'subtitle.fontName', desc: 'ASS Fontname (libass)', type: 'string', default: 'Arial' },
         { name: 'subtitle.fontSize', desc: 'Font size (px at PlayRes)', type: 'number', default: 72 },
         { name: 'subtitle.primaryColor', desc: 'Primary fill #RRGGBB', type: 'string', default: '#ffffff' },
@@ -3659,7 +3498,9 @@ export default function App() {
       if (file.type === 'audio') {
         baseItem.audioMix = {
           gainDb: coerceNumber(renderParams.audio.gainDb, 0),
-          mute: Boolean(renderParams.audio.mute)
+          mute: Boolean(renderParams.audio.mute),
+          fadeIn: coerceNumber(renderParams.audio.fadeIn, 0),
+          fadeOut: coerceNumber(renderParams.audio.fadeOut, 0)
         };
       }
 
@@ -3737,210 +3578,15 @@ export default function App() {
     };
   }
 
-  const renderTemplateKeyRank = (key: string) => {
-    const normalized = (key || '').toLowerCase();
-    if (normalized === 'video' || normalized.startsWith('video')) return 0;
-    if (normalized === 'audio' || normalized.startsWith('audio')) return 1;
-    if (normalized === 'subtitle' || normalized.startsWith('subtitle')) return 2;
-    if (normalized === 'image' || normalized.startsWith('image')) return 3;
-    if (normalized === 'text') return 4;
-    return 9;
-  };
-
-  const parseTemplateKey = (key: string) => {
-    const normalized = (key || '').toLowerCase();
-    const match = normalized.match(/^([a-z_]+?)(\d+)?$/i);
-    if (!match) {
-      return { base: normalized, index: Number.MAX_SAFE_INTEGER };
-    }
-    const base = match[1] || normalized;
-    const index = match[2] ? Number(match[2]) : 1;
-    return {
-      base,
-      index: Number.isFinite(index) ? index : Number.MAX_SAFE_INTEGER
-    };
-  };
-
-  const compareTemplateKeys = (left: string, right: string) => {
-    const rankDiff = renderTemplateKeyRank(left) - renderTemplateKeyRank(right);
-    if (rankDiff !== 0) return rankDiff;
-    const l = parseTemplateKey(left);
-    const r = parseTemplateKey(right);
-    if (l.base !== r.base) return l.base.localeCompare(r.base);
-    if (l.index !== r.index) return l.index - r.index;
-    return left.localeCompare(right);
-  };
-
-  const sortRecordByTemplateKey = <T,>(record: Record<string, T> | undefined) => {
-    if (!record || typeof record !== 'object') return record;
-    return Object.keys(record)
-      .sort(compareTemplateKeys)
-      .reduce((acc, key) => {
-        acc[key] = record[key];
-        return acc;
-      }, {} as Record<string, T>);
-  };
-
   const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 => {
-    const normalizedInputsMap = Object.keys(config.inputsMap ?? {})
-      .sort(compareTemplateKeys)
-      .reduce((acc, key) => {
+    return {
+      ...config,
+      inputsMap: Object.keys(config.inputsMap).reduce((acc, key) => {
         acc[key] = '';
         return acc;
-      }, {} as Record<string, string>);
-    const normalizedTrackLabels = sortRecordByTemplateKey(config.timeline?.trackLabels);
-    const normalizedItems = [...(config.items ?? [])].sort((a, b) => {
-      const aRef = (a.source?.ref ?? '').trim();
-      const bRef = (b.source?.ref ?? '').trim();
-      const aHasRef = aRef.length > 0;
-      const bHasRef = bRef.length > 0;
-      if (aHasRef !== bHasRef) return aHasRef ? -1 : 1;
-      if (aHasRef && bHasRef) {
-        const refCmp = compareTemplateKeys(aRef, bRef);
-        if (refCmp !== 0) return refCmp;
-      }
-      const typeCmp = compareTemplateKeys(a.type, b.type);
-      if (typeCmp !== 0) return typeCmp;
-      return String(a.id ?? '').localeCompare(String(b.id ?? ''));
-    });
-
-    return {
-      ...config,
-      timeline: {
-        ...config.timeline,
-        ...(normalizedTrackLabels ? { trackLabels: normalizedTrackLabels } : {})
-      },
-      inputsMap: normalizedInputsMap,
-      items: normalizedItems
+      }, {} as Record<string, string>)
     };
   };
-
-  // For comparison only: ignore layer noise when a type has only one item.
-  // In that case, changing layer value usually has no visual impact.
-  const normalizeTemplateForComparison = (config: RenderConfigV2): RenderConfigV2 => {
-    const typeCounts = (config.items ?? []).reduce((acc, item) => {
-      const key = String(item.type || '');
-      acc[key] = (acc[key] ?? 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-
-    const items = (config.items ?? []).map(item => {
-      const typeKey = String(item.type || '');
-      if ((typeCounts[typeKey] ?? 0) <= 1 && item.layer !== undefined) {
-        const { layer: _layer, ...rest } = item;
-        return rest as RenderConfigV2['items'][number];
-      }
-      return item;
-    });
-
-    return {
-      ...config,
-      items
-    };
-  };
-
-  const buildDefaultRenderTemplateConfig = React.useCallback((): RenderConfigV2 => {
-    const files = runPipelineProject?.files ?? [];
-    const firstVideo = files.find(file => file.type === 'video' && file.relativePath);
-    const firstAudio = files.find(file => file.type === 'audio' && file.relativePath);
-    const firstSubtitle = files.find(file => file.type === 'subtitle' && file.relativePath);
-    const inputsMap: Record<string, string> = {};
-    const items: RenderConfigV2['items'] = [];
-    const trackLabels: Record<string, string> = {};
-
-    if (firstVideo?.relativePath) {
-      inputsMap.video = firstVideo.relativePath;
-      trackLabels.video = firstVideo.name || 'video';
-      items.push({
-        id: 'video-1',
-        type: 'video',
-        source: { ref: 'video' },
-        timeline: { start: 0 },
-        layer: 10,
-        transform: {
-          x: coerceNumber(DEFAULT_RENDER_PARAMS.video.positionX, 50),
-          y: coerceNumber(DEFAULT_RENDER_PARAMS.video.positionY, 50),
-          scale: (coerceNumber(DEFAULT_RENDER_PARAMS.video.scale, 100) ?? 100) / 100,
-          rotation: coerceNumber(DEFAULT_RENDER_PARAMS.video.rotation, 0),
-          opacity: coerceNumber(DEFAULT_RENDER_PARAMS.video.opacity, 100),
-          fit: DEFAULT_RENDER_PARAMS.video.fit as 'contain' | 'cover' | 'stretch',
-          crop: {
-            x: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropX, 0),
-            y: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropY, 0),
-            w: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropW, 100),
-            h: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropH, 100)
-          }
-        }
-      });
-    }
-
-    if (firstAudio?.relativePath) {
-      inputsMap.audio = firstAudio.relativePath;
-      trackLabels.audio = firstAudio.name || 'audio';
-      items.push({
-        id: 'audio-1',
-        type: 'audio',
-        source: { ref: 'audio' },
-        timeline: { start: 0 },
-        layer: 0,
-        audioMix: {
-          gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.audio.gainDb, 0),
-          mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute)
-        }
-      });
-    }
-
-    if (firstSubtitle?.relativePath) {
-      inputsMap.subtitle = firstSubtitle.relativePath;
-      trackLabels.subtitle = firstSubtitle.name || 'subtitle';
-      items.push({
-        id: 'subtitle-1',
-        type: 'subtitle',
-        source: { ref: 'subtitle' },
-        timeline: { start: 0 },
-        layer: 0,
-        subtitleStyle: {
-          fontName: DEFAULT_RENDER_PARAMS.subtitle.fontName || 'Arial',
-          fontSize: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.fontSize, 48),
-          primaryColor: DEFAULT_RENDER_PARAMS.subtitle.primaryColor,
-          outlineColor: DEFAULT_RENDER_PARAMS.subtitle.outlineColor,
-          opacity: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.opacity, 100),
-          bold: DEFAULT_RENDER_PARAMS.subtitle.bold === '1',
-          italic: DEFAULT_RENDER_PARAMS.subtitle.italic === '1',
-          spacing: 0,
-          outline: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.outline, 2),
-          shadow: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.shadow, 2),
-          alignment: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.alignment, 2),
-          marginL: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.marginL, 30),
-          marginR: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.marginR, 30),
-          marginV: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.marginV, 36),
-          wrapStyle: 0,
-          positionMode: DEFAULT_RENDER_PARAMS.subtitle.positionMode,
-          positionX: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.positionX, 50),
-          positionY: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.positionY, 50)
-        }
-      });
-    }
-
-    return {
-      version: '2',
-      timeline: {
-        resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
-        framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
-        trackLabels,
-        imageMatchDuration: {}
-      },
-      renderOptions: {
-        codec: 'h264',
-        preset: 'fast',
-        crf: 21,
-        gop: 0,
-        tune: ''
-      },
-      inputsMap,
-      items
-    };
-  }, [runPipelineProject?.files, DEFAULT_RENDER_PARAMS]);
 
   const openRenderTemplateEditor = (config: RenderConfigV2, name = '') => {
     setRenderTemplateNameDraft(name);
@@ -4166,25 +3812,9 @@ export default function App() {
     if (runPipelineRenderTemplateId === 'custom') return false;
     const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
     if (!template || !renderConfigPreview) return false;
-    const normalizedCurrent = normalizeTemplateForComparison(buildTemplateFromConfig(renderConfigPreview));
-    const normalizedTemplate = normalizeTemplateForComparison(buildTemplateFromConfig(template.config));
-    return JSON.stringify(normalizedCurrent) !== JSON.stringify(normalizedTemplate);
+    const normalized = buildTemplateFromConfig(renderConfigPreview);
+    return JSON.stringify(normalized) !== JSON.stringify(template.config);
   }, [runPipelineRenderTemplateId, renderTemplates, renderConfigPreview]);
-  const renderTemplateSelected = renderTemplates.find(t => t.id === runPipelineRenderTemplateId) ?? null;
-  const renderTemplateDiffCurrentConfig = React.useMemo(() => {
-    if (!renderConfigPreview) return null;
-    return normalizeTemplateForComparison(buildTemplateFromConfig(renderConfigPreview));
-  }, [renderConfigPreview]);
-  const renderTemplateDiffBaselineConfig = React.useMemo(() => {
-    if (runPipelineRenderTemplateId === 'custom') {
-      return normalizeTemplateForComparison(buildTemplateFromConfig(buildDefaultRenderTemplateConfig()));
-    }
-    if (!renderTemplateSelected) return null;
-    return normalizeTemplateForComparison(buildTemplateFromConfig(renderTemplateSelected.config));
-  }, [runPipelineRenderTemplateId, renderTemplateSelected, buildDefaultRenderTemplateConfig]);
-  const renderTemplateDiffBaselineLabel = runPipelineRenderTemplateId === 'custom'
-    ? 'Default'
-    : (renderTemplateSelected?.name ?? 'Template');
 
   const saveRenderStudioParamPreset = async (mode: 'save' | 'saveAs') => {
     const defaultName = getDefaultParamPresetName('Render', 'render');
@@ -4863,7 +4493,7 @@ export default function App() {
 
   const openRenderStudioTimelineContextMenu = (
     event: React.MouseEvent,
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number }
+    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number }
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -4900,25 +4530,9 @@ export default function App() {
     }
   };
 
-  const removeRenderStudioTrackFromTimeline = (track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number }) => {
+  const removeRenderStudioTrackFromTimeline = (track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect'; id?: string; index?: number }) => {
     if (!track) return;
     if (!runPipelineProject) return;
-    if (track.type === 'text') {
-      setRenderTextTrackEnabled(false);
-      setRenderParams(prev => ({
-        ...prev,
-        text: {
-          ...prev.text,
-          singleText: '',
-          singleTextStart: '0',
-          singleTextEnd: '',
-          singleTextMatchDuration: '0'
-        }
-      }));
-      setRenderStudioFocus('timeline');
-      setRenderStudioItemType(null);
-      return;
-    }
     const targetId =
       track.type === 'image'
         ? track.id
@@ -4953,19 +4567,6 @@ export default function App() {
     setRenderStudioItemType(null);
   };
 
-  const resolveRenderStudioTimelineTrackFile = (
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number } | null
-  ): VaultFile | null => {
-    if (!track || !runPipelineProject) return null;
-    let targetId: string | null = null;
-    if (track.type === 'video') targetId = renderVideoId;
-    else if (track.type === 'audio') targetId = renderAudioId;
-    else if (track.type === 'subtitle') targetId = renderSubtitleId;
-    else if (track.type === 'image') targetId = track.id ?? null;
-    if (!targetId) return null;
-    return runPipelineProject.files.find(file => file.id === targetId) ?? null;
-  };
-
   const previewRenderStudioMediaBinFile = (file: VaultFile) => {
     if (!file || !file.id) return;
     if (file.type === 'video') {
@@ -4987,14 +4588,6 @@ export default function App() {
       return;
     }
     setRenderStudioFocus('item');
-  };
-
-  const previewRenderStudioTimelineTrack = (
-    track: { type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect'; id?: string; index?: number } | null
-  ) => {
-    const file = resolveRenderStudioTimelineTrackFile(track);
-    if (!file) return;
-    previewRenderStudioMediaBinFile(file);
   };
 
   const performDeleteVaultFile = async (file: VaultFile) => {
@@ -5113,25 +4706,11 @@ export default function App() {
             style={{ top: renderStudioTimelineContextMenu.y, left: renderStudioTimelineContextMenu.x }}
             onClick={(event) => event.stopPropagation()}
           >
-            {resolveRenderStudioTimelineTrackFile(renderStudioTimelineContextMenu.track) && (
-              <button
-                className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                onClick={() => {
-                  previewRenderStudioTimelineTrack(renderStudioTimelineContextMenu.track);
-                  closeRenderStudioTimelineContextMenu();
-                }}
-              >
-                <span className="flex items-center gap-2">
-                  <MousePointer2 size={12} />
-                  Preview
-                </span>
-              </button>
-            )}
             <button
               className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
               onClick={() => {
                 removeRenderStudioTrackFromTimeline(renderStudioTimelineContextMenu.track as {
-                  type: 'video' | 'audio' | 'subtitle' | 'image' | 'text' | 'effect';
+                  type: 'video' | 'audio' | 'subtitle' | 'image' | 'effect';
                   id?: string;
                   index?: number;
                 });
@@ -5312,152 +4891,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (newJobDraftLoadedRef.current) return;
-    newJobDraftLoadedRef.current = true;
-    try {
-      const raw = window.localStorage.getItem(NEW_JOB_POPUP_DRAFT_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as NewJobPopupDraft;
-      if (!parsed || parsed.version !== 1) return;
-      newJobDraftPendingRef.current = parsed;
-      newJobDraftAppliedRef.current = false;
-    } catch {
-      newJobDraftPendingRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!showRunPipeline) {
-      newJobDraftAppliedRef.current = false;
-      return;
-    }
-    if (newJobDraftAppliedRef.current) return;
-    const draft = newJobDraftPendingRef.current;
-    if (!draft) {
-      newJobDraftAppliedRef.current = true;
-      return;
-    }
-
-    if (draft.pipelineId && pipelineLibrary.some(item => item.id === draft.pipelineId) && runPipelineId !== draft.pipelineId) {
-      setRunPipelineId(draft.pipelineId);
-    }
-
-    const resolvedProject = (
-      (draft.projectId && vaultFolders.find(folder => folder.id === draft.projectId))
-      || (draft.projectName
-        ? vaultFolders.find(folder => folder.name.toLowerCase() === String(draft.projectName).trim().toLowerCase())
-        : undefined)
-      || null
-    );
-    if (resolvedProject && runPipelineProjectId !== resolvedProject.id) {
-      setRunPipelineProjectId(resolvedProject.id);
-    }
-    if (draft.projectName && runPipelineHasDownload && downloadProjectName !== draft.projectName) {
-      setDownloadProjectName(draft.projectName);
-    }
-
-    if (draft.runPipelineRenderTemplateId) {
-      const templateId = draft.runPipelineRenderTemplateId;
-      if (templateId === 'custom' || renderTemplates.some(template => template.id === templateId)) {
-        if (runPipelineRenderTemplateId !== templateId) {
-          setRunPipelineRenderTemplateId(templateId);
-        }
-      }
-    }
-
-    if (draft.runPipelineTaskTemplate && Object.keys(draft.runPipelineTaskTemplate).length > 0) {
-      setRunPipelineTaskTemplate(prev => ({ ...prev, ...draft.runPipelineTaskTemplate }));
-    }
-
-    if (draft.renderTemplateApplyMapById && Object.keys(draft.renderTemplateApplyMapById).length > 0) {
-      setRenderTemplateApplyMapById(prev => ({ ...prev, ...draft.renderTemplateApplyMapById }));
-    }
-
-    const targetProject = resolvedProject ?? runPipelineProject ?? null;
-    const validFileIds = new Set((targetProject?.files ?? []).map(file => file.id));
-    const projectReadyForDraft = Boolean(targetProject) || (!vaultLoading && hasLoadedOnce);
-
-    if (targetProject) {
-      if (draft.runPipelineInputId && validFileIds.has(draft.runPipelineInputId) && runPipelineInputId !== draft.runPipelineInputId) {
-        setRunPipelineInputId(draft.runPipelineInputId);
-      }
-
-      if (Array.isArray(draft.renderInputFileIds)) {
-        const filtered = draft.renderInputFileIds.filter(id => validFileIds.has(id));
-        if (filtered.length > 0) {
-          setRenderInputFileIds(filtered);
-        }
-      }
-
-      if (draft.renderTemplateApplyMap && Object.keys(draft.renderTemplateApplyMap).length > 0) {
-        const filteredMap = Object.fromEntries(
-          Object.entries(draft.renderTemplateApplyMap).filter(([, fileId]) => validFileIds.has(fileId))
-        );
-        if (Object.keys(filteredMap).length > 0) {
-          setRenderTemplateApplyMap(filteredMap);
-        }
-      }
-    }
-
-    if (projectReadyForDraft) {
-      newJobDraftPendingRef.current = null;
-      newJobDraftAppliedRef.current = true;
-    }
-  }, [
-    showRunPipeline,
-    pipelineLibrary,
-    runPipelineId,
-    vaultFolders,
-    runPipelineProjectId,
-    runPipelineProject,
-    runPipelineHasDownload,
-    downloadProjectName,
-    runPipelineRenderTemplateId,
-    renderTemplates,
-    runPipelineInputId,
-    vaultLoading,
-    hasLoadedOnce
-  ]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (!showRunPipeline) return;
-    const draft: NewJobPopupDraft = {
-      version: 1,
-      projectId: runPipelineProjectId ?? null,
-      projectName: runPipelineHasDownload
-        ? (downloadProjectName || runPipelineProject?.name || null)
-        : (runPipelineProject?.name ?? null),
-      pipelineId: runPipelineId ?? null,
-      runPipelineRenderTemplateId,
-      runPipelineTaskTemplate,
-      runPipelineInputId: runPipelineInputId ?? null,
-      renderInputFileIds,
-      renderTemplateApplyMap,
-      renderTemplateApplyMapById
-    };
-    try {
-      window.localStorage.setItem(NEW_JOB_POPUP_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-    } catch {
-      // ignore storage errors
-    }
-  }, [
-    showRunPipeline,
-    runPipelineProjectId,
-    runPipelineProject?.name,
-    runPipelineHasDownload,
-    downloadProjectName,
-    runPipelineId,
-    runPipelineRenderTemplateId,
-    runPipelineTaskTemplate,
-    runPipelineInputId,
-    renderInputFileIds,
-    renderTemplateApplyMap,
-    renderTemplateApplyMapById
-  ]);
-
-  useEffect(() => {
     if (!authUser) return;
     loadJobs();
     const interval = window.setInterval(loadJobs, 3000);
@@ -5547,17 +4980,11 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedFolder) return;
-    const currentInput = selectedFolder.files.find(file => file.id === runPipelineInputId);
-    const currentInputValid = Boolean(
-      currentInput
-      && (runPipelineHasTts ? currentInput.type === 'subtitle' : (currentInput.type === 'video' || currentInput.type === 'audio'))
-    );
-    if (currentInputValid) return;
     const firstInput = runPipelineHasTts
       ? selectedFolder.files.find(file => file.type === 'subtitle')
       : selectedFolder.files.find(file => file.type === 'video' || file.type === 'audio');
     setRunPipelineInputId(firstInput?.id ?? null);
-  }, [selectedFolder?.id, runPipelineHasTts, runPipelineInputId]);
+  }, [selectedFolder?.id, runPipelineHasTts]);
 
   useEffect(() => {
     let active = true;
@@ -5576,23 +5003,7 @@ export default function App() {
         showToast('Không thể tải render templates.', 'error');
       }
     };
-    const loadTaskTemplates = async () => {
-      if (!authUser) return;
-      try {
-        const response = await fetch('/api/task-templates');
-        if (!response.ok) throw new Error('Unable to load task templates');
-        const data = await response.json();
-        if (!active) return;
-        if (Array.isArray(data?.templates)) {
-          setTaskTemplates(data.templates as TaskTemplate[]);
-        }
-      } catch {
-        if (!active) return;
-        showToast('Không thể tải task templates.', 'error');
-      }
-    };
     loadRenderTemplates();
-    loadTaskTemplates();
     return () => {
       active = false;
     };
@@ -5600,17 +5011,11 @@ export default function App() {
 
   useEffect(() => {
     if (!runPipelineProject) return;
-    const currentInput = runPipelineProject.files.find(file => file.id === runPipelineInputId);
-    const currentInputValid = Boolean(
-      currentInput
-      && (runPipelineHasTts ? currentInput.type === 'subtitle' : (currentInput.type === 'video' || currentInput.type === 'audio'))
-    );
-    if (currentInputValid) return;
     const firstInput = runPipelineHasTts
       ? runPipelineProject.files.find(file => file.type === 'subtitle')
       : runPipelineProject.files.find(file => file.type === 'video' || file.type === 'audio');
     setRunPipelineInputId(firstInput?.id ?? null);
-  }, [runPipelineProject?.id, runPipelineHasTts, runPipelineInputId]);
+  }, [runPipelineProject?.id, runPipelineHasTts]);
 
   useEffect(() => {
     if (!runPipelineProject || !runPipelineHasRender) return;
@@ -5872,7 +5277,9 @@ export default function App() {
         audio: {
           ...prev.audio,
           gainDb: String(firstAudioItem.audioMix?.gainDb ?? prev.audio.gainDb),
-          mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute)
+          mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute),
+          fadeIn: String(firstAudioItem.audioMix?.fadeIn ?? prev.audio.fadeIn),
+          fadeOut: String(firstAudioItem.audioMix?.fadeOut ?? prev.audio.fadeOut)
         }
       }));
     }
@@ -6194,7 +5601,6 @@ export default function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load vault';
       setVaultError(message);
-      setHasLoadedOnce(true);
     } finally {
       setVaultLoading(false);
     }
@@ -6403,9 +5809,17 @@ export default function App() {
             playhead: renderPlayheadSeconds
           },
           video: {
+            trimStart: coerceNumber(renderParams.video.trimStart, 0),
+            trimEnd: coerceNumber(renderParams.video.trimEnd, 0),
             speed: coerceNumber(renderParams.video.speed, 1),
             volume: coerceNumber(renderParams.video.volume, 100),
+            fit: renderParams.video.fit,
+            position: {
+              x: coerceNumber(renderParams.video.positionX, 50),
+              y: coerceNumber(renderParams.video.positionY, 50)
+            },
             scale: coerceNumber(renderParams.video.scale, 1),
+            rotation: coerceNumber(renderParams.video.rotation, 0),
             opacity: coerceNumber(renderParams.video.opacity, 100),
             colorLut: renderParams.video.colorLut || null,
             crop: {
@@ -6413,11 +5827,15 @@ export default function App() {
               y: coerceNumber(renderParams.video.cropY, 0),
               w: coerceNumber(renderParams.video.cropW, 100),
               h: coerceNumber(renderParams.video.cropH, 100)
-            }
+            },
+            fadeIn: coerceNumber(renderParams.video.fadeIn, 0),
+            fadeOut: coerceNumber(renderParams.video.fadeOut, 0)
           },
           audio: {
             gainDb: coerceNumber(renderParams.audio.gainDb, 0),
-            mute: Boolean(renderParams.audio.mute)
+            mute: Boolean(renderParams.audio.mute),
+            fadeIn: coerceNumber(renderParams.audio.fadeIn, 0),
+            fadeOut: coerceNumber(renderParams.audio.fadeOut, 0)
           },
           subtitle: {
             playResX,
@@ -6750,9 +6168,6 @@ export default function App() {
     isRenderTemplateDirty,
     renderConfigV2Override,
     setRenderConfigV2Override,
-    renderTemplateDiffCurrentConfig,
-    renderTemplateDiffBaselineConfig,
-    renderTemplateDiffBaselineLabel,
     setImportPopupOpen,
     subtitleFontOptions,
     subtitleFontLoading,
@@ -6763,13 +6178,6 @@ export default function App() {
   };
 
   const selectedRenderTemplate = renderTemplates.find(t => t.id === runPipelineRenderTemplateId) ?? null;
-  const isCustomRenderTemplate = !selectedRenderTemplate || runPipelineRenderTemplateId === 'custom';
-  const selectedDownloadTemplate = getSelectedTaskTemplate('download');
-  const selectedUvrTemplate = getSelectedTaskTemplate('uvr');
-  const selectedTtsTemplate = getSelectedTaskTemplate('tts');
-  const isDownloadTemplateDirty = isTaskTemplateDirty('download');
-  const isUvrTemplateDirty = isTaskTemplateDirty('uvr');
-  const isTtsTemplateDirty = isTaskTemplateDirty('tts');
   const renderTemplatePlaceholders = React.useMemo(() => {
     if (!selectedRenderTemplate || runPipelineRenderTemplateId === 'custom') return [];
     const keys = Object.keys(selectedRenderTemplate.config.inputsMap ?? {});
@@ -6837,18 +6245,6 @@ export default function App() {
       effectCounts
     };
   }, [selectedRenderTemplate, runPipelineRenderTemplateId]);
-  const isNewJobProjectLoading = React.useMemo(() => {
-    if (!showRunPipeline) return false;
-    if (vaultLoading || runPipelineLoading) return true;
-    if (!hasLoadedOnce && vaultFolders.length === 0) return true;
-    return false;
-  }, [
-    showRunPipeline,
-    vaultLoading,
-    runPipelineLoading,
-    hasLoadedOnce,
-    vaultFolders.length
-  ]);
 
   if (!authChecked) {
     return (
@@ -8839,7 +8235,7 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-zinc-500 uppercase tracking-widest">New Job</div>
                   <div className="flex items-center gap-2">
-                    {!isNewJobProjectLoading && runPipelineHasRender && (
+                    {runPipelineHasRender && (
                       <button
                         onClick={() => setRenderStudioOpen(true)}
                         disabled={!runPipelineProject}
@@ -8848,15 +8244,13 @@ export default function App() {
                         Preview
                       </button>
                     )}
-                    {!isNewJobProjectLoading && (
-                      <button
-                        onClick={runPipelineJob}
-                        disabled={runPipelineSubmitting}
-                        className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        {runPipelineSubmitting ? 'Queuing...' : 'Run'}
-                      </button>
-                    )}
+                    <button
+                      onClick={runPipelineJob}
+                      disabled={runPipelineSubmitting}
+                      className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {runPipelineSubmitting ? 'Queuing...' : 'Run'}
+                    </button>
                     <button
                       onClick={() => {
                         setShowRunPipeline(false);
@@ -8869,11 +8263,6 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                {isNewJobProjectLoading && (
-                  <div className="absolute inset-x-0 top-14 bottom-0 z-20 bg-zinc-900/95 rounded-b-2xl flex items-center justify-center">
-                    <div className="text-sm text-zinc-400">Loading project...</div>
-                  </div>
-                )}
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs text-zinc-500 uppercase tracking-widest">
@@ -9182,128 +8571,17 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Render</div>
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2">
                         <select
                           value={runPipelineRenderTemplateId}
                           onChange={e => handleRenderTemplateChange(e.target.value)}
-                          onContextMenu={event => {
-                            if (runPipelineRenderTemplateId === 'custom' || !selectedRenderTemplate) return;
-                            event.preventDefault();
-                            deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                         >
                           <option value="custom">Custom</option>
-                          {renderTemplates.map(template => {
-                            const isSelected = runPipelineRenderTemplateId === template.id;
-                            const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
+                          {renderTemplates.map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          ))}
                         </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (newJobRenderTemplateMenuCloseRef.current) {
-                              window.clearTimeout(newJobRenderTemplateMenuCloseRef.current);
-                              newJobRenderTemplateMenuCloseRef.current = null;
-                            }
-                            setNewJobRenderTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (newJobRenderTemplateMenuCloseRef.current) {
-                              window.clearTimeout(newJobRenderTemplateMenuCloseRef.current);
-                            }
-                            newJobRenderTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setNewJobRenderTemplateMenuOpen(false);
-                              newJobRenderTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setNewJobRenderTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setNewJobRenderTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setNewJobRenderTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {newJobRenderTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setNewJobRenderTemplateMenuOpen(false);
-                                  resetRenderToDefault();
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  isCustomRenderTemplate ? 'rounded-lg' : 'rounded-t-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {!isCustomRenderTemplate && isRenderTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (!selectedRenderTemplate) return;
-                                    setNewJobRenderTemplateMenuOpen(false);
-                                    saveRenderTemplateCurrent(selectedRenderTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {!isCustomRenderTemplate && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setNewJobRenderTemplateMenuOpen(false);
-                                      saveRenderTemplateQuick();
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                  >
-                                    Save As
-                                  </button>
-                                  {isRenderTemplateDirty && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (!selectedRenderTemplate) return;
-                                        setNewJobRenderTemplateMenuOpen(false);
-                                        restoreRenderTemplateCurrent(selectedRenderTemplate);
-                                      }}
-                                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                    >
-                                      Restore
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (!selectedRenderTemplate) return;
-                                      setNewJobRenderTemplateMenuOpen(false);
-                                      deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                  >
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        </div>
                       </div>
                     </div>
                     {renderTemplateSummary && (
@@ -9369,231 +8647,127 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Download</div>
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2">
                         <select
                           value={runPipelineTaskTemplate.download ?? 'custom'}
                           onChange={e => handleTaskTemplateChange('download', e.target.value)}
-                          onContextMenu={event => {
-                            if (!selectedDownloadTemplate) return;
-                            event.preventDefault();
-                            deleteTaskTemplateWithConfirm('download', selectedDownloadTemplate.id, selectedDownloadTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                         >
-                          <option value="custom">{isDownloadTemplateDirty ? '*Custom' : 'Custom'}</option>
-                          {getTaskTemplatesForType('download').map(template => {
-                            const isSelected = runPipelineTaskTemplate.download === template.id;
-                            const label = isSelected && isDownloadTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
+                          <option value="custom">Custom</option>
+                          {getTaskTemplatesForType('download').map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          ))}
                         </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (downloadTemplateMenuCloseRef.current) {
-                              window.clearTimeout(downloadTemplateMenuCloseRef.current);
-                              downloadTemplateMenuCloseRef.current = null;
-                            }
-                            setDownloadTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (downloadTemplateMenuCloseRef.current) {
-                              window.clearTimeout(downloadTemplateMenuCloseRef.current);
-                            }
-                            downloadTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setDownloadTemplateMenuOpen(false);
-                              downloadTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setDownloadTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setDownloadTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setDownloadTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {downloadTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDownloadTemplateMenuOpen(false);
-                                  resetTaskTemplateToDefault('download');
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  selectedDownloadTemplate || isDownloadTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {selectedDownloadTemplate && isDownloadTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    saveTaskTemplateCurrent('download', selectedDownloadTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {(selectedDownloadTemplate || isDownloadTemplateDirty) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    saveTaskTemplate('download');
-                                  }}
-                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    selectedDownloadTemplate ? '' : 'rounded-b-lg'
-                                  }`}
-                                >
-                                  Save As
-                                </button>
-                              )}
-                              {selectedDownloadTemplate && isDownloadTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    restoreTaskTemplateCurrent('download', selectedDownloadTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Restore
-                                </button>
-                              )}
-                              {selectedDownloadTemplate && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    deleteTaskTemplateWithConfirm('download', selectedDownloadTemplate.id, selectedDownloadTemplate.name);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
                       </div>
                     </div>
-                    <>
-                      {SHOW_PARAM_PRESETS && (
-                        hasParamPresets('download') ? (
-                          <div className="flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                              {runPipelineParamPreset.download !== 'custom' && null}
+                    {getSelectedTaskTemplate('download') ? (
+                      <div className="mt-3">
+                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('download'))}
+                      </div>
+                    ) : (
+                      <>
+                        {SHOW_PARAM_PRESETS && (
+                          hasParamPresets('download') ? (
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
+                                {runPipelineParamPreset.download !== 'custom' && null}
+                              </div>
+                              <select
+                                value={runPipelineParamPreset.download ?? 'custom'}
+                                onChange={e => handleParamPresetChange('download', e.target.value)}
+                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                              >
+                                <option value="custom">Manual</option>
+                                {getParamPresetsForType('download').map(preset => (
+                                  <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+                                ))}
+                              </select>
+                              {runPipelineParamPreset.download !== 'custom' && (
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => switchPresetToManual('download')}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      switchPresetToManual('download');
+                                    }
+                                  }}
+                                  title="Switch to manual and load these params"
+                                  className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
+                                >
+                                  <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
+                                    {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
+                                      <div key={key} className="flex items-center justify-between gap-2">
+                                        <span className="font-mono text-zinc-500">{key}</span>
+                                        <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
+                          ) : (
+                            <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
+                          )
+                        )}
+                        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
+                          <div className="mt-3 grid grid-cols-2 gap-2">
                             <select
-                              value={runPipelineParamPreset.download ?? 'custom'}
-                              onChange={e => handleParamPresetChange('download', e.target.value)}
+                              value={downloadMode}
+                              onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
                               className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                             >
-                              <option value="custom">Manual</option>
-                              {getParamPresetsForType('download').map(preset => (
-                                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                              ))}
+                              <option value="all">Download: All (subs + audio + video)</option>
+                              <option value="subs">Download: Subtitles only</option>
+                              <option value="media">Download: Audio + Video only</option>
                             </select>
-                            {runPipelineParamPreset.download !== 'custom' && (
-                              <div
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => switchPresetToManual('download')}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    switchPresetToManual('download');
-                                  }
-                                }}
-                                title="Switch to manual and load these params"
-                                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                              >
-                                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                                  {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
-                                    <div key={key} className="flex items-center justify-between gap-2">
-                                      <span className="font-mono text-zinc-500">{key}</span>
-                                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                    </div>
-                                  ))}
-                                </div>
+                            <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
+                              <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
+                              <input
+                                type="file"
+                                accept=".txt"
+                                onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
+                                className="hidden"
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
+                              <input
+                                type="checkbox"
+                                checked={downloadNoPlaylist}
+                                onChange={e => setDownloadNoPlaylist(e.target.checked)}
+                                className="accent-lime-400"
+                              />
+                              No playlist
+                            </label>
+                            {downloadMode !== 'media' ? (
+                              <>
+                                <input
+                                  value={downloadSubtitleLang}
+                                  onChange={e => setDownloadSubtitleLang(e.target.value)}
+                                  list="ytdlp-sub-langs"
+                                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+                                  placeholder="Subtitle language (e.g. ai-zh)"
+                                  title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
+                                />
+                                {downloadAnalyzeListSubs.length > 0 && (
+                                  <datalist id="ytdlp-sub-langs">
+                                    {downloadAnalyzeListSubs.map((entry: any) => (
+                                      <option key={entry.lang} value={entry.lang} />
+                                    ))}
+                                  </datalist>
+                                )}
+                              </>
+                            ) : (
+                              <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
+                                Subtitles disabled for media-only.
                               </div>
                             )}
                           </div>
-                        ) : (
-                          <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
-                        )
-                      )}
-                      {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <select
-                            value={downloadMode}
-                            onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                          >
-                            <option value="all">Download: All (subs + audio + video)</option>
-                            <option value="subs">Download: Subtitles only</option>
-                            <option value="media">Download: Audio + Video only</option>
-                          </select>
-                          <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
-                            <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
-                            <input
-                              type="file"
-                              accept=".txt"
-                              onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
-                              className="hidden"
-                            />
-                          </label>
-                          <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
-                            <input
-                              type="checkbox"
-                              checked={downloadNoPlaylist}
-                              onChange={e => setDownloadNoPlaylist(e.target.checked)}
-                              className="accent-lime-400"
-                            />
-                            No playlist
-                          </label>
-                          {downloadMode !== 'media' ? (
-                            <>
-                              <input
-                                value={downloadSubtitleLang}
-                                onChange={e => setDownloadSubtitleLang(e.target.value)}
-                                list="ytdlp-sub-langs"
-                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                                placeholder="Subtitle language (e.g. ai-zh)"
-                                title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
-                              />
-                              {downloadAnalyzeListSubs.length > 0 && (
-                                <datalist id="ytdlp-sub-langs">
-                                  {downloadAnalyzeListSubs.map((entry: any) => (
-                                    <option key={entry.lang} value={entry.lang} />
-                                  ))}
-                                </datalist>
-                              )}
-                            </>
-                          ) : (
-                            <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
-                              Subtitles disabled for media-only.
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -9602,130 +8776,25 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: VR (UVR)</div>
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2">
                         <select
                           value={runPipelineTaskTemplate.uvr ?? 'custom'}
                           onChange={e => handleTaskTemplateChange('uvr', e.target.value)}
-                          onContextMenu={event => {
-                            if (!selectedUvrTemplate) return;
-                            event.preventDefault();
-                            deleteTaskTemplateWithConfirm('uvr', selectedUvrTemplate.id, selectedUvrTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                         >
-                          <option value="custom">{isUvrTemplateDirty ? '*Custom' : 'Custom'}</option>
-                          {getTaskTemplatesForType('uvr').map(template => {
-                            const isSelected = runPipelineTaskTemplate.uvr === template.id;
-                            const label = isSelected && isUvrTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
+                          <option value="custom">Custom</option>
+                          {getTaskTemplatesForType('uvr').map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          ))}
                         </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (uvrTemplateMenuCloseRef.current) {
-                              window.clearTimeout(uvrTemplateMenuCloseRef.current);
-                              uvrTemplateMenuCloseRef.current = null;
-                            }
-                            setUvrTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (uvrTemplateMenuCloseRef.current) {
-                              window.clearTimeout(uvrTemplateMenuCloseRef.current);
-                            }
-                            uvrTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setUvrTemplateMenuOpen(false);
-                              uvrTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setUvrTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setUvrTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setUvrTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {uvrTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setUvrTemplateMenuOpen(false);
-                                  resetTaskTemplateToDefault('uvr');
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  selectedUvrTemplate || isUvrTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {selectedUvrTemplate && isUvrTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    saveTaskTemplateCurrent('uvr', selectedUvrTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {(selectedUvrTemplate || isUvrTemplateDirty) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    saveTaskTemplate('uvr');
-                                  }}
-                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    selectedUvrTemplate ? '' : 'rounded-b-lg'
-                                  }`}
-                                >
-                                  Save As
-                                </button>
-                              )}
-                              {selectedUvrTemplate && isUvrTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    restoreTaskTemplateCurrent('uvr', selectedUvrTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Restore
-                                </button>
-                              )}
-                              {selectedUvrTemplate && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    deleteTaskTemplateWithConfirm('uvr', selectedUvrTemplate.id, selectedUvrTemplate.name);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
                       </div>
                     </div>
-                    <>
+                    {getSelectedTaskTemplate('uvr') ? (
+                      <div className="mt-3">
+                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('uvr'))}
+                      </div>
+                    ) : (
+                      <>
                         {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
                           <div className="mb-3 flex flex-col gap-2">
                             <div className="flex items-center justify-between">
@@ -9838,7 +8907,8 @@ export default function App() {
                             </div>
                           </div>
                         )}
-                    </>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -9847,130 +8917,25 @@ export default function App() {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: TTS</div>
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2">
                         <select
                           value={runPipelineTaskTemplate.tts ?? 'custom'}
                           onChange={e => handleTaskTemplateChange('tts', e.target.value)}
-                          onContextMenu={event => {
-                            if (!selectedTtsTemplate) return;
-                            event.preventDefault();
-                            deleteTaskTemplateWithConfirm('tts', selectedTtsTemplate.id, selectedTtsTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                         >
-                          <option value="custom">{isTtsTemplateDirty ? '*Custom' : 'Custom'}</option>
-                          {getTaskTemplatesForType('tts').map(template => {
-                            const isSelected = runPipelineTaskTemplate.tts === template.id;
-                            const label = isSelected && isTtsTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
+                          <option value="custom">Custom</option>
+                          {getTaskTemplatesForType('tts').map(template => (
+                            <option key={template.id} value={template.id}>{template.name}</option>
+                          ))}
                         </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (ttsTemplateMenuCloseRef.current) {
-                              window.clearTimeout(ttsTemplateMenuCloseRef.current);
-                              ttsTemplateMenuCloseRef.current = null;
-                            }
-                            setTtsTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (ttsTemplateMenuCloseRef.current) {
-                              window.clearTimeout(ttsTemplateMenuCloseRef.current);
-                            }
-                            ttsTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setTtsTemplateMenuOpen(false);
-                              ttsTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setTtsTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setTtsTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setTtsTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {ttsTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTtsTemplateMenuOpen(false);
-                                  resetTaskTemplateToDefault('tts');
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  selectedTtsTemplate || isTtsTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {selectedTtsTemplate && isTtsTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    saveTaskTemplateCurrent('tts', selectedTtsTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {(selectedTtsTemplate || isTtsTemplateDirty) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    saveTaskTemplate('tts');
-                                  }}
-                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    selectedTtsTemplate ? '' : 'rounded-b-lg'
-                                  }`}
-                                >
-                                  Save As
-                                </button>
-                              )}
-                              {selectedTtsTemplate && isTtsTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    restoreTaskTemplateCurrent('tts', selectedTtsTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Restore
-                                </button>
-                              )}
-                              {selectedTtsTemplate && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    deleteTaskTemplateWithConfirm('tts', selectedTtsTemplate.id, selectedTtsTemplate.name);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
                       </div>
                     </div>
-                    <>
+                    {getSelectedTaskTemplate('tts') ? (
+                      <div className="mt-3">
+                        {renderTaskTemplateParamsSummary(getSelectedTaskTemplate('tts'))}
+                      </div>
+                    ) : (
+                      <>
                         {SHOW_PARAM_PRESETS && hasParamPresets('tts') && (
                           <div className="mb-3 flex flex-col gap-2">
                             <div className="flex items-center justify-between">
@@ -10144,7 +9109,8 @@ export default function App() {
                             )}
                           </div>
                         )}
-                    </>
+                      </>
+                    )}
                   </div>
                 )}
 

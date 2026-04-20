@@ -136,6 +136,7 @@ const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
 const AUTH_SESSION_TTL_MS = Math.max(1, AUTH_SESSION_TTL_DAYS) * 24 * 60 * 60 * 1000;
+const PREVIEW_SEEK_WINDOW_SECONDS = 1;
 
 const app = express();
 const PORT = Number(process.env.VAULT_PORT ?? 3001);
@@ -407,16 +408,15 @@ if (!hasParamPresetId) {
   db.run('DROP TABLE IF EXISTS pipeline_defaults');
   db.run('ALTER TABLE param_presets_new RENAME TO param_presets');
 } else {
-  db.run(
-    `CREATE TABLE IF NOT EXISTS param_presets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_type TEXT NOT NULL,
-        params_json TEXT NOT NULL,
-        label TEXT,
-        updated_at TEXT NOT NULL
-      )`
-  );
-}
+db.run(
+  `CREATE TABLE IF NOT EXISTS param_presets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_type TEXT NOT NULL,
+      params_json TEXT NOT NULL,
+      label TEXT,
+      updated_at TEXT NOT NULL
+    )`
+);
 
 db.run(
   `CREATE TABLE IF NOT EXISTS render_templates (
@@ -426,25 +426,10 @@ db.run(
       updated_at TEXT NOT NULL
     )`
 );
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS task_templates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      task_type TEXT NOT NULL,
-      params_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`
-);
-
-try {
-  db.run('CREATE INDEX IF NOT EXISTS idx_param_presets_task_type ON param_presets (task_type)');
-} catch {
-  // ignore
 }
 
 try {
-  db.run('CREATE INDEX IF NOT EXISTS idx_task_templates_task_type ON task_templates (task_type)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_param_presets_task_type ON param_presets (task_type)');
 } catch {
   // ignore
 }
@@ -911,9 +896,6 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
 };
 
 const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
-const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = false;
-const BLUR_FEATHER_MAX = 10;
-const STATIC_MASK_LOOP_FILTER = 'loop=loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB';
 
 const normalizeFfmpegColor = (value: string) => {
   const trimmed = value.trim();
@@ -923,76 +905,24 @@ const normalizeFfmpegColor = (value: string) => {
   return trimmed;
 };
 
-const ensureCircleMaskPgm = async (tmpDir: string) => {
-  const size = 256;
-  const maskPath = path.join(tmpDir, `circle-mask-${size}.pgm`);
-  try {
-    await fs.access(maskPath);
-    return maskPath;
-  } catch {
-    const radius = size / 2;
-    const cx = (size - 1) / 2;
-    const cy = (size - 1) / 2;
-    const pixels = Buffer.alloc(size * size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const dx = x - cx;
-        const dy = y - cy;
-        const inside = (dx * dx + dy * dy) <= (radius * radius);
-        pixels[y * size + x] = inside ? 255 : 0;
-      }
-    }
-    const header = Buffer.from(`P5\n${size} ${size}\n255\n`, 'ascii');
-    await fs.writeFile(maskPath, Buffer.concat([header, pixels]));
-    return maskPath;
-  }
-};
-
-const ensureFeatherMaskPgm = async (tmpDir: string, featherPct: number) => {
-  const f = Math.max(0, Math.min(BLUR_FEATHER_MAX, Math.round(featherPct)));
-  const size = 256;
-  const maskPath = path.join(tmpDir, `feather-mask-${f}-${size}.pgm`);
-  try {
-    await fs.access(maskPath);
-    return maskPath;
-  } catch {
-    const edge = f <= 0 ? 0 : (f / 100) * (size / 2);
-    const pixels = Buffer.alloc(size * size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const d = Math.min(x, y, size - 1 - x, size - 1 - y);
-        const alpha = edge <= 0 ? 255 : Math.max(0, Math.min(255, Math.round((d / edge) * 255)));
-        pixels[y * size + x] = alpha;
-      }
-    }
-    const header = Buffer.from(`P5\n${size} ${size}\n255\n`, 'ascii');
-    await fs.writeFile(maskPath, Buffer.concat([header, pixels]));
-    return maskPath;
-  }
-};
-
 const buildRenderV2FilterGraph = async (
   config: RenderConfigV2,
   tmpDir: string,
-  options?: { includeAudio?: boolean; outputStart?: number; outputDuration?: number; allowShortDuration?: boolean; sampleAt?: number }
+  options?: { includeAudio?: boolean }
 ) => {
   const includeAudio = options?.includeAudio !== false;
   const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
   const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
   const background = normalizeFfmpegColor(config.timeline.backgroundColor || '#000000');
-  const configOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
-  const outputStart = Number.isFinite(options?.outputStart) ? Math.max(0, Number(options?.outputStart)) : configOutputStart;
+  const outputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
 
   const visualItems = config.items.filter(item => item.type === 'video' || item.type === 'image');
   const audioItems = config.items.filter(item => item.type === 'audio');
   const subtitleItems = config.items.filter(item => item.type === 'subtitle');
   const textItems = config.items.filter(item => item.type === 'text');
 
-  const sourceItems = includeAudio
-    ? [...visualItems, ...audioItems, ...subtitleItems]
-    : [...visualItems, ...subtitleItems];
   const inputs: Array<{ path: string; type: RenderItemV2['type']; item: RenderItemV2; duration?: number }> = [];
-  for (const item of sourceItems) {
+  for (const item of [...visualItems, ...audioItems, ...subtitleItems]) {
     const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
     const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path) : null);
     if (!sourcePath) continue;
@@ -1009,10 +939,6 @@ const buildRenderV2FilterGraph = async (
     const startRaw = Math.max(0, entry.item.timeline?.start ?? 0);
     const trimStartRaw = Math.max(0, entry.item.timeline?.trimStart ?? 0);
     const trimEndRaw = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
-    const hasExplicitDuration = (
-      (typeof entry.duration === 'number' && Number.isFinite(entry.duration) && entry.duration > 0) ||
-      Number.isFinite(entry.item.timeline?.duration)
-    );
     const baseDuration = entry.duration && entry.duration > 0
       ? Math.max(0.1, entry.duration - trimStartRaw - trimEndRaw)
       : defaultDuration;
@@ -1020,19 +946,13 @@ const buildRenderV2FilterGraph = async (
       ? Math.max(0.1, Number(entry.item.timeline?.duration))
       : baseDuration;
     const endRaw = startRaw + durationRaw;
-    return { entry, startRaw, durationRaw, trimStartRaw, endRaw, hasExplicitDuration };
+    return { entry, startRaw, durationRaw, trimStartRaw, endRaw };
   });
 
   const outputDurationFromItems = rawItemTiming.reduce((max, t) => Math.max(max, t.endRaw - outputStart), 0);
-  const minOutputDuration = options?.allowShortDuration ? 0.001 : 0.1;
-  const trimThreshold = options?.allowShortDuration ? 0.001 : 0.1;
-  const sampleAt = Number.isFinite(options?.sampleAt) ? Math.max(0, Number(options?.sampleAt)) : null;
-  const outputDurationRaw = Number.isFinite(options?.outputDuration)
-    ? Number(options?.outputDuration)
-    : (Number.isFinite(config.timeline.duration)
-      ? Number(config.timeline.duration)
-      : outputDurationFromItems);
-  const outputDuration = Math.max(minOutputDuration, outputDurationRaw);
+  const outputDuration = Number.isFinite(config.timeline.duration)
+    ? Math.max(0.1, Number(config.timeline.duration))
+    : Math.max(0.1, outputDurationFromItems);
 
   const inputArgs: string[] = [];
   const inputEntries: Array<{
@@ -1047,33 +967,15 @@ const buildRenderV2FilterGraph = async (
   inputs.forEach((entry, idx) => {
     const args: string[] = [];
     const rawT = rawItemTiming[idx];
-    let start = 0;
-    let duration = 0;
-    let trimStart = 0;
-    if (sampleAt !== null) {
-      // When source duration is unknown (ffprobe/parse failure), don't drop the item only because
-      // of a fallback duration estimate. Keep it active after its start in preview sampling mode.
-      if (rawT.hasExplicitDuration) {
-        if (rawT.startRaw > sampleAt || rawT.endRaw <= sampleAt) return;
-      } else if (rawT.startRaw > sampleAt) {
-        return;
-      }
-      start = 0;
-      duration = Math.max(trimThreshold, outputDuration);
-      trimStart = entry.type === 'image'
-        ? rawT.trimStartRaw
-        : rawT.trimStartRaw + Math.max(0, sampleAt - rawT.startRaw);
-    } else {
-      if (rawT.endRaw <= outputStart || rawT.startRaw >= outputStart + outputDuration) {
-        return;
-      }
-      start = Math.max(0, rawT.startRaw - outputStart);
-      const end = Math.min(outputDuration, rawT.endRaw - outputStart);
-      duration = Math.max(0.01, end - start);
-      trimStart = entry.type === 'image'
-        ? rawT.trimStartRaw
-        : rawT.trimStartRaw + Math.max(0, outputStart - rawT.startRaw);
+    
+    if (rawT.endRaw <= outputStart || rawT.startRaw >= outputStart + outputDuration) {
+      return;
     }
+
+    const start = Math.max(0, rawT.startRaw - outputStart);
+    const end = Math.min(outputDuration, rawT.endRaw - outputStart);
+    const duration = Math.max(0.01, end - start);
+    const trimStart = rawT.trimStartRaw + Math.max(0, outputStart - rawT.startRaw);
 
     const timing = { entry, start, duration, trimStart };
     finalItemTiming.push(timing);
@@ -1096,7 +998,6 @@ const buildRenderV2FilterGraph = async (
 
   let currentVideo = '[base]';
   let visualIndex = 0;
-  let circleMaskPath: string | null = null;
   const sortedVisual = [...visualItems].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
   for (const item of sortedVisual) {
     const timing = finalItemTiming.find(t => t.entry.item === item);
@@ -1125,7 +1026,7 @@ const buildRenderV2FilterGraph = async (
     };
     const trimStart = timing?.trimStart ?? 0;
     const trimEndValue = trimStart + duration;
-    if (trimStart > 0 || duration > trimThreshold) {
+    if (trimStart > 0 || duration > 0.1) {
       addFilter(`trim=start=${trimStart}:end=${trimEndValue}`);
     }
     addFilter('setpts=PTS-STARTPTS');
@@ -1158,56 +1059,27 @@ const buildRenderV2FilterGraph = async (
       const my = Math.max(0, Math.min(100, Number(item.mask.y ?? 0)));
       const mw = Math.max(0.1, Math.min(100, Number(item.mask.w ?? 100)));
       const mh = Math.max(0.1, Math.min(100, Number(item.mask.h ?? 100)));
+      const x1 = `(${mx / 100})*W`;
+      const y1 = `(${my / 100})*H`;
+      const x2 = `(${mx / 100 + mw / 100})*W`;
+      const y2 = `(${my / 100 + mh / 100})*H`;
+      const maskExpr = item.mask.type === 'circle'
+        ? `if(lte(((X-(${x1}+(${mw / 200})*W))*(X-(${x1}+(${mw / 200})*W)))/((${mw / 200})*W*((${mw / 200})*W)) + ((Y-(${y1}+(${mh / 200})*H))*(Y-(${y1}+(${mh / 200})*H)))/((${mh / 200})*H*((${mh / 200})*H)),1),255,0)`
+        : `if(between(X,${x1},${x2})*between(Y,${y1},${y2}),255,0)`;
       const splitLabelA = `[vms${visualIndex}a]`;
       const splitLabelB = `[vms${visualIndex}b]`;
+      const maskLabel = `[vmask${visualIndex}]`;
       const outLabel = `[v${visualIndex}]`;
       const splitChain = chain.endsWith(']')
         ? `${chain}split=2${splitLabelA}${splitLabelB}`
         : `${chain},split=2${splitLabelA}${splitLabelB}`;
       filters.push(splitChain);
-      if (item.mask.type === 'rect') {
-        const cropLabel = `[vmcrop${visualIndex}]`;
-        const clearLabel = `[vmclr${visualIndex}]`;
-        const mxNorm = (mx / 100).toFixed(4);
-        const myNorm = (my / 100).toFixed(4);
-        const mwNorm = (mw / 100).toFixed(4);
-        const mhNorm = (mh / 100).toFixed(4);
-        filters.push(
-          `${splitLabelA}crop=iw*${mwNorm}:ih*${mhNorm}:iw*${mxNorm}:ih*${myNorm}${cropLabel}`
-        );
-        filters.push(`${splitLabelB}colorchannelmixer=aa=0${clearLabel}`);
-        let mergeChain = `${clearLabel}${cropLabel}overlay=x=W*${mxNorm}:y=H*${myNorm}:format=auto`;
-        if (opacity < 1) {
-          mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
-        }
-        filters.push(`${mergeChain}${outLabel}`);
-      } else {
-        if (!circleMaskPath) {
-          circleMaskPath = await ensureCircleMaskPgm(tmpDir);
-        }
-        const cropLabel = `[vmcrop${visualIndex}]`;
-        const maskUnitLabel = `[vmmu${visualIndex}]`;
-        const maskLabel = `[vmask${visualIndex}]`;
-        const cropRefLabel = `[vmcr${visualIndex}]`;
-        const maskedCropLabel = `[vmcm${visualIndex}]`;
-        const clearLabel = `[vmclr${visualIndex}]`;
-        const mxNorm = (mx / 100).toFixed(4);
-        const myNorm = (my / 100).toFixed(4);
-        const mwNorm = (mw / 100).toFixed(4);
-        const mhNorm = (mh / 100).toFixed(4);
-        filters.push(
-          `${splitLabelA}crop=iw*${mwNorm}:ih*${mhNorm}:iw*${mxNorm}:ih*${myNorm}${cropLabel}`
-        );
-        filters.push(`movie='${escapeFilterPath(circleMaskPath)}',format=gray,${STATIC_MASK_LOOP_FILTER}${maskUnitLabel}`);
-        filters.push(`${maskUnitLabel}${cropLabel}scale2ref${maskLabel}${cropRefLabel}`);
-        filters.push(`${cropRefLabel}${maskLabel}alphamerge${maskedCropLabel}`);
-        filters.push(`${splitLabelB}colorchannelmixer=aa=0${clearLabel}`);
-        let mergeChain = `${clearLabel}${maskedCropLabel}overlay=x=W*${mxNorm}:y=H*${myNorm}:format=auto`;
-        if (opacity < 1) {
-          mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
-        }
-        filters.push(`${mergeChain}${outLabel}`);
+      filters.push(`${splitLabelB}geq=lum='${maskExpr}'${maskLabel}`);
+      let mergeChain = `${splitLabelA}${maskLabel}alphamerge`;
+      if (opacity < 1) {
+        mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
       }
+      filters.push(`${mergeChain}${outLabel}`);
     } else {
       if (opacity < 1) {
         addFilter(`colorchannelmixer=aa=${opacity.toFixed(3)}`);
@@ -1224,49 +1096,50 @@ const buildRenderV2FilterGraph = async (
     let overlayInputLabel = label;
     if (itemBlurEffects.length > 0) {
       let blurCurrentLabel = label;
-      for (let effectIndex = 0; effectIndex < itemBlurEffects.length; effectIndex += 1) {
-        const effect = itemBlurEffects[effectIndex];
+      itemBlurEffects.forEach((effect, effectIndex) => {
         const x = effect.left;
         const y = effect.top;
         const w = 100 - effect.left - effect.right;
         const h = 100 - effect.top - effect.bottom;
         const sigma = effect.sigma;
         const feather = effect.feather > 0 ? effect.feather : 0;
+        const lumExpr = blurFeatherGeqLum(feather);
         const main = `ivm${visualIndex}_${effectIndex}`;
         const tmp = `ivt${visualIndex}_${effectIndex}`;
         const out = `ivo${visualIndex}_${effectIndex}`;
-        // Stronger blur for subtitle masking: use gaussian blur instead of boxblur.
-        const gblurSigma = Math.max(2, Math.min(96, Number(sigma) * 1.8));
-        const gblurSteps = Math.max(1, Math.min(6, Math.round(gblurSigma / 10)));
-        const bl = `ivb${visualIndex}_${effectIndex}`;
-        filters.push(`${blurCurrentLabel}split=2[${main}][${tmp}]`);
-        filters.push(
-          `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,format=rgba,gblur=sigma=${gblurSigma.toFixed(2)}:steps=${gblurSteps}:planes=0x7,format=rgba[${bl}]`
-        );
-        if (feather > 0) {
-          const maskPath = await ensureFeatherMaskPgm(tmpDir, feather);
-          const featherMaskSigma = Math.max(0.8, Math.min(16, feather * 1.2));
-          const mu = `ivmu${visualIndex}_${effectIndex}`;
-          const mk = `ivmk${visualIndex}_${effectIndex}`;
-          const br = `ivbr${visualIndex}_${effectIndex}`;
-          const ba = `ivba${visualIndex}_${effectIndex}`;
-          filters.push(
-            `movie='${escapeFilterPath(maskPath)}',format=gray,gblur=sigma=${featherMaskSigma.toFixed(2)}:steps=2,${STATIC_MASK_LOOP_FILTER}[${mu}]`
-          );
-          filters.push(`[${mu}][${bl}]scale2ref[${mk}][${br}]`);
-          filters.push(`[${br}][${mk}]alphamerge[${ba}]`);
-          filters.push(`[${main}][${ba}]overlay=W*${x}/100:H*${y}/100:format=auto[${out}]`);
+        let blurChain: string;
+        if (!lumExpr) {
+          const bl = `ivb${visualIndex}_${effectIndex}`;
+          blurChain =
+            `${blurCurrentLabel}split=2[${main}][${tmp}];` +
+            `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,gblur=sigma=${sigma}[${bl}];` +
+            `[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`;
         } else {
-          filters.push(`[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`);
+          const co = `ivco${visualIndex}_${effectIndex}`;
+          const cb = `ivcb${visualIndex}_${effectIndex}`;
+          const gb = `ivgb${visualIndex}_${effectIndex}`;
+          const mk = `ivmk${visualIndex}_${effectIndex}`;
+          const pa = `ivpa${visualIndex}_${effectIndex}`;
+          const prgb = `ivprgb${visualIndex}_${effectIndex}`;
+          const mr = `ivmr${visualIndex}_${effectIndex}`;
+          const vor = `ivovl${visualIndex}_${effectIndex}`;
+          blurChain =
+            `${blurCurrentLabel}split=2[${main}][${tmp}];` +
+            `[${main}]format=rgb24[${mr}];` +
+            `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,split=2[${co}][${cb}];` +
+            `[${cb}]gblur=sigma=${sigma},format=bgra[${gb}];` +
+            `[${co}]format=gray,geq=lum='${lumExpr}'[${mk}];` +
+            `[${gb}][${mk}]alphamerge[${pa}];` +
+            `[${pa}]format=rgba[${prgb}];` +
+            `[${mr}][${prgb}]overlay=W*${x}/100:H*${y}/100:format=auto[${vor}];` +
+            `[${vor}]format=rgba[${out}]`;
         }
+        filters.push(blurChain);
         blurCurrentLabel = `[${out}]`;
-      }
+      });
       overlayInputLabel = blurCurrentLabel;
     }
-    const overlayFilter = sampleAt === null
-      ? `overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'`
-      : `overlay=x=${xExpr}:y=${yExpr}`;
-    filters.push(`${currentVideo}${overlayInputLabel}${overlayFilter}[v${visualIndex}o]`);
+    filters.push(`${currentVideo}${overlayInputLabel}overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'[v${visualIndex}o]`);
     currentVideo = `[v${visualIndex}o]`;
     visualIndex += 1;
   }
@@ -1358,7 +1231,7 @@ const buildRenderV2FilterGraph = async (
     const trimStart = timing.trimStart;
     const duration = timing.duration;
     const endValue = trimStart + duration;
-    if (trimStart > 0 || duration > trimThreshold) {
+    if (trimStart > 0 || duration > 0.1) {
       addFilter(`atrim=start=${trimStart}:end=${endValue}`);
     }
     addFilter('asetpts=PTS-STARTPTS');
@@ -3650,92 +3523,6 @@ app.delete('/api/render-templates/:id', async (req, res) => {
   }
 });
 
-app.get('/api/task-templates', async (_req, res) => {
-  try {
-    const result = db.exec(
-      'SELECT id, name, task_type, params_json, updated_at FROM task_templates ORDER BY updated_at DESC'
-    );
-    const rows = result[0]?.values ?? [];
-    const templates = rows.map((row: any[]) => {
-      const [id, name, taskType, paramsJson, updatedAt] = row;
-      let params: any = null;
-      try {
-        params = JSON.parse(String(paramsJson));
-      } catch {
-        params = null;
-      }
-      return {
-        id: String(id),
-        name: String(name),
-        taskType: String(taskType),
-        updatedAt,
-        params
-      };
-    }).filter((entry: any) => entry.params && typeof entry.params === 'object');
-    res.json({ templates });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to load task templates';
-    res.status(500).json({ error: message });
-  }
-});
-
-app.post('/api/task-templates', async (req, res) => {
-  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
-  const taskType = typeof req.body?.taskType === 'string' ? req.body.taskType.trim() : '';
-  const params = typeof req.body?.params === 'object' && req.body.params ? req.body.params : null;
-  const id = Number.isFinite(Number(req.body?.id)) ? Number(req.body.id) : null;
-  if (!name || !params) {
-    res.status(400).json({ error: 'Missing name or params' });
-    return;
-  }
-  if (taskType !== 'download' && taskType !== 'uvr' && taskType !== 'tts') {
-    res.status(400).json({ error: 'Invalid task type' });
-    return;
-  }
-  try {
-    const updatedAt = new Date().toISOString();
-    if (id) {
-      db.run(
-        `UPDATE task_templates
-         SET name = ?, task_type = ?, params_json = ?, updated_at = ?
-         WHERE id = ?`,
-        [name, taskType, JSON.stringify(params), updatedAt, id]
-      );
-      await persistDb();
-      res.json({ template: { id: String(id), name, taskType, updatedAt, params } });
-      return;
-    }
-    db.run(
-      `INSERT INTO task_templates (name, task_type, params_json, updated_at)
-       VALUES (?, ?, ?, ?)`,
-      [name, taskType, JSON.stringify(params), updatedAt]
-    );
-    await persistDb();
-    const idRow = db.exec('SELECT last_insert_rowid() as id');
-    const nextId = idRow[0]?.values?.[0]?.[0] ?? null;
-    res.json({ template: { id: String(nextId), name, taskType, updatedAt, params } });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to save task template';
-    res.status(500).json({ error: message });
-  }
-});
-
-app.delete('/api/task-templates/:id', async (req, res) => {
-  const id = Number(req.params?.id);
-  if (!Number.isFinite(id)) {
-    res.status(400).json({ error: 'Missing id' });
-    return;
-  }
-  try {
-    db.run('DELETE FROM task_templates WHERE id = ?', [id]);
-    await persistDb();
-    res.json({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to delete task template';
-    res.status(500).json({ error: message });
-  }
-});
-
 app.post('/api/vault/import', express.raw({ type: 'multipart/form-data', limit: '2gb' }), async (req, res) => {
   try {
     const contentType = String(req.headers['content-type'] || '');
@@ -4796,11 +4583,12 @@ type BlurRegionEffect = {
   top: number;
   bottom: number;
   sigma: number;
-  /** 0 = hard edge; 1–10 = feather width as % of half the shorter crop side. */
+  /** 0 = hard edge; 1–20 = feather width as % of half the shorter crop side. */
   feather: number;
 };
 
 const clampRender = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+const BLUR_FEATHER_MAX = 10;
 
 const parseBlurRegionEffects = (raw: unknown): BlurRegionEffect[] => {
   if (!Array.isArray(raw)) return [];
@@ -4848,6 +4636,23 @@ const parseBlurRegionEffects = (raw: unknown): BlurRegionEffect[] => {
   return out;
 };
 
+/** Distance-to-edge mask (0–255) for feathered blur; d = min dist to crop border in px. */
+const blurFeatherGeqLum = (featherPct: number) => {
+  const f = Math.max(0, Math.min(BLUR_FEATHER_MAX, Math.round(featherPct)));
+  if (f <= 0) return '';
+  /**
+   * ffmpeg 4.x geq splits `lum` on commas and treats `:` as filter opt separator — use only + - * / abs ().
+   * Use W/H (not w/h): lowercase w is not a valid width variable in this evaluator.
+   * min(a,b)=(a+b-abs(a-b))/2; ramp to 255 past edge via min(1,d/edge)=(1+t-abs(1-t))/2, t=d/(edge+eps).
+   */
+  const edge = `${f}*sqrt(W*W+H*H)/200`;
+  const dx = '(W-1-abs(2*X-(W-1)))/2';
+  const dy = '(H-1-abs(2*Y-(H-1)))/2';
+  const d = `((${dx})+(${dy})-abs((${dx})-(${dy})))/2`;
+  const t = `(${d})/((${edge})+0.001)`;
+  return `255*(1+(${t})-abs(1-(${t})))/2`;
+};
+
 app.get('/api/vault/thumb', async (req, res) => {
   const relPath = typeof req.query.path === 'string' ? req.query.path : '';
   if (!relPath) {
@@ -4893,29 +4698,40 @@ app.post('/api/render-preview-v2', async (req, res) => {
   let previewBuf: Buffer = RENDER_PREVIEW_BLACK_JPEG;
   let previewError: string | null = null;
   try {
-    const baseOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
-    const timelineDuration = Number.isFinite(config.timeline.duration) ? Math.max(0, Number(config.timeline.duration)) : 0;
-    const framerate = Number.isFinite(config.timeline.framerate) && Number(config.timeline.framerate) > 0
-      ? Number(config.timeline.framerate)
-      : 30;
-    const frameDuration = 1 / framerate;
+    const graph = await buildRenderV2FilterGraph(config, tmpDir, { includeAudio: false });
     let atSeconds = Number.isFinite(at) ? Math.max(0, at) : 0;
-    if (timelineDuration > 0) {
-      atSeconds = Math.min(atSeconds, Math.max(0, timelineDuration - frameDuration));
+    if (graph.outputDuration > 0) {
+      atSeconds = Math.min(atSeconds, Math.max(0, graph.outputDuration - 0.05));
     }
-    const previewOutputStart = baseOutputStart + atSeconds;
-    const graph = await buildRenderV2FilterGraph(config, tmpDir, {
-      includeAudio: false,
-      outputStart: previewOutputStart,
-      outputDuration: frameDuration,
-      allowShortDuration: true,
-      sampleAt: previewOutputStart
-    });
     const ffmpegPath = await getFfmpegPath();
+    const hasTimedText = config.items.some(item => item.type === 'subtitle' || item.type === 'text');
     const args: string[] = ['-y'];
     const inputArgs: string[] = [];
-    graph.inputEntries.forEach(entry => inputArgs.push(...entry.args));
+    graph.inputEntries.forEach(entry => {
+      if (entry.type === 'video') {
+        const start = entry.timing?.start ?? 0;
+        const trimStart = entry.timing?.trimStart ?? 0;
+        let seek = atSeconds - start + trimStart;
+        if (!Number.isFinite(seek)) seek = atSeconds;
+        if (seek < 0) seek = 0;
+        if (hasTimedText) {
+          const coarse = Math.max(0, seek - PREVIEW_SEEK_WINDOW_SECONDS);
+          inputArgs.push('-ss', coarse.toFixed(3));
+        } else {
+          inputArgs.push('-ss', seek.toFixed(3));
+        }
+      }
+      inputArgs.push(...entry.args);
+    });
+    if (hasTimedText) {
+      // Keep timestamps so subtitles stay aligned; still seek output for accuracy.
+      args.push('-copyts');
+    }
     args.push(...inputArgs);
+    if (hasTimedText) {
+      // Accurate seek on output timeline for subtitles/text.
+      args.push('-ss', String(atSeconds));
+    }
     args.push(
       '-filter_complex',
       graph.filterComplex,
@@ -4927,10 +4743,6 @@ app.post('/api/render-preview-v2', async (req, res) => {
       '3',
       outputPath
     );
-    if (LOG_RENDER_PREVIEW_FFMPEG_COMMAND) {
-      const commandLine = [ffmpegPath, ...args].map(formatArg).join(' ');
-      console.log(`COMMAND (render preview v2): ${commandLine}`);
-    }
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
