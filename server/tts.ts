@@ -23,6 +23,7 @@ const DEFAULT_OUTPUT_EXT = 'mp3';
 const SUBTITLE_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
 const PITCH_BASE_HZ = 200;
 const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
+const MAX_AMIX_INPUTS = 1024;
 
 export const ttsRouter = express.Router();
 
@@ -212,6 +213,28 @@ const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: nu
     filters.push(...buildAtempoFilters(safeRate));
   }
   return filters.length ? filters.join(',') : null;
+};
+
+const buildCascadedAmixFilters = (inputLabels: string[]) => {
+  if (!inputLabels.length) {
+    throw new Error('No audio inputs to mix');
+  }
+  const filters: string[] = [];
+  let stage = 0;
+  let current = [...inputLabels];
+  while (current.length > 1) {
+    const next: string[] = [];
+    for (let chunkStart = 0; chunkStart < current.length; chunkStart += MAX_AMIX_INPUTS) {
+      const chunk = current.slice(chunkStart, chunkStart + MAX_AMIX_INPUTS);
+      const chunkIndex = Math.floor(chunkStart / MAX_AMIX_INPUTS);
+      const outLabel = `mix${stage}_${chunkIndex}`;
+      filters.push(`${chunk.join('')}amix=inputs=${chunk.length}:duration=longest[${outLabel}]`);
+      next.push(`[${outLabel}]`);
+    }
+    current = next;
+    stage += 1;
+  }
+  return { filters, outputLabel: current[0] };
 };
 
 const buildCueFxCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
@@ -605,12 +628,22 @@ ttsRouter.post('/', async (req, res) => {
         filterChains.push(`[${index}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${index}]`);
         mixInputs.push(`[a${index}]`);
       });
-      const filter = `${filterChains.join(';')};${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest,loudnorm=I=-16:TP=-1.5:LRA=11[out]`;
+      const mixPlan = buildCascadedAmixFilters(mixInputs);
+      const filter = [
+        ...filterChains,
+        ...mixPlan.filters,
+        `${mixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
+      ].join(';');
+      const filterScriptPath = path.join(
+        cacheRoot,
+        `mix-filter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
+      );
+      await fs.writeFile(filterScriptPath, filter, 'utf-8');
       const ffmpegArgs = [
         '-y',
         ...inputArgs,
-        '-filter_complex',
-        filter,
+        '-filter_complex_script',
+        filterScriptPath,
         '-map',
         '[out]',
         '-c:a',
@@ -619,14 +652,18 @@ ttsRouter.post('/', async (req, res) => {
         '4',
         finalOutputPath
       ];
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: 'ignore' });
-        proc.on('error', reject);
-        proc.on('close', code => {
-          if (code === 0) resolve();
-          else reject(new Error(`ffmpeg exited with code ${code}`));
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: 'ignore' });
+          proc.on('error', reject);
+          proc.on('close', code => {
+            if (code === 0) resolve();
+            else reject(new Error(`ffmpeg exited with code ${code}`));
+          });
         });
-      });
+      } finally {
+        await fs.rm(filterScriptPath, { force: true }).catch(() => null);
+      }
     } else {
       const args = [
         '--text',

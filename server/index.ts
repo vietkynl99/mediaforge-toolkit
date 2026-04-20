@@ -132,6 +132,7 @@ const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
 const TTS_PITCH_BASE_HZ = 200;
 const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
+const MAX_AMIX_INPUTS = 1024;
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
@@ -2591,6 +2592,60 @@ const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: nu
   return filters.length ? filters.join(',') : null;
 };
 
+const buildCascadedAmixFilters = (inputLabels: string[]) => {
+  if (!inputLabels.length) {
+    throw new Error('No audio inputs to mix');
+  }
+  const filters: string[] = [];
+  let stage = 0;
+  let current = [...inputLabels];
+  while (current.length > 1) {
+    const next: string[] = [];
+    for (let chunkStart = 0; chunkStart < current.length; chunkStart += MAX_AMIX_INPUTS) {
+      const chunk = current.slice(chunkStart, chunkStart + MAX_AMIX_INPUTS);
+      const chunkIndex = Math.floor(chunkStart / MAX_AMIX_INPUTS);
+      const outLabel = `mix${stage}_${chunkIndex}`;
+      filters.push(`${chunk.join('')}amix=inputs=${chunk.length}:duration=longest[${outLabel}]`);
+      next.push(`[${outLabel}]`);
+    }
+    current = next;
+    stage += 1;
+  }
+  return { filters, outputLabel: current[0] };
+};
+
+type CueMixLaneItem = {
+  cueIndex: number;
+  start: number;
+  duration: number;
+};
+
+const MIX_TIMING_EPSILON = 0.0005;
+
+const assignCuesToNonOverlappingLanes = (
+  cues: SubtitleCue[],
+  cueDurations: number[],
+  audioDurations: number[],
+  overlapMode: 'overlap' | 'truncate'
+) => {
+  const lanes: Array<{ items: CueMixLaneItem[]; lastEnd: number }> = [];
+  for (let index = 0; index < cues.length; index += 1) {
+    const cue = cues[index];
+    const cueDuration = Math.max(0, cueDurations[index] ?? (cue.end - cue.start));
+    const audioDuration = Math.max(0, audioDurations[index] ?? cueDuration);
+    const effectiveDuration = overlapMode === 'truncate' ? Math.min(audioDuration, cueDuration) : audioDuration;
+    if (effectiveDuration <= MIX_TIMING_EPSILON) continue;
+    let lane = lanes.find(entry => cue.start + MIX_TIMING_EPSILON >= entry.lastEnd);
+    if (!lane) {
+      lane = { items: [], lastEnd: 0 };
+      lanes.push(lane);
+    }
+    lane.items.push({ cueIndex: index, start: cue.start, duration: effectiveDuration });
+    lane.lastEnd = cue.start + effectiveDuration;
+  }
+  return lanes;
+};
+
 const buildCueFxCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
   const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
   const stem = `cue-${String(cueIndex).padStart(4, '0')}-fx-${key}`;
@@ -2870,21 +2925,48 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   }
 
   const inputArgs = cuePaths.flatMap(cuePath => ['-i', cuePath]);
+  const lanes = assignCuesToNonOverlappingLanes(cues, cueDurations, audioDurations, overlapMode);
+  if (!lanes.length) {
+    throw new Error('No usable cue audio to mix');
+  }
   const filterChains: string[] = [];
-  const mixInputs: string[] = [];
-  cues.forEach((cue, index) => {
-    const delayMs = Math.max(0, Math.round(cue.start * 1000));
-    const duration = Math.max(0, cue.end - cue.start);
-    const trim = overlapMode === 'truncate' ? `atrim=0:${duration},` : '';
-    filterChains.push(`[${index}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${index}]`);
-    mixInputs.push(`[a${index}]`);
+  const laneMixInputs: string[] = [];
+  const toFilterSeconds = (value: number) => roundFactor(Math.max(0, value));
+  lanes.forEach((lane, laneIndex) => {
+    const concatInputs: string[] = [];
+    let cursor = 0;
+    lane.items.forEach((item, itemIndex) => {
+      const gap = Math.max(0, item.start - cursor);
+      if (gap > MIX_TIMING_EPSILON) {
+        const silenceLabel = `lane${laneIndex}_sil${itemIndex}`;
+        filterChains.push(`anullsrc=r=24000:cl=mono,atrim=0:${toFilterSeconds(gap)},aformat=sample_fmts=fltp:sample_rates=24000:channel_layouts=mono[${silenceLabel}]`);
+        concatInputs.push(`[${silenceLabel}]`);
+      }
+      const cueLabel = `lane${laneIndex}_cue${itemIndex}`;
+      filterChains.push(`[${item.cueIndex}:a]atrim=0:${toFilterSeconds(item.duration)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=24000:channel_layouts=mono[${cueLabel}]`);
+      concatInputs.push(`[${cueLabel}]`);
+      cursor = item.start + item.duration;
+    });
+    const laneLabel = `lane${laneIndex}`;
+    filterChains.push(`${concatInputs.join('')}concat=n=${concatInputs.length}:v=0:a=1[${laneLabel}]`);
+    laneMixInputs.push(`[${laneLabel}]`);
   });
-  const filter = `${filterChains.join(';')};${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest,loudnorm=I=-16:TP=-1.5:LRA=11[out]`;
+  const mixPlan = buildCascadedAmixFilters(laneMixInputs);
+  const filter = [
+    ...filterChains,
+    ...mixPlan.filters,
+    `${mixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
+  ].join(';');
+  const filterScriptPath = path.join(
+    cueCacheRoot,
+    `mix-filter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
+  );
+  await fs.writeFile(filterScriptPath, filter, 'utf-8');
   const ffmpegArgs = [
     '-y',
     ...inputArgs,
-    '-filter_complex',
-    filter,
+    '-filter_complex_script',
+    filterScriptPath,
     '-map',
     '[out]',
     '-c:a',
@@ -2895,18 +2977,22 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   ];
   const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
   options?.onLog?.(`COMMAND (ffmpeg mix): ${ffmpegCommand}\n`);
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    proc.stderr.on('data', data => {
-      stderr += data.toString();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      proc.stderr.on('data', data => {
+        stderr += data.toString();
+      });
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+      });
     });
-    proc.on('error', reject);
-    proc.on('close', code => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
-    });
-  });
+  } finally {
+    await fs.rm(filterScriptPath, { force: true }).catch(() => null);
+  }
   const segments = cues.map((cue, index) => {
     const duration = audioDurations[index] ?? 0;
     const cap = overlapMode === 'truncate' ? Math.min(duration, cueDurations[index] ?? duration) : duration;
