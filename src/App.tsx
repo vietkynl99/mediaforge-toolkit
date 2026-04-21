@@ -174,7 +174,7 @@ type RenderConfigV2 = {
     backgroundColor?: string;
     /** Display names keyed by placeholder ref (inputsMap keys) plus `text` for the text overlay track. */
     trackLabels?: Record<string, string>;
-    imageMatchDuration?: boolean;
+    imageMatchDuration?: boolean | Record<string, boolean>;
   };
   renderOptions?: {
     codec?: 'h264' | 'h265';
@@ -247,6 +247,42 @@ type NewJobPopupDraft = {
   renderInputFileIds?: string[];
   renderTemplateApplyMap?: Record<string, string>;
   renderTemplateApplyMapById?: Record<string, Record<string, string>>;
+};
+
+const isRenderV2DebugEnabled = () => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem('renderV2Debug') === '1';
+  } catch {
+    return false;
+  }
+};
+
+const summarizeRenderConfigForDebug = (config: RenderConfigV2 | null | undefined) => {
+  if (!config) return null;
+  const summary: Record<string, unknown> = {
+    timeline: {
+      start: config.timeline?.start ?? 0,
+      duration: config.timeline?.duration ?? null,
+      framerate: config.timeline?.framerate ?? null,
+      resolution: config.timeline?.resolution ?? null
+    },
+    items: Array.isArray(config.items)
+      ? config.items.map(item => ({
+        id: item.id,
+        type: item.type,
+        timeline: item.timeline ?? null,
+        text: item.type === 'text'
+          ? {
+            start: item.text?.start ?? null,
+            end: item.text?.end ?? null,
+            matchDuration: item.text?.matchDuration ?? null
+          }
+          : undefined
+      }))
+      : []
+  };
+  return summary;
 };
 
 /** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
@@ -1234,9 +1270,11 @@ export default function App() {
     title: string;
     description?: string;
     confirmLabel?: string;
+    secondaryLabel?: string;
     variant?: 'danger' | 'primary';
   }>({ open: false, title: '' });
   const confirmActionRef = useRef<null | (() => void)>(null);
+  const secondaryActionRef = useRef<null | (() => void)>(null);
   const [vaultContextMenu, setVaultContextMenu] = useState<{
     open: boolean;
     x: number;
@@ -2936,9 +2974,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!showRenderStudio) return;
+    if (!runPipelineHasRender) return;
+    if (!showRenderStudio && !showRunPipeline) return;
     if (runPipelineRenderTemplateId === 'custom') return;
-    if (renderConfigV2Override) return;
     if (!runPipelineProject) return;
     const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
     if (!template) return;
@@ -2951,8 +2989,9 @@ export default function App() {
     lastAutoTemplateApplyKeyRef.current = key;
   }, [
     showRenderStudio,
+    showRunPipeline,
+    runPipelineHasRender,
     runPipelineRenderTemplateId,
-    renderConfigV2Override,
     runPipelineProject,
     renderTemplates,
     renderTemplateApplyMapById
@@ -3114,12 +3153,10 @@ export default function App() {
 
   useEffect(() => {
     if (!renderConfigV2Override) return;
-    if (runPipelineRenderTemplateId === 'custom') return;
     if (Date.now() - lastTemplateApplyAtRef.current < 200) return;
     setRenderConfigV2Override(null);
   }, [
     renderConfigV2Override,
-    runPipelineRenderTemplateId,
     renderParams,
     renderVideoTransforms,
     renderTrackLabels,
@@ -3163,6 +3200,13 @@ export default function App() {
             ? Math.min(renderPlayheadSeconds, renderTimelineDuration)
             : renderPlayheadSeconds
         );
+        if (isRenderV2DebugEnabled()) {
+          console.log('RENDER_V2_DEBUG preview request', {
+            at: previewAt,
+            timelineDuration: renderTimelineDuration,
+            config: summarizeRenderConfigForDebug(renderConfigPreview)
+          });
+        }
         const response = await fetch('/api/render-preview-v2', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3465,7 +3509,6 @@ export default function App() {
   }
 
   function buildRenderConfigV2(): RenderConfigV2 {
-    if (renderConfigV2Override) return renderConfigV2Override;
     if (!runPipelineProject) return null;
     const selected = runPipelineProject.files.filter(file => renderInputFileIds.includes(file.id));
     if (!selected.length) return null;
@@ -3588,7 +3631,10 @@ export default function App() {
         if (file.type === 'image') {
           const imageOrder = renderImageOrderIds.indexOf(file.id);
           baseItem.layer = imageOrder >= 0 ? 20 + imageOrder : baseItem.layer;
-          const duration = coerceNumber(renderImageDurations[file.id], renderImageDurationFallback) ?? renderImageDurationFallback;
+          const shouldMatchDuration = Boolean(renderImageMatchDuration[file.id]);
+          const duration = shouldMatchDuration && renderTimelineDuration > 0
+            ? renderTimelineDuration
+            : (coerceNumber(renderImageDurations[file.id], renderImageDurationFallback) ?? renderImageDurationFallback);
           baseItem.timeline = { start: 0, duration };
           const t = renderImageTransforms[file.id];
           if (t) {
@@ -3697,9 +3743,12 @@ export default function App() {
 
     const singleTextValue = String(singleText ?? '').trim();
     if (singleTextValue) {
-      const start = coerceNumber(singleTextStart, 0) ?? 0;
+      const isSingleTextMatchDuration = String(singleTextMatchDuration ?? '0') === '1';
+      const start = isSingleTextMatchDuration ? 0 : (coerceNumber(singleTextStart, 0) ?? 0);
       const fallbackEnd = renderTimelineDuration > 0 ? renderTimelineDuration : start + 5;
-      const end = coerceNumber(singleTextEnd, fallbackEnd) ?? fallbackEnd;
+      const end = isSingleTextMatchDuration
+        ? fallbackEnd
+        : (coerceNumber(singleTextEnd, fallbackEnd) ?? fallbackEnd);
       const safeEnd = Math.max(start + 0.01, end);
       const textSubtitleStyle: Record<string, unknown> = {
         ...textBaseStyle,
@@ -3716,7 +3765,7 @@ export default function App() {
         type: 'text',
         source: {},
         timeline: { start, duration: safeEnd - start },
-        text: { value: singleTextValue, start, end: safeEnd, matchDuration: singleTextMatchDuration ? '1' : '0' },
+        text: { value: singleTextValue, start, end: safeEnd, matchDuration: isSingleTextMatchDuration ? '1' : '0' },
         subtitleStyle: textSubtitleStyle
       });
       const textLabel = (renderTrackLabels.text ?? '').trim();
@@ -3728,6 +3777,7 @@ export default function App() {
       timeline: {
         resolution: timelineResolution,
         framerate: timelineFramerate,
+        duration: renderTimelineDuration > 0 ? renderTimelineDuration : undefined,
         trackLabels: trackLabelsOut,
         imageMatchDuration: renderImageMatchDuration
       },
@@ -3808,12 +3858,28 @@ export default function App() {
       const typeCmp = compareTemplateKeys(a.type, b.type);
       if (typeCmp !== 0) return typeCmp;
       return String(a.id ?? '').localeCompare(String(b.id ?? ''));
+    }).map(item => {
+      const nextItem: RenderConfigV2['items'][number] = { ...item };
+      if (nextItem.timeline) {
+        const { duration: _duration, ...timelineWithoutDuration } = nextItem.timeline;
+        nextItem.timeline = timelineWithoutDuration;
+      }
+      if (nextItem.type === 'text' && nextItem.text) {
+        const matchDuration = String(nextItem.text.matchDuration ?? '0') === '1';
+        if (matchDuration) {
+          const { start: _start, end: _end, ...textWithoutRange } = nextItem.text;
+          nextItem.text = textWithoutRange;
+        }
+      }
+      return nextItem;
     });
+
+    const { duration: _duration, ...timelineWithoutDuration } = (config.timeline ?? {}) as RenderConfigV2['timeline'];
 
     return {
       ...config,
       timeline: {
-        ...config.timeline,
+        ...timelineWithoutDuration,
         ...(normalizedTrackLabels ? { trackLabels: normalizedTrackLabels } : {})
       },
       inputsMap: normalizedInputsMap,
@@ -3968,10 +4034,11 @@ export default function App() {
     }
     const name = renderTemplateNameDraft.trim() || `Render template ${renderTemplates.length + 1}`;
     try {
+      const normalizedTemplateConfig = buildTemplateFromConfig(parsed);
       const saved = await saveRenderTemplate({
         id: renderTemplateEditingId,
         name,
-        config: parsed!
+        config: normalizedTemplateConfig
       });
       if (renderTemplateEditingId) {
         setRenderTemplates(prev => prev.map(t => (
@@ -4433,14 +4500,17 @@ export default function App() {
     title: string;
     description?: string;
     confirmLabel?: string;
+    secondaryLabel?: string;
     variant?: 'danger' | 'primary';
-  }, onConfirm: () => void) => {
+  }, onConfirm: () => void, onSecondary?: () => void) => {
     confirmActionRef.current = onConfirm;
+    secondaryActionRef.current = onSecondary ?? null;
     setConfirmState({
       open: true,
       title: config.title,
       description: config.description,
       confirmLabel: config.confirmLabel,
+      secondaryLabel: config.secondaryLabel,
       variant: config.variant ?? 'primary'
     });
   };
@@ -4462,6 +4532,19 @@ export default function App() {
           >
             Cancel
           </button>
+          {confirmState.secondaryLabel && (
+            <button
+              onClick={() => {
+                const action = secondaryActionRef.current;
+                secondaryActionRef.current = null;
+                setConfirmState(prev => ({ ...prev, open: false }));
+                action?.();
+              }}
+              className="px-4 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
+            >
+              {confirmState.secondaryLabel}
+            </button>
+          )}
           <button
             onClick={async () => {
               const action = confirmActionRef.current;
@@ -5280,6 +5363,14 @@ export default function App() {
       }
     }
 
+    // Restore render image order and transforms if available
+    if (renderMeta.configV2?.timeline?.imageMatchDuration) {
+       setRenderImageMatchDuration(renderMeta.configV2.timeline.imageMatchDuration);
+    }
+    // Restore image order based on config items
+    const imageOrder = (renderMeta.configV2?.items ?? []).filter((it: any) => it.type === 'image').map((it: any) => it.id);
+    if (imageOrder.length > 0) setRenderImageOrderIds(imageOrder);
+
     if (job.tasks.some(task => task.type.startsWith('download'))) {
       const url = jobParams.download?.url || (typeof jobAny.__downloadUrl === 'string' ? jobAny.__downloadUrl : job.fileName);
       setDownloadUrl(url || '');
@@ -5784,6 +5875,9 @@ export default function App() {
     if (Object.keys(nextImageDurations).length > 0) {
       setRenderImageDurations(prev => ({ ...prev, ...nextImageDurations }));
     }
+    if (renderConfigV2Override.timeline?.imageMatchDuration && typeof renderConfigV2Override.timeline.imageMatchDuration === 'object') {
+      setRenderImageMatchDuration(renderConfigV2Override.timeline.imageMatchDuration);
+    }
     if (firstVideoItem) {
       const transform = firstVideoItem.transform ?? {};
       const crop = (transform.crop ?? {}) as { x?: number; y?: number; w?: number; h?: number };
@@ -5894,6 +5988,7 @@ export default function App() {
     }
     if (firstTextItem?.text) {
       const text = firstTextItem.text;
+      const matchDuration = String(text.matchDuration ?? '0') === '1';
       const start = typeof text.start === 'number' ? text.start : 0;
       const end = typeof text.end === 'number'
         ? text.end
@@ -5904,8 +5999,9 @@ export default function App() {
         text: {
           ...prev.text,
           singleText: text.value ?? prev.text.singleText,
-          singleTextStart: String(start),
-          singleTextEnd: String(end)
+          singleTextStart: matchDuration ? '0' : String(start),
+          singleTextEnd: matchDuration ? '' : String(end),
+          singleTextMatchDuration: matchDuration ? '1' : '0'
         }
       }));
     }
@@ -6328,7 +6424,7 @@ export default function App() {
     }
   };
 
-  const runPipelineJob = async (options?: { renderPreviewSeconds?: number | null }) => {
+  const runPipelineJob = async (options?: { renderPreviewSeconds?: number | null, forceNew?: boolean, skipCheck?: boolean }) => {
     if (!runPipelineId) {
       showToast('Select a pipeline first', 'warning');
       return;
@@ -6353,6 +6449,54 @@ export default function App() {
     }
     const renderPreviewSeconds = options?.renderPreviewSeconds;
     const renderPreviewStartSeconds = options?.renderPreviewStartSeconds;
+
+    // Logic kiểm tra signature trước khi chạy render thực tế (không phải preview)
+    if (runPipelineHasRender && !renderPreviewSeconds && !options?.skipCheck) {
+      const config = buildRenderConfigV2();
+      if (config) {
+        setRunPipelineSubmitting(true);
+        try {
+          const response = await fetch('/api/render-v2/check-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config })
+          });
+          const check = await response.json();
+          setRunPipelineSubmitting(false);
+
+          if (check.status === 'unfinished') {
+            openConfirm({
+              title: 'Tác vụ render đang dở dang',
+              description: 'Tác vụ này đã tồn tại và chưa hoàn thành. Bạn muốn tiếp tục từ điểm dừng (Resume) hay render lại bản mới hoàn toàn (Xóa cache cũ)?',
+              confirmLabel: 'Resume (Tiếp tục)',
+              secondaryLabel: 'Tạo mới hoàn toàn',
+              variant: 'primary'
+            }, () => {
+              // Resume: Chạy bình thường (skipCheck để tránh loop)
+              runPipelineJob({ ...options, skipCheck: true });
+            }, () => {
+              // Tạo mới: Xóa cache
+              runPipelineJob({ ...options, forceNew: true, skipCheck: true });
+            });
+            return; 
+          } else if (check.status === 'completed') {
+             openConfirm({
+              title: 'Video đã tồn tại',
+              description: 'Video với nội dung này đã được render xong. Bạn muốn render lại bản mới hoàn toàn hay hủy lệnh?',
+              confirmLabel: 'Render mới (Xóa cũ)',
+              variant: 'danger'
+            }, () => {
+              runPipelineJob({ ...options, forceNew: true, skipCheck: true });
+            });
+            return;
+          }
+        } catch (e) {
+          setRunPipelineSubmitting(false);
+          console.error('Check signature failed', e);
+        }
+      }
+    }
+
     const sendPipeline = async (overwrite: boolean) => {
       const pipelinePayload: Record<string, any> = runPipelineHasDownload
         ? {
@@ -6447,6 +6591,9 @@ export default function App() {
           pipelinePayload.renderPreviewSeconds = Number(renderPreviewSeconds);
         }
       }
+      if (options?.forceNew) {
+        pipelinePayload.forceNew = true;
+      }
       if (overwrite) {
         pipelinePayload.overwrite = true;
       }
@@ -6478,6 +6625,14 @@ export default function App() {
         pipelinePayload.name = task.label;
       } else {
         pipelinePayload.pipelineId = Number(runPipelineId);
+      }
+      if (isRenderV2DebugEnabled()) {
+        console.log('RENDER_V2_DEBUG jobs/run payload', {
+          pipelineId: pipelinePayload.pipelineId ?? null,
+          renderPreviewSeconds: pipelinePayload.renderPreviewSeconds ?? null,
+          renderInputPaths: pipelinePayload.renderInputPaths ?? null,
+          renderConfigV2: summarizeRenderConfigForDebug(pipelinePayload.renderConfigV2 as RenderConfigV2 | undefined)
+        });
       }
 
       const response = await fetch('/api/jobs/run', {

@@ -132,6 +132,24 @@ const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
 const TTS_PITCH_BASE_HZ = 200;
 const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
+const TTS_CUE_CONCURRENCY = Math.max(
+  1,
+  Math.min(
+    8,
+    Number.isFinite(Number(process.env.TTS_CUE_CONCURRENCY))
+      ? Number(process.env.TTS_CUE_CONCURRENCY)
+      : 3
+  )
+);
+const TTS_MIX_CHUNK_SIZE = Math.max(
+  25,
+  Math.min(
+    1000,
+    Number.isFinite(Number(process.env.TTS_MIX_CHUNK_SIZE))
+      ? Number(process.env.TTS_MIX_CHUNK_SIZE)
+      : 180
+  )
+);
 const RENDER_V2_CACHE_DIRNAME = '.mediaforge/render-v2-cache';
 const RENDER_V2_SEGMENT_SECONDS = Math.max(
   5,
@@ -561,13 +579,51 @@ const formatLocalTimestamp = () =>
     hour12: false
   }).format(new Date());
 
+const stripAnsiCodes = (text: string) => text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+
+const isFfmpegProgressLogLine = (line: string) => {
+  const withoutTimestamp = line.replace(/^\[\d{2}:\d{2}:\d{2} \d{2}\/\d{2}\/\d{4}\]\s*/, '');
+  const cleaned = stripAnsiCodes(withoutTimestamp);
+  return /^\s*frame=\s*\d+\b/.test(cleaned) && /\btime=\s*\d+:\d+:\d+(?:\.\d+)?\b/.test(cleaned);
+};
+
+const compactJobLogProgressLines = (log: string) => {
+  // Determine if the original log ended with a newline.
+  const hadTrailingNewline = log.endsWith('\n') || log.endsWith('\r\n');
+  const lines = log.split(/\r?\n/);
+  const compacted: string[] = [];
+  let latestProgressLine: string | null = null;
+  for (const line of lines) {
+    // Trim the line to remove any leading/trailing whitespace, including newlines
+    // that might have been part of the original message.
+    const trimmedLine = line.trim();
+    if (isFfmpegProgressLogLine(trimmedLine)) {
+      latestProgressLine = trimmedLine; // Store the trimmed progress line
+      continue;
+    }
+    if (trimmedLine) { // Only push non-empty lines
+      compacted.push(trimmedLine);
+    }
+  }
+
+  if (latestProgressLine) {
+    compacted.push(latestProgressLine);
+  }
+
+  let next = compacted.join('\n');
+  if (hadTrailingNewline && next.length > 0 && !next.endsWith('\n')) {
+    next += '\n';
+  }
+  return next;
+};
+
 const appendJobLog = (job: JobRecord, message: string) => {
   const timestamp = formatLocalTimestamp();
   const prefixed = message
-    .split(/\r?\n/)
+    .split(/\r?\n|\r/)
     .map(line => (line ? `[${timestamp}] ${line}` : line))
     .join('\n');
-  job.log = `${job.log ?? ''}${prefixed}`;
+  job.log = compactJobLogProgressLines(`${job.log ?? ''}${prefixed}`);
   if (job.log.length > MAX_JOB_LOG_CHARS) {
     job.log = job.log.slice(-MAX_JOB_LOG_CHARS);
   }
@@ -920,8 +976,31 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
 
 const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
 const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = false;
+const LOG_RENDER_V2_DEBUG =
+  ['1', 'true', 'yes', 'on'].includes((process.env.LOG_RENDER_V2_DEBUG ?? '').toLowerCase());
 const BLUR_FEATHER_MAX = 10;
 const STATIC_MASK_LOOP_FILTER = 'loop=loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB';
+
+const summarizeRenderConfigForDebug = (config: RenderConfigV2) => ({
+  timeline: {
+    start: Number.isFinite(config.timeline?.start) ? Number(config.timeline.start) : 0,
+    duration: Number.isFinite(config.timeline?.duration) ? Number(config.timeline.duration) : null,
+    framerate: Number.isFinite(config.timeline?.framerate) ? Number(config.timeline.framerate) : null,
+    resolution: config.timeline?.resolution ?? null
+  },
+  items: (config.items ?? []).map(item => ({
+    id: item.id,
+    type: item.type,
+    timeline: item.timeline ?? null,
+    text: item.type === 'text'
+      ? {
+        start: Number.isFinite(item.text?.start) ? Number(item.text?.start) : null,
+        end: Number.isFinite(item.text?.end) ? Number(item.text?.end) : null,
+        matchDuration: item.text?.matchDuration ?? null
+      }
+      : undefined
+  }))
+});
 
 const normalizeFfmpegColor = (value: string) => {
   const trimmed = value.trim();
@@ -982,8 +1061,19 @@ const ensureFeatherMaskPgm = async (tmpDir: string, featherPct: number) => {
 const buildRenderV2FilterGraph = async (
   config: RenderConfigV2,
   tmpDir: string,
-  options?: { includeAudio?: boolean; outputStart?: number; outputDuration?: number; allowShortDuration?: boolean; sampleAt?: number }
+  options?: {
+    includeAudio?: boolean;
+    outputStart?: number;
+    outputDuration?: number;
+    allowShortDuration?: boolean;
+    sampleAt?: number;
+    debugEnabled?: boolean;
+    debugLabel?: string;
+  }
 ) => {
+  const debugEnabled = options?.debugEnabled === true;
+  const debugLabel = options?.debugLabel ? ` ${options.debugLabel}` : '';
+  const INPUT_SEEK_PREROLL_SECONDS = 1;
   const includeAudio = options?.includeAudio !== false;
   const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
   const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
@@ -1012,6 +1102,22 @@ const buildRenderV2FilterGraph = async (
     inputs.push({ path: sourcePath, type: item.type, item, duration });
   }
 
+  const computedMediaTimelineDuration = inputs.reduce((max, entry) => {
+    if (entry.type !== 'video' && entry.type !== 'audio') return max;
+    if (!(typeof entry.duration === 'number' && Number.isFinite(entry.duration) && entry.duration > 0)) return max;
+    const trimStart = Math.max(0, entry.item.timeline?.trimStart ?? 0);
+    const trimEnd = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
+    const effective = Math.max(0.1, entry.duration - trimStart - trimEnd);
+    return Math.max(max, effective);
+  }, 0);
+  const resolvedTimelineDuration = Number.isFinite(config.timeline.duration) && Number(config.timeline.duration) > 0
+    ? Number(config.timeline.duration)
+    : computedMediaTimelineDuration;
+  const isImageMatchDuration = (entry: { item: RenderItemV2 }) => {
+    const ref = entry.item.source?.ref ?? '';
+    return Boolean(ref && config.timeline?.imageMatchDuration?.[ref]);
+  };
+
   const defaultDuration = 5;
   const rawItemTiming = inputs.map(entry => {
     const startRaw = Math.max(0, entry.item.timeline?.start ?? 0);
@@ -1024,12 +1130,35 @@ const buildRenderV2FilterGraph = async (
     const baseDuration = entry.duration && entry.duration > 0
       ? Math.max(0.1, entry.duration - trimStartRaw - trimEndRaw)
       : defaultDuration;
-    const durationRaw = Number.isFinite(entry.item.timeline?.duration)
+    const matchedImageDuration = entry.type === 'image' && isImageMatchDuration(entry) && resolvedTimelineDuration > 0
+      ? resolvedTimelineDuration
+      : null;
+    const durationRaw = typeof matchedImageDuration === 'number'
+      ? matchedImageDuration
+      : Number.isFinite(entry.item.timeline?.duration)
       ? Math.max(0.1, Number(entry.item.timeline?.duration))
       : baseDuration;
     const endRaw = startRaw + durationRaw;
-    return { entry, startRaw, durationRaw, trimStartRaw, endRaw, hasExplicitDuration };
+    return {
+      entry,
+      startRaw,
+      durationRaw,
+      trimStartRaw,
+      endRaw,
+      hasExplicitDuration: hasExplicitDuration || typeof matchedImageDuration === 'number'
+    };
   });
+  if (debugEnabled) {
+    console.log(`RENDER_V2_DEBUG raw timing${debugLabel}`, JSON.stringify(rawItemTiming.map(t => ({
+      id: t.entry.item?.id,
+      type: t.entry.type,
+      startRaw: t.startRaw,
+      durationRaw: t.durationRaw,
+      endRaw: t.endRaw,
+      trimStartRaw: t.trimStartRaw,
+      hasExplicitDuration: t.hasExplicitDuration
+    }))));
+  }
 
   const outputDurationFromItems = rawItemTiming.reduce((max, t) => Math.max(max, t.endRaw - outputStart), 0);
   const minOutputDuration = options?.allowShortDuration ? 0.001 : 0.1;
@@ -1083,11 +1212,20 @@ const buildRenderV2FilterGraph = async (
         : rawT.trimStartRaw + Math.max(0, outputStart - rawT.startRaw);
     }
 
+    let inputSeek = 0;
+    if ((entry.type === 'video' || entry.type === 'audio') && trimStart > 0) {
+      inputSeek = Math.max(0, trimStart - INPUT_SEEK_PREROLL_SECONDS);
+      trimStart = Math.max(0, trimStart - inputSeek);
+    }
+
     const timing = { entry, start, duration, trimStart };
     finalItemTiming.push(timing);
 
     if (entry.type === 'image') {
       args.push('-loop', '1', '-t', String(duration + start));
+    }
+    if (inputSeek > 0) {
+      args.push('-ss', String(inputSeek));
     }
     args.push('-i', entry.path);
     inputArgs.push(...args);
@@ -1225,8 +1363,8 @@ const buildRenderV2FilterGraph = async (
     const itemBlurEffects = parseBlurRegionEffects(
       Array.isArray(item.effects)
         ? item.effects
-            .filter(effect => effect && effect.type === 'blur_region')
-            .map(effect => ({ type: 'blur_region', ...((effect.params ?? {}) as Record<string, unknown>) }))
+          .filter(effect => effect && effect.type === 'blur_region')
+          .map(effect => ({ type: 'blur_region', ...((effect.params ?? {}) as Record<string, unknown>) }))
         : []
     );
     let overlayInputLabel = label;
@@ -1313,15 +1451,20 @@ const buildRenderV2FilterGraph = async (
     const textItem = textItems[idx];
     const rawText = typeof textItem.text?.value === 'string' ? textItem.text.value.trim() : '';
     if (!rawText) continue;
-    
-    const itemStartRaw = Number.isFinite(textItem.text?.start)
+    const isTextMatchDuration = String(textItem.text?.matchDuration ?? '0') === '1';
+
+    const itemStartRaw = isTextMatchDuration
+      ? 0
+      : (Number.isFinite(textItem.text?.start)
         ? Number(textItem.text?.start)
-        : (textItem.timeline?.start ?? 0);
-    const itemEndRaw = Number.isFinite(textItem.text?.end)
+        : (textItem.timeline?.start ?? 0));
+    const itemEndRaw = isTextMatchDuration
+      ? (resolvedTimelineDuration > 0 ? resolvedTimelineDuration : (itemStartRaw + 5))
+      : (Number.isFinite(textItem.text?.end)
         ? Number(textItem.text?.end)
         : (Number.isFinite(textItem.timeline?.duration)
           ? itemStartRaw + Number(textItem.timeline?.duration)
-          : itemStartRaw + 5);
+          : itemStartRaw + 5));
 
     if (itemEndRaw <= outputStart || itemStartRaw >= outputStart + outputDuration) {
       continue;
@@ -1403,6 +1546,16 @@ const buildRenderV2FilterGraph = async (
   }
 
   const filterComplex = filters.filter(f => f && f.trim().length > 0).join(';');
+  if (debugEnabled) {
+    console.log(`RENDER_V2_DEBUG final timing${debugLabel}`, JSON.stringify(finalItemTiming.map(t => ({
+      id: t.entry.item?.id,
+      type: t.entry.type,
+      start: t.start,
+      duration: t.duration,
+      trimStart: t.trimStart,
+      end: t.start + t.duration
+    }))));
+  }
 
   return {
     inputArgs,
@@ -1419,7 +1572,13 @@ const buildRenderV2FfmpegArgs = async (
   config: RenderConfigV2,
   outputPath: string,
   tmpDir: string,
-  options?: { outputStart?: number; outputDuration?: number; allowShortDuration?: boolean }
+  options?: {
+    outputStart?: number;
+    outputDuration?: number;
+    allowShortDuration?: boolean;
+    debugEnabled?: boolean;
+    debugLabel?: string;
+  }
 ) => {
   const graph = await buildRenderV2FilterGraph(config, tmpDir, options);
   const renderOptions = config.renderOptions ?? {};
@@ -1543,14 +1702,15 @@ const buildRenderInputFingerprints = async (config: RenderConfigV2) => {
 };
 
 const buildRenderV2Signature = async (config: RenderConfigV2) => {
-  const inputFingerprint = await buildRenderInputFingerprints(config);
+  const inputFingerprints = await buildRenderInputFingerprints(config);
   const payload = {
     version: 1,
     segmentSeconds: RENDER_V2_SEGMENT_SECONDS,
-    inputs: inputFingerprint,
+    inputs: inputFingerprints,
     config
   };
-  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 20);
+  const signature = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 20);
+  return { signature, payload };
 };
 
 const isReusableRenderSegment = async (segmentPath: string, expectedDuration: number) => {
@@ -1571,10 +1731,14 @@ const escapeConcatFilePath = (value: string) => value.replace(/'/g, `'\\''`);
 const runRenderV2Task = async (
   config: RenderConfigV2,
   projectRoot: string,
-  onLog?: (chunk: string) => void,
-  onProgress?: (currentSeconds: number, totalSeconds: number) => void,
-  onSpawn?: (proc: ReturnType<typeof spawn>) => void
+  options?: {
+    onLog?: (chunk: string) => void;
+    onProgress?: (currentSeconds: number, totalSeconds: number) => void;
+    onSpawn?: (proc: ReturnType<typeof spawn>) => void;
+    forceNew?: boolean;
+  }
 ) => {
+  const { onLog, onProgress, onSpawn, forceNew } = options ?? {};
   const outputDir = path.join(projectRoot, 'output');
   await fs.mkdir(outputDir, { recursive: true });
   const formatRenderTimestamp = (date: Date) => {
@@ -1591,23 +1755,31 @@ const runRenderV2Task = async (
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-v2-'));
   try {
     const ffmpegPath = await getFfmpegPath();
-    const { outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir);
+    const { outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir, {
+      debugEnabled: LOG_RENDER_V2_DEBUG,
+      debugLabel: 'render-total'
+    });
     const totalSeconds = Number.isFinite(outputDuration) && outputDuration > 0 ? outputDuration : 0;
     if (totalSeconds <= 0) {
       throw new Error('Render has no output duration');
     }
-    const segmentSeconds = Math.min(RENDER_V2_SEGMENT_SECONDS, Math.max(1, totalSeconds));
-    const signature = await buildRenderV2Signature(config);
+    const { signature, payload } = await buildRenderV2Signature(config);
+    const segmentSeconds = Math.min(payload.segmentSeconds, Math.max(1, totalSeconds));
     const cacheRoot = path.join(projectRoot, RENDER_V2_CACHE_DIRNAME, signature);
+
+    if (forceNew) {
+      await fs.rm(cacheRoot, { recursive: true, force: true }).catch(() => null);
+    }
+
     const segmentsDir = path.join(cacheRoot, 'segments');
     await fs.mkdir(segmentsDir, { recursive: true });
     await fs.writeFile(
       path.join(cacheRoot, 'meta.json'),
       JSON.stringify({
         createdAt: new Date().toISOString(),
-        segmentSeconds,
         totalSeconds,
-        signature
+        signature,
+        ...payload
       }, null, 2),
       'utf-8'
     ).catch(() => null);
@@ -1637,7 +1809,9 @@ const runRenderV2Task = async (
         {
           outputStart: startSeconds,
           outputDuration: expectedDuration,
-          allowShortDuration: true
+          allowShortDuration: true,
+          debugEnabled: LOG_RENDER_V2_DEBUG,
+          debugLabel: `render-segment-${segmentIndex + 1}`
         }
       );
       await runFfmpegLoggedCommand(
@@ -1954,20 +2128,20 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
             continue;
           }
         }
-      if (selectedPath) {
-        const stats = await fs.stat(selectedPath);
-        job.fileName = path.basename(selectedPath);
-        job.fileSize = formatBytes(stats.size);
-        (job as any).__downloadSelectedPath = selectedPath;
-        const projectRoot = (job as any).__projectRoot as string | undefined;
-        const projectRelativePath = (job as any).__projectRelativePath as string | undefined;
-        if (projectRoot) {
-          (job as any).__inputPath = projectRoot;
-          (job as any).__inputRelativePath = projectRelativePath ?? path.relative(MEDIA_VAULT_ROOT, projectRoot);
-        } else {
-          (job as any).__inputPath = selectedPath;
-          (job as any).__inputRelativePath = path.relative(MEDIA_VAULT_ROOT, selectedPath);
-        }
+        if (selectedPath) {
+          const stats = await fs.stat(selectedPath);
+          job.fileName = path.basename(selectedPath);
+          job.fileSize = formatBytes(stats.size);
+          (job as any).__downloadSelectedPath = selectedPath;
+          const projectRoot = (job as any).__projectRoot as string | undefined;
+          const projectRelativePath = (job as any).__projectRelativePath as string | undefined;
+          if (projectRoot) {
+            (job as any).__inputPath = projectRoot;
+            (job as any).__inputRelativePath = projectRelativePath ?? path.relative(MEDIA_VAULT_ROOT, projectRoot);
+          } else {
+            (job as any).__inputPath = selectedPath;
+            (job as any).__inputRelativePath = path.relative(MEDIA_VAULT_ROOT, selectedPath);
+          }
           scheduleJobPersist(job);
         }
       }
@@ -2172,29 +2346,32 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const result = await runRenderV2Task(
         config,
         projectRoot,
-        chunk => appendJobLog(job, chunk),
-        (currentSeconds, totalSeconds) => {
-          if (totalSeconds <= 0) return;
-          const percent = Math.min(99, Math.round((currentSeconds / totalSeconds) * 100));
-          if (percent <= (renderTask.progress ?? 0)) return;
-          renderTask.progress = percent;
-          if (currentSeconds > 0) {
-            const elapsed = (Date.now() - renderStartedAt) / 1000;
-            if (elapsed > 0.5) {
-              const speed = currentSeconds / elapsed;
-              if (speed > 0) {
-                const remaining = Math.max(0, totalSeconds - currentSeconds);
-                const etaSeconds = remaining / speed;
-                job.eta = formatEtaSeconds(etaSeconds);
+        {
+          onLog: chunk => appendJobLog(job, chunk),
+          onProgress: (currentSeconds, totalSeconds) => {
+            if (totalSeconds <= 0) return;
+            const percent = Math.min(99, Math.round((currentSeconds / totalSeconds) * 100));
+            if (percent <= (renderTask.progress ?? 0)) return;
+            renderTask.progress = percent;
+            if (currentSeconds > 0) {
+              const elapsed = (Date.now() - renderStartedAt) / 1000;
+              if (elapsed > 0.5) {
+                const speed = currentSeconds / elapsed;
+                if (speed > 0) {
+                  const remaining = Math.max(0, totalSeconds - currentSeconds);
+                  const etaSeconds = remaining / speed;
+                  job.eta = formatEtaSeconds(etaSeconds);
+                }
               }
             }
-          }
-          const totalProgress = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
-          job.progress = Math.max(0, Math.min(99, Math.round(totalProgress / job.tasks.length)));
-          scheduleJobPersist(job);
-        },
-        proc => {
-          (job as any).__activeProcess = proc;
+            const totalProgress = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+            job.progress = Math.max(0, Math.min(99, Math.round(totalProgress / job.tasks.length)));
+            scheduleJobPersist(job);
+          },
+          onSpawn: proc => {
+            (job as any).__activeProcess = proc;
+          },
+          forceNew: (job as any).__forceRenderV2New
         }
       );
       appendJobLog(job, `Render output:\n- ${result.outputRelativePath}\n`);
@@ -2592,6 +2769,29 @@ const runFfprobeSampleRateWithBin = (bin: string, input: string) => new Promise<
   });
 });
 
+const runFfprobeStartTimeWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
+  const args = [
+    '-v', 'error',
+    '-show_entries', 'format=start_time',
+    '-of', 'default=noprint_wrappers=1:nokey=1',
+    input
+  ];
+  const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  let error = '';
+  proc.stdout.on('data', data => { output += data.toString(); });
+  proc.stderr.on('data', data => { error += data.toString(); });
+  proc.on('error', reject);
+  proc.on('close', code => {
+    if (code !== 0) {
+      reject(new Error(error || `ffprobe exited with code ${code}`));
+      return;
+    }
+    const value = Number.parseFloat(output.trim());
+    resolve(Number.isFinite(value) ? value : 0);
+  });
+});
+
 type TtsTaskResult = {
   outputPath: string;
   outputRelativePath: string;
@@ -2775,7 +2975,13 @@ const buildCascadedAmixFilters = (inputLabels: string[]) => {
       const chunk = current.slice(chunkStart, chunkStart + MAX_AMIX_INPUTS);
       const chunkIndex = Math.floor(chunkStart / MAX_AMIX_INPUTS);
       const outLabel = `mix${stage}_${chunkIndex}`;
-      filters.push(`${chunk.join('')}amix=inputs=${chunk.length}:duration=longest[${outLabel}]`);
+      const gainLabel = `mix${stage}_${chunkIndex}_gain`;
+      // Older ffmpeg builds may not support amix normalize option.
+      // Compensate attenuation with moderate gain and clamp peaks to avoid distortion.
+      const gain = Math.max(1, Math.sqrt(chunk.length));
+      const gainStr = gain.toFixed(4);
+      filters.push(`${chunk.join('')}amix=inputs=${chunk.length}:duration=longest:dropout_transition=0[${gainLabel}]`);
+      filters.push(`[${gainLabel}]volume=${gainStr},alimiter=limit=0.97[${outLabel}]`);
       next.push(`[${outLabel}]`);
     }
     current = next;
@@ -2924,6 +3130,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   }
   const cueDurations = cues.map(cue => Math.max(0, cue.end - cue.start));
   const audioDurations: number[] = [];
+  const cueStartOffsets: number[] = [];
   await fs.mkdir(outputDir, { recursive: true });
   const { outputName, outputSignature } = buildTtsOutputName(inputFullPath, ttsSettings);
   const outputPath = path.join(outputDir, outputName);
@@ -2948,9 +3155,10 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
   const cueCacheRoot = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
   await fs.mkdir(cueCacheRoot, { recursive: true });
-  const cuePaths: string[] = [];
+  const cuePaths: string[] = new Array(cues.length);
   const ffmpegPath = await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
-  for (let i = 0; i < cues.length; i += 1) {
+  let completedCueCount = 0;
+  const processCue = async (i: number) => {
     const cue = cues[i];
     const identity = buildCueCacheIdentity(
       sourceRelativePath,
@@ -3016,10 +3224,12 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     const cueFxFilter = buildCueFxFilter(fxRate, fxPitch, sourceSampleRate);
 
     if (!cueFxFilter) {
-      cuePaths.push(sourceCuePath);
-      audioDurations.push(sourceDuration);
-      options?.onProgress?.(i + 1, cues.length);
-      continue;
+      cuePaths[i] = sourceCuePath;
+      audioDurations[i] = sourceDuration;
+      cueStartOffsets[i] = await runFfprobeStartTime(sourceCuePath).catch(() => 0);
+      completedCueCount += 1;
+      options?.onProgress?.(completedCueCount, cues.length);
+      return;
     }
 
     const fxIdentity: CueFxCacheIdentity = {
@@ -3040,17 +3250,19 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       && fxMeta.filter === cueFxFilter;
 
     if (fxReusable) {
-      cuePaths.push(fxPaths.audioPath);
+      cuePaths[i] = fxPaths.audioPath;
       const durationFromMeta = Number(fxMeta.durationSeconds);
       if (Number.isFinite(durationFromMeta) && durationFromMeta > 0) {
-        audioDurations.push(durationFromMeta);
+        audioDurations[i] = durationFromMeta;
       } else {
         const duration = await runFfprobe(fxPaths.audioPath).catch(() => 0);
-        audioDurations.push(duration);
+        audioDurations[i] = duration;
       }
+      cueStartOffsets[i] = await runFfprobeStartTime(fxPaths.audioPath).catch(() => 0);
       options?.onLog?.(`CACHE HIT (tts cue fx ${i + 1}/${cues.length}): ${path.relative(projectRoot, fxPaths.audioPath)}\n`);
-      options?.onProgress?.(i + 1, cues.length);
-      continue;
+      completedCueCount += 1;
+      options?.onProgress?.(completedCueCount, cues.length);
+      return;
     }
 
     const fxArgs = [
@@ -3089,79 +3301,177 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       filter: cueFxFilter
     };
     await fs.writeFile(fxPaths.metaPath, JSON.stringify(fxMetaPayload, null, 2), 'utf-8');
-    cuePaths.push(fxPaths.audioPath);
-    audioDurations.push(fxDuration);
-    options?.onProgress?.(i + 1, cues.length);
+    cuePaths[i] = fxPaths.audioPath;
+    audioDurations[i] = fxDuration;
+    cueStartOffsets[i] = await runFfprobeStartTime(fxPaths.audioPath).catch(() => 0);
+    completedCueCount += 1;
+    options?.onProgress?.(completedCueCount, cues.length);
+  };
+
+  const workerCount = Math.min(TTS_CUE_CONCURRENCY, cues.length);
+  const workers = Array.from({ length: workerCount }, (_entry, workerIndex) => (async () => {
+    for (let i = workerIndex; i < cues.length; i += workerCount) {
+      await processCue(i);
+    }
+  })());
+  await Promise.all(workers);
+
+  if (cuePaths.some(entry => !entry)) {
+    throw new Error('Some TTS cues were not processed');
   }
 
-  const inputArgs = cuePaths.flatMap(cuePath => ['-i', cuePath]);
-  const lanes = assignCuesToNonOverlappingLanes(cues, cueDurations, audioDurations, overlapMode);
-  if (!lanes.length) {
+  const usableCueIndices = cues.flatMap((cue, index) => {
+    const cueDuration = Math.max(0, cueDurations[index] ?? (cue.end - cue.start));
+    const audioDuration = Math.max(0, audioDurations[index] ?? cueDuration);
+    const effectiveDuration = overlapMode === 'truncate' ? Math.min(audioDuration, cueDuration) : audioDuration;
+    return effectiveDuration > MIX_TIMING_EPSILON ? [index] : [];
+  });
+  if (!usableCueIndices.length) {
     throw new Error('No usable cue audio to mix');
   }
-  const filterChains: string[] = [];
-  const laneMixInputs: string[] = [];
-  const toFilterSeconds = (value: number) => roundFactor(Math.max(0, value));
-  lanes.forEach((lane, laneIndex) => {
-    const concatInputs: string[] = [];
-    let cursor = 0;
-    lane.items.forEach((item, itemIndex) => {
-      const gap = Math.max(0, item.start - cursor);
-      if (gap > MIX_TIMING_EPSILON) {
-        const silenceLabel = `lane${laneIndex}_sil${itemIndex}`;
-        filterChains.push(`anullsrc=r=24000:cl=mono,atrim=0:${toFilterSeconds(gap)},aformat=sample_fmts=fltp:sample_rates=24000:channel_layouts=mono[${silenceLabel}]`);
-        concatInputs.push(`[${silenceLabel}]`);
+  const runMixGraph = async (
+    indices: number[],
+    destinationPath: string,
+    applyLoudnorm: boolean,
+    targetLabel: string,
+    baseDelaySeconds = 0
+  ) => {
+    const inputArgs: string[] = [];
+    const filterChains: string[] = [];
+    const mixInputs: string[] = [];
+    indices.forEach((cueIndex, inputIndex) => {
+      const cue = cues[cueIndex];
+      const cueDuration = Math.max(0, cueDurations[cueIndex] ?? (cue.end - cue.start));
+      const audioDuration = Math.max(0, audioDurations[cueIndex] ?? cueDuration);
+      const effectiveDuration = overlapMode === 'truncate' ? Math.min(audioDuration, cueDuration) : audioDuration;
+      if (effectiveDuration <= MIX_TIMING_EPSILON) return;
+      inputArgs.push('-i', cuePaths[cueIndex]);
+      const sourceStartOffset = Math.max(0, cueStartOffsets[cueIndex] ?? 0);
+      const delaySeconds = Math.max(0, cue.start - baseDelaySeconds - sourceStartOffset);
+      const delayMs = Math.max(0, Math.round(delaySeconds * 1000));
+      const trim = overlapMode === 'truncate' ? `atrim=0:${roundFactor(effectiveDuration)},` : '';
+      filterChains.push(`[${inputIndex}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${inputIndex}]`);
+      mixInputs.push(`[a${inputIndex}]`);
+    });
+    if (!mixInputs.length) {
+      throw new Error('No usable cue audio to mix');
+    }
+    const mixPlan = buildCascadedAmixFilters(mixInputs);
+    const filter = [
+      ...filterChains,
+      ...mixPlan.filters,
+      applyLoudnorm
+        ? `${mixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
+        : `${mixPlan.outputLabel}anull[out]`
+    ].join(';');
+    const filterScriptPath = path.join(
+      cueCacheRoot,
+      `mix-filter-${targetLabel}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
+    );
+    await fs.writeFile(filterScriptPath, filter, 'utf-8');
+    const ffmpegArgs = [
+      '-y',
+      ...inputArgs,
+      '-filter_complex_script',
+      filterScriptPath,
+      '-map',
+      '[out]',
+      ...(applyLoudnorm
+        ? ['-c:a', 'libmp3lame', '-q:a', '4']
+        : ['-c:a', 'pcm_s16le']),
+      destinationPath
+    ];
+    const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
+    options?.onLog?.(`COMMAND (ffmpeg mix ${targetLabel}): ${ffmpegCommand}\n`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stderr = '';
+        proc.stderr.on('data', data => {
+          stderr += data.toString();
+        });
+        proc.on('error', reject);
+        proc.on('close', code => {
+          if (code === 0) resolve();
+          else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+        });
+      });
+    } finally {
+      await fs.rm(filterScriptPath, { force: true }).catch(() => null);
+    }
+  };
+
+  if (usableCueIndices.length <= TTS_MIX_CHUNK_SIZE) {
+    await runMixGraph(usableCueIndices, outputPath, true, 'single-pass');
+  } else {
+    const chunkStemDir = path.join(
+      cueCacheRoot,
+      `mix-stems-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    );
+    await fs.mkdir(chunkStemDir, { recursive: true });
+    const stemPaths: string[] = [];
+    const stemOffsetsMs: number[] = [];
+    try {
+      for (let chunkStart = 0; chunkStart < usableCueIndices.length; chunkStart += TTS_MIX_CHUNK_SIZE) {
+        const chunkIndex = Math.floor(chunkStart / TTS_MIX_CHUNK_SIZE);
+        const chunkIndices = usableCueIndices.slice(chunkStart, chunkStart + TTS_MIX_CHUNK_SIZE);
+        const chunkTimelineStart = chunkIndices.reduce((acc, cueIndex) => Math.min(acc, cues[cueIndex].start), Number.POSITIVE_INFINITY);
+        const stemPath = path.join(chunkStemDir, `stem-${String(chunkIndex).padStart(4, '0')}.wav`);
+        await runMixGraph(chunkIndices, stemPath, false, `chunk-${chunkIndex + 1}`, chunkTimelineStart);
+        stemPaths.push(stemPath);
+        stemOffsetsMs.push(Math.max(0, Math.round(chunkTimelineStart * 1000)));
       }
-      const cueLabel = `lane${laneIndex}_cue${itemIndex}`;
-      filterChains.push(`[${item.cueIndex}:a]atrim=0:${toFilterSeconds(item.duration)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=24000:channel_layouts=mono[${cueLabel}]`);
-      concatInputs.push(`[${cueLabel}]`);
-      cursor = item.start + item.duration;
-    });
-    const laneLabel = `lane${laneIndex}`;
-    filterChains.push(`${concatInputs.join('')}concat=n=${concatInputs.length}:v=0:a=1[${laneLabel}]`);
-    laneMixInputs.push(`[${laneLabel}]`);
-  });
-  const mixPlan = buildCascadedAmixFilters(laneMixInputs);
-  const filter = [
-    ...filterChains,
-    ...mixPlan.filters,
-    `${mixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
-  ].join(';');
-  const filterScriptPath = path.join(
-    cueCacheRoot,
-    `mix-filter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
-  );
-  await fs.writeFile(filterScriptPath, filter, 'utf-8');
-  const ffmpegArgs = [
-    '-y',
-    ...inputArgs,
-    '-filter_complex_script',
-    filterScriptPath,
-    '-map',
-    '[out]',
-    '-c:a',
-    'libmp3lame',
-    '-q:a',
-    '4',
-    outputPath
-  ];
-  const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
-  options?.onLog?.(`COMMAND (ffmpeg mix): ${ffmpegCommand}\n`);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let stderr = '';
-      proc.stderr.on('data', data => {
-        stderr += data.toString();
+      const finalInputArgs = stemPaths.flatMap(stemPath => ['-i', stemPath]);
+      const finalDelayChains = stemPaths.map((_path, index) => {
+        const delayMs = stemOffsetsMs[index] ?? 0;
+        return `[${index}:a]asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[s${index}]`;
       });
-      proc.on('error', reject);
-      proc.on('close', code => {
-        if (code === 0) resolve();
-        else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
-      });
-    });
-  } finally {
-    await fs.rm(filterScriptPath, { force: true }).catch(() => null);
+      const finalMixInputs = stemPaths.map((_path, index) => `[s${index}]`);
+      const finalMixPlan = buildCascadedAmixFilters(finalMixInputs);
+      const finalFilter = [
+        ...finalDelayChains,
+        ...finalMixPlan.filters,
+        `${finalMixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
+      ].join(';');
+      const finalFilterScriptPath = path.join(
+        cueCacheRoot,
+        `mix-filter-final-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
+      );
+      await fs.writeFile(finalFilterScriptPath, finalFilter, 'utf-8');
+      const finalArgs = [
+        '-y',
+        ...finalInputArgs,
+        '-filter_complex_script',
+        finalFilterScriptPath,
+        '-map',
+        '[out]',
+        '-c:a',
+        'libmp3lame',
+        '-q:a',
+        '4',
+        outputPath
+      ];
+      const finalCommand = [ffmpegPath, ...finalArgs].map(formatArg).join(' ');
+      options?.onLog?.(`COMMAND (ffmpeg mix final): ${finalCommand}\n`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn(ffmpegPath, finalArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+          let stderr = '';
+          proc.stderr.on('data', data => {
+            stderr += data.toString();
+          });
+          proc.on('error', reject);
+          proc.on('close', code => {
+            if (code === 0) resolve();
+            else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+          });
+        });
+      } finally {
+        await fs.rm(finalFilterScriptPath, { force: true }).catch(() => null);
+      }
+    } finally {
+      await fs.rm(chunkStemDir, { recursive: true, force: true }).catch(() => null);
+    }
   }
   const segments = cues.map((cue, index) => {
     const duration = audioDurations[index] ?? 0;
@@ -3200,6 +3510,17 @@ const runFfprobeSampleRate = async (input: string) => {
   } catch (error) {
     if (error instanceof Error && error.message.includes('ENOENT')) {
       return await runFfprobeSampleRateWithBin('/usr/bin/ffprobe', input);
+    }
+    throw error;
+  }
+};
+
+const runFfprobeStartTime = async (input: string) => {
+  try {
+    return await runFfprobeStartTimeWithBin(process.env.FFPROBE_PATH ?? 'ffprobe', input);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('ENOENT')) {
+      return await runFfprobeStartTimeWithBin('/usr/bin/ffprobe', input);
     }
     throw error;
   }
@@ -4126,6 +4447,43 @@ app.post('/api/jobs/:id/cancel', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/render-v2/check-status', async (req, res) => {
+  const config = req.body?.config as RenderConfigV2;
+  if (!config) return res.status(400).json({ error: 'Missing config' });
+  try {
+    const { signature } = await buildRenderV2Signature(config);
+
+    // Tìm job gần nhất có cùng signature
+    let match: JobRecord | undefined;
+    for (const j of jobs) {
+      const jRenderParams = (j.params as any)?.render;
+      if (!jRenderParams) continue;
+
+      // 1. Kiểm tra signature đã lưu (tối ưu)
+      if (jRenderParams.signature === signature) {
+        match = j;
+        break;
+      }
+
+      // 2. Fallback: So sánh cấu hình (phòng trường hợp job cũ chưa có signature trong params)
+      const jConfig = jRenderParams.configV2;
+      if (jConfig) {
+        const { signature: computedSig } = await buildRenderV2Signature(jConfig);
+        if (computedSig === signature) {
+          match = j;
+          break;
+        }
+      }
+    }
+
+    if (!match) return res.json({ signature, status: 'none' });
+    const isFinished = match.status === 'completed';
+    return res.json({ signature, status: isFinished ? 'completed' : 'unfinished', jobId: match.id });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
 app.post('/api/jobs/run', async (req, res) => {
   const pipelineId = Number(req.body?.pipelineId);
   const inlineGraph = req.body?.graph;
@@ -4162,6 +4520,7 @@ app.post('/api/jobs/run', async (req, res) => {
     overlapMode: ttsOverlapMode,
     removeLineBreaks: ttsRemoveLineBreaks
   });
+  const forceNew = req.body?.forceNew === true;
   const inputPaths = Array.isArray(req.body?.inputPaths)
     ? req.body.inputPaths.filter((value: unknown) => typeof value === 'string' && value.trim().length > 0)
     : undefined;
@@ -4176,6 +4535,13 @@ app.post('/api/jobs/run', async (req, res) => {
   const renderPreviewSeconds = renderPreviewSecondsRaw !== undefined && Number.isFinite(renderPreviewSecondsRaw) && renderPreviewSecondsRaw > 0
     ? Math.min(3600, Math.round(renderPreviewSecondsRaw * 1000) / 1000)
     : undefined;
+  if (LOG_RENDER_V2_DEBUG && renderConfigV2) {
+    console.log('RENDER_V2_DEBUG jobs/run received renderConfigV2', JSON.stringify({
+      renderPreviewSeconds: renderPreviewSeconds ?? null,
+      renderInputPaths: renderInputPaths ?? null,
+      config: summarizeRenderConfigForDebug(renderConfigV2)
+    }));
+  }
 
   try {
     let pipelineName = inlineName || 'Ad-hoc Pipeline';
@@ -4331,6 +4697,7 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__outputFormat = outputFormat;
       (job as any).__backend = backend;
       (job as any).__ttsOverlapMode = ttsOverlapMode;
+      (job as any).__forceRenderV2New = forceNew;
       (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
       if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
@@ -4380,11 +4747,15 @@ app.post('/api/jobs/run', async (req, res) => {
       }
 
       const renderPayload: Record<string, any> = {};
-      if (renderConfigV2) renderPayload.configV2 = renderConfigV2;
       if (renderInputPaths?.length) renderPayload.inputPaths = renderInputPaths;
       if (renderVideoPath) renderPayload.videoPath = renderVideoPath;
       if (renderAudioPath) renderPayload.audioPath = renderAudioPath;
       if (renderSubtitlePath) renderPayload.subtitlePath = renderSubtitlePath;
+      if (renderConfigV2) {
+        const { signature } = await buildRenderV2Signature(renderConfigV2);
+        renderPayload.configV2 = renderConfigV2;
+        renderPayload.signature = signature;
+      }
 
       job = {
         id: jobId,
@@ -4430,6 +4801,7 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__outputFormat = outputFormat;
       (job as any).__backend = backend;
       (job as any).__ttsOverlapMode = ttsOverlapMode;
+      (job as any).__forceRenderV2New = forceNew;
       (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
       if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
@@ -5150,6 +5522,12 @@ app.post('/api/render-preview-v2', async (req, res) => {
   let previewBuf: Buffer = RENDER_PREVIEW_BLACK_JPEG;
   let previewError: string | null = null;
   try {
+    if (LOG_RENDER_V2_DEBUG) {
+      console.log('RENDER_V2_DEBUG preview request', JSON.stringify({
+        at,
+        config: summarizeRenderConfigForDebug(config)
+      }));
+    }
     const baseOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
     const timelineDuration = Number.isFinite(config.timeline.duration) ? Math.max(0, Number(config.timeline.duration)) : 0;
     const framerate = Number.isFinite(config.timeline.framerate) && Number(config.timeline.framerate) > 0
@@ -5161,12 +5539,24 @@ app.post('/api/render-preview-v2', async (req, res) => {
       atSeconds = Math.min(atSeconds, Math.max(0, timelineDuration - frameDuration));
     }
     const previewOutputStart = baseOutputStart + atSeconds;
+    if (LOG_RENDER_V2_DEBUG) {
+      console.log('RENDER_V2_DEBUG preview window', JSON.stringify({
+        baseOutputStart,
+        timelineDuration,
+        framerate,
+        frameDuration,
+        atSeconds,
+        previewOutputStart
+      }));
+    }
     const graph = await buildRenderV2FilterGraph(config, tmpDir, {
       includeAudio: false,
       outputStart: previewOutputStart,
       outputDuration: frameDuration,
       allowShortDuration: true,
-      sampleAt: previewOutputStart
+      sampleAt: previewOutputStart,
+      debugEnabled: LOG_RENDER_V2_DEBUG,
+      debugLabel: 'preview'
     });
     const ffmpegPath = await getFfmpegPath();
     const args: string[] = ['-y'];

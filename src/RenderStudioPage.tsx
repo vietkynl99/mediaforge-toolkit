@@ -187,6 +187,45 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const singleTextEndNumber = coerceNumber(singleTextEndValue, singleTextEndFallback) ?? singleTextEndFallback;
   const singleTextSafeEnd = Math.max(singleTextStartNumber + 0.01, singleTextEndNumber);
   const singleTextDuration = singleTextValueDraft ? Math.max(0.01, singleTextSafeEnd - singleTextStartNumber) : 0;
+  const subtitleVisualDuration = React.useMemo(() => {
+    const raw = Number(renderSubtitleDuration);
+    if (Number.isFinite(raw) && raw > 0) {
+      return renderTimelineDuration > 0 ? Math.min(raw, renderTimelineDuration) : raw;
+    }
+    return renderTimelineDuration > 0 ? renderTimelineDuration : 0;
+  }, [renderSubtitleDuration, renderTimelineDuration]);
+  const subtitleTimelineCues = React.useMemo(() => {
+    if (subtitleVisualDuration <= 0) return [] as Array<{ start: number; end: number; text: string }>;
+    return (renderSubtitleCues ?? [])
+      .map(cue => {
+        const start = Math.max(0, Math.min(subtitleVisualDuration, cue.start));
+        const end = Math.max(0, Math.min(subtitleVisualDuration, cue.end));
+        return { start, end, text: cue.text ?? '' };
+      })
+      .filter(cue => cue.end > cue.start);
+  }, [renderSubtitleCues, subtitleVisualDuration]);
+  const subtitleTimelineLanes = React.useMemo(() => {
+    if (subtitleTimelineCues.length === 0) return [] as Array<Array<{ start: number; end: number; text: string }>>;
+    const sorted = [...subtitleTimelineCues].sort((a, b) => {
+      if (a.start !== b.start) return a.start - b.start;
+      return a.end - b.end;
+    });
+    const lanes: Array<Array<{ start: number; end: number; text: string }>> = [];
+    sorted.forEach(cue => {
+      let placed = false;
+      for (let i = 0; i < lanes.length; i += 1) {
+        const lane = lanes[i];
+        const last = lane[lane.length - 1];
+        if (!last || last.end <= cue.start) {
+          lane.push(cue);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) lanes.push([cue]);
+    });
+    return lanes;
+  }, [subtitleTimelineCues]);
   const subtitlePositionMode = String(renderParamsDraft?.subtitle?.positionMode ?? 'anchor');
   const positionXDraft = `${renderParamsDraft?.subtitle?.positionX ?? ''}`;
   const positionYDraft = `${renderParamsDraft?.subtitle?.positionY ?? ''}`;
@@ -1144,16 +1183,16 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     }
                                   }}
                                 >
-                                  {selectedTrackKey === 'subtitle' && renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && renderSubtitleDuration ? (
+                                  {selectedTrackKey === 'subtitle' && renderTimelineDuration > 0 && renderTimelineViewDuration > 0 && subtitleVisualDuration > 0 ? (
                                     <div
                                       className="absolute inset-y-0 left-0 rounded-md outline outline-2 outline-lime-400/80 pointer-events-none"
                                       style={{
-                                        width: `${Math.min(100, (renderSubtitleDuration / renderTimelineViewDuration) * 100)}%`
+                                        width: `${Math.min(100, (subtitleVisualDuration / renderTimelineViewDuration) * 100)}%`
                                       }}
                                     />
                                   ) : null}
-                                  {renderTimelineDuration > 0 && renderSubtitleCues.length > 0 ? (
-                                    renderSubtitleLanes.map((lane, laneIndex) => (
+                                  {renderTimelineDuration > 0 && subtitleTimelineCues.length > 0 ? (
+                                    subtitleTimelineLanes.map((lane, laneIndex) => (
                                       lane.map((cue, idx) => {
                                         const startPct = Math.max(
                                           0,
@@ -1166,8 +1205,14 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                           0,
                                           Math.min(100, (cue.end / renderTimelineViewDuration) * 100)
                                         );
-                                        const widthPct = Math.max(1.5, endPct - startPct);
-                                        const top = (renderSubtitleLanes.length - 1 - laneIndex) * renderSubtitleLaneHeight + 2;
+                                        const minCueWidthPct = renderTimelineWidth > 0
+                                          ? (2 / renderTimelineWidth) * 100
+                                          : 0;
+                                        const widthPct = Math.max(
+                                          minCueWidthPct,
+                                          Math.min(100 - startPct, endPct - startPct)
+                                        );
+                                        const top = (subtitleTimelineLanes.length - 1 - laneIndex) * renderSubtitleLaneHeight + 2;
                                         const height = Math.max(16, renderSubtitleLaneHeight - 4);
                                         return (
                                           <div
@@ -1181,11 +1226,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         );
                                       })
                                     ))
-                                  ) : renderSubtitleDuration ? (
+                                  ) : subtitleVisualDuration > 0 ? (
                                     <div
                                       className="h-full rounded-sm bg-zinc-200/70"
                                       style={{
-                                        width: `${Math.min(100, (renderSubtitleDuration / renderTimelineViewDuration) * 100)}%`
+                                        width: `${Math.min(100, (subtitleVisualDuration / renderTimelineViewDuration) * 100)}%`
                                       }}
                                     />
                                   ) : null}
