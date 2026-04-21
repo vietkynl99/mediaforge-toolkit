@@ -3532,11 +3532,11 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                   />
                                                 </div>
                                                 <div className="flex flex-col gap-1">
-                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Width (%)</label>
+                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Right (%)</label>
                                                   <input
                                                     type="number"
                                                     step="1"
-                                                    value={transform.maskWidth ?? '100'}
+                                                    value={transform.maskRight ?? '0'}
                                                     onFocus={holdPreview}
                                                     onBlur={() => setRenderPreviewHold(false)}
                                                     onKeyDown={(event) => {
@@ -3544,17 +3544,17 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                     }}
                                                     onChange={e => setRenderImageTransforms(prev => ({
                                                       ...prev,
-                                                      [file.id]: { ...prev[file.id], maskWidth: e.target.value }
+                                                      [file.id]: { ...prev[file.id], maskRight: e.target.value }
                                                     }))}
                                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                                   />
                                                 </div>
                                                 <div className="flex flex-col gap-1">
-                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Height (%)</label>
+                                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Bottom (%)</label>
                                                   <input
                                                     type="number"
                                                     step="1"
-                                                    value={transform.maskHeight ?? '100'}
+                                                    value={transform.maskBottom ?? '0'}
                                                     onFocus={holdPreview}
                                                     onBlur={() => setRenderPreviewHold(false)}
                                                     onKeyDown={(event) => {
@@ -3562,7 +3562,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                     }}
                                                     onChange={e => setRenderImageTransforms(prev => ({
                                                       ...prev,
-                                                      [file.id]: { ...prev[file.id], maskHeight: e.target.value }
+                                                      [file.id]: { ...prev[file.id], maskBottom: e.target.value }
                                                     }))}
                                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
                                                   />
