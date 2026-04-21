@@ -20,6 +20,9 @@ type TtsRequestBody = {
 
 const DEFAULT_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_OUTPUT_EXT = 'mp3';
+const TTS_CUE_OUTPUT_EXT = 'wav';
+const TTS_INTERNAL_SAMPLE_RATE = 24000;
+const TTS_INTERNAL_CHANNELS = 1;
 const SUBTITLE_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
 const PITCH_BASE_HZ = 200;
 const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
@@ -200,7 +203,9 @@ const buildAtempoFilters = (factor: number): string[] => {
 const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: number): string | null => {
   const safeRate = sanitizeRateFactor(rate);
   const safePitch = sanitizePitchSemitones(pitchSemitones);
-  const safeSampleRate = Number.isFinite(sampleRateHz) && sampleRateHz > 0 ? Math.round(sampleRateHz) : 24000;
+  const safeSampleRate = Number.isFinite(sampleRateHz) && sampleRateHz > 0
+    ? Math.round(sampleRateHz)
+    : TTS_INTERNAL_SAMPLE_RATE;
   const pitchRatio = Math.pow(2, safePitch / 12);
   const filters: string[] = [];
   if (Math.abs(safePitch) > 0.000001) {
@@ -212,6 +217,7 @@ const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: nu
   if (Math.abs(safeRate - 1) > 0.000001) {
     filters.push(...buildAtempoFilters(safeRate));
   }
+  filters.push(`aresample=${TTS_INTERNAL_SAMPLE_RATE}`);
   return filters.length ? filters.join(',') : null;
 };
 
@@ -441,6 +447,7 @@ ttsRouter.post('/', async (req, res) => {
   const voice = body.voice?.trim() || DEFAULT_VOICE;
   const safeText = text ?? '';
   const outputExt = DEFAULT_OUTPUT_EXT;
+  const cueOutputExt = TTS_CUE_OUTPUT_EXT;
   const rate = formatRate(body.rate);
   const pitch = formatPitch(body.pitch);
   const volume = formatVolume(body.volume);
@@ -516,11 +523,11 @@ ttsRouter.post('/', async (req, res) => {
           voice,
           volume,
           removeLineBreaks,
-          outputExt,
+          cueOutputExt,
           command
         );
         const key = toCueCacheKey(identity);
-        const { cacheDir, audioPath, metaPath } = buildCueCachePaths(projectRoot, i, key, outputExt);
+        const { cacheDir, audioPath, metaPath } = buildCueCachePaths(projectRoot, i, key, cueOutputExt);
         await fs.mkdir(cacheDir, { recursive: true });
         const existingMeta = await readCueCacheMeta(metaPath);
         const reusable = await fileExists(audioPath) && !!existingMeta && sameCueIdentity(existingMeta.identity, identity);
@@ -546,6 +553,32 @@ ttsRouter.post('/', async (req, res) => {
           ];
           args.push(...withFlagValue('--volume', volume));
           await runEdgeTtsWithRetry(command, args);
+          const normalizedPath = `${cuePath}.norm.wav`;
+          try {
+            await new Promise<void>((resolve, reject) => {
+              const proc = spawn(ffmpegPath, [
+                '-y',
+                '-i',
+                cuePath,
+                '-vn',
+                '-ar',
+                String(TTS_INTERNAL_SAMPLE_RATE),
+                '-ac',
+                String(TTS_INTERNAL_CHANNELS),
+                '-c:a',
+                'pcm_s16le',
+                normalizedPath
+              ], { stdio: 'ignore' });
+              proc.on('error', reject);
+              proc.on('close', code => {
+                if (code === 0) resolve();
+                else reject(new Error(`ffmpeg (cue normalize) exited with code ${code}`));
+              });
+            });
+            await fs.rename(normalizedPath, cuePath);
+          } finally {
+            await fs.rm(normalizedPath, { force: true }).catch(() => null);
+          }
           const meta: CueCacheMeta = {
             createdAt: new Date().toISOString(),
             audioPath: path.relative(projectRoot, cuePath),
@@ -558,7 +591,7 @@ ttsRouter.post('/', async (req, res) => {
         }
 
         if (!sourceSampleRate || sourceSampleRate <= 0) {
-          sourceSampleRate = 24000;
+          sourceSampleRate = TTS_INTERNAL_SAMPLE_RATE;
         }
         const cueFxFilter = buildCueFxFilter(fxRate, fxPitch, sourceSampleRate);
         if (!cueFxFilter) {
@@ -571,11 +604,11 @@ ttsRouter.post('/', async (req, res) => {
           cueIndex: i,
           rate: roundFactor(fxRate),
           pitch: roundFactor(fxPitch),
-          outputExt,
+          outputExt: cueOutputExt,
           engine: 'ffmpeg'
         };
         const fxKey = crypto.createHash('sha256').update(JSON.stringify(fxIdentity)).digest('hex').slice(0, 24);
-        const fxPaths = buildCueFxCachePaths(projectRoot, i, fxKey, outputExt);
+        const fxPaths = buildCueFxCachePaths(projectRoot, i, fxKey, cueOutputExt);
         await fs.mkdir(fxPaths.cacheDir, { recursive: true });
         const fxMeta = await readCueFxMeta(fxPaths.metaPath);
         const fxReusable = await fileExists(fxPaths.audioPath)
@@ -594,10 +627,12 @@ ttsRouter.post('/', async (req, res) => {
           '-vn',
           '-filter:a',
           cueFxFilter,
+          '-ar',
+          String(TTS_INTERNAL_SAMPLE_RATE),
+          '-ac',
+          String(TTS_INTERNAL_CHANNELS),
           '-c:a',
-          'libmp3lame',
-          '-q:a',
-          '4',
+          'pcm_s16le',
           fxPaths.audioPath
         ];
         await new Promise<void>((resolve, reject) => {
@@ -625,14 +660,14 @@ ttsRouter.post('/', async (req, res) => {
         const delayMs = Math.max(0, Math.round(cue.start * 1000));
         const duration = Math.max(0, cue.end - cue.start);
         const trim = overlapMode === 'truncate' ? `atrim=0:${duration},` : '';
-        filterChains.push(`[${index}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${index}]`);
+        filterChains.push(`[${index}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs},aresample=async=1[a${index}]`);
         mixInputs.push(`[a${index}]`);
       });
       const mixPlan = buildCascadedAmixFilters(mixInputs);
       const filter = [
         ...filterChains,
         ...mixPlan.filters,
-        `${mixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
+        `${mixPlan.outputLabel}anull[out]`
       ].join(';');
       const filterScriptPath = path.join(
         cacheRoot,
@@ -650,6 +685,10 @@ ttsRouter.post('/', async (req, res) => {
         'libmp3lame',
         '-q:a',
         '4',
+        '-ar',
+        String(TTS_INTERNAL_SAMPLE_RATE),
+        '-ac',
+        String(TTS_INTERNAL_CHANNELS),
         finalOutputPath
       ];
       try {

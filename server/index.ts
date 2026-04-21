@@ -147,6 +147,9 @@ const EDGE_TTS_MAX_RETRIES = Number(process.env.EDGE_TTS_MAX_RETRIES ?? 10);
 const EDGE_TTS_RETRY_DELAY_MS = 1000;
 const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_TTS_OUTPUT_EXT = 'mp3';
+const TTS_CUE_OUTPUT_EXT = 'wav';
+const TTS_INTERNAL_SAMPLE_RATE = 24000;
+const TTS_INTERNAL_CHANNELS = 1;
 const TTS_PITCH_BASE_HZ = 200;
 const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
 const TTS_CUE_CONCURRENCY = Math.max(
@@ -2974,7 +2977,9 @@ const buildAtempoFilters = (factor: number): string[] => {
 const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: number): string | null => {
   const safeRate = sanitizeRateFactor(rate);
   const safePitch = sanitizePitchSemitones(pitchSemitones);
-  const safeSampleRate = Number.isFinite(sampleRateHz) && sampleRateHz > 0 ? Math.round(sampleRateHz) : 24000;
+  const safeSampleRate = Number.isFinite(sampleRateHz) && sampleRateHz > 0
+    ? Math.round(sampleRateHz)
+    : TTS_INTERNAL_SAMPLE_RATE;
   const pitchRatio = Math.pow(2, safePitch / 12);
   const filters: string[] = [];
   if (Math.abs(safePitch) > 0.000001) {
@@ -2986,6 +2991,7 @@ const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: nu
   if (Math.abs(safeRate - 1) > 0.000001) {
     filters.push(...buildAtempoFilters(safeRate));
   }
+  filters.push(`aresample=${TTS_INTERNAL_SAMPLE_RATE}`);
   return filters.length ? filters.join(',') : null;
 };
 
@@ -3194,11 +3200,11 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       voice,
       volume,
       removeLineBreaks,
-      DEFAULT_TTS_OUTPUT_EXT,
+      TTS_CUE_OUTPUT_EXT,
       EDGE_TTS_CMD
     );
     const key = toCueCacheKey(identity);
-    const { cacheDir, audioPath, metaPath } = buildCueCachePaths(projectRoot, i, key, DEFAULT_TTS_OUTPUT_EXT);
+    const { cacheDir, audioPath, metaPath } = buildCueCachePaths(projectRoot, i, key, TTS_CUE_OUTPUT_EXT);
     await fs.mkdir(cacheDir, { recursive: true });
     const existingMeta = await readCueCacheMeta(metaPath);
     const reusable = await fileExists(audioPath) && !!existingMeta && sameCueIdentity(existingMeta.identity, identity);
@@ -3233,6 +3239,39 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
       options?.onLog?.(`COMMAND (tts cue raw ${i + 1}/${cues.length}): ${commandLine}\n`);
       await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`);
+      const normalizedPath = `${audioPath}.norm.wav`;
+      try {
+        const normalizeArgs = [
+          '-y',
+          '-i',
+          audioPath,
+          '-vn',
+          '-ar',
+          String(TTS_INTERNAL_SAMPLE_RATE),
+          '-ac',
+          String(TTS_INTERNAL_CHANNELS),
+          '-c:a',
+          'pcm_s16le',
+          normalizedPath
+        ];
+        const normalizeCommand = [ffmpegPath, ...normalizeArgs].map(formatArg).join(' ');
+        options?.onLog?.(`COMMAND (ffmpeg cue normalize ${i + 1}/${cues.length}): ${normalizeCommand}\n`);
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn(ffmpegPath, normalizeArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+          let stderr = '';
+          proc.stderr.on('data', data => {
+            stderr += data.toString();
+          });
+          proc.on('error', reject);
+          proc.on('close', code => {
+            if (code === 0) resolve();
+            else reject(new Error(stderr.trim() || `ffmpeg (cue normalize) exited with code ${code}`));
+          });
+        });
+        await fs.rename(normalizedPath, audioPath);
+      } finally {
+        await fs.rm(normalizedPath, { force: true }).catch(() => null);
+      }
       sourceDuration = await runFfprobe(audioPath).catch(() => 0);
       sourceSampleRate = await runFfprobeSampleRate(audioPath).catch(() => 0);
       const meta: CueCacheMeta = {
@@ -3246,7 +3285,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     }
 
     if (!sourceSampleRate || sourceSampleRate <= 0) {
-      sourceSampleRate = 24000;
+      sourceSampleRate = TTS_INTERNAL_SAMPLE_RATE;
     }
     const cueFxFilter = buildCueFxFilter(fxRate, fxPitch, sourceSampleRate);
 
@@ -3264,11 +3303,11 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       cueIndex: i,
       rate: roundFactor(fxRate),
       pitch: roundFactor(fxPitch),
-      outputExt: DEFAULT_TTS_OUTPUT_EXT,
+      outputExt: TTS_CUE_OUTPUT_EXT,
       engine: 'ffmpeg'
     };
     const fxKey = crypto.createHash('sha256').update(JSON.stringify(fxIdentity)).digest('hex').slice(0, 24);
-    const fxPaths = buildCueFxCachePaths(projectRoot, i, fxKey, DEFAULT_TTS_OUTPUT_EXT);
+    const fxPaths = buildCueFxCachePaths(projectRoot, i, fxKey, TTS_CUE_OUTPUT_EXT);
     await fs.mkdir(fxPaths.cacheDir, { recursive: true });
     const fxMeta = await readCueFxMeta(fxPaths.metaPath);
     const fxReusable = await fileExists(fxPaths.audioPath)
@@ -3299,10 +3338,12 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       '-vn',
       '-filter:a',
       cueFxFilter,
+      '-ar',
+      String(TTS_INTERNAL_SAMPLE_RATE),
+      '-ac',
+      String(TTS_INTERNAL_CHANNELS),
       '-c:a',
-      'libmp3lame',
-      '-q:a',
-      '4',
+      'pcm_s16le',
       fxPaths.audioPath
     ];
     const fxCommand = [ffmpegPath, ...fxArgs].map(formatArg).join(' ');
@@ -3359,7 +3400,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   const runMixGraph = async (
     indices: number[],
     destinationPath: string,
-    applyLoudnorm: boolean,
     targetLabel: string,
     baseDelaySeconds = 0
   ) => {
@@ -3377,7 +3417,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       const delaySeconds = Math.max(0, cue.start - baseDelaySeconds - sourceStartOffset);
       const delayMs = Math.max(0, Math.round(delaySeconds * 1000));
       const trim = overlapMode === 'truncate' ? `atrim=0:${roundFactor(effectiveDuration)},` : '';
-      filterChains.push(`[${inputIndex}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[a${inputIndex}]`);
+      filterChains.push(`[${inputIndex}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs},aresample=async=1[a${inputIndex}]`);
       mixInputs.push(`[a${inputIndex}]`);
     });
     if (!mixInputs.length) {
@@ -3387,10 +3427,10 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     const filter = [
       ...filterChains,
       ...mixPlan.filters,
-      applyLoudnorm
-        ? `${mixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
-        : `${mixPlan.outputLabel}anull[out]`
+      `${mixPlan.outputLabel}anull[out]`
     ].join(';');
+    const destinationExt = path.extname(destinationPath).toLowerCase();
+    const isWavOutput = destinationExt === '.wav';
     const filterScriptPath = path.join(
       cueCacheRoot,
       `mix-filter-${targetLabel}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
@@ -3403,9 +3443,13 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       filterScriptPath,
       '-map',
       '[out]',
-      ...(applyLoudnorm
-        ? ['-c:a', 'libmp3lame', '-q:a', '4']
-        : ['-c:a', 'pcm_s16le']),
+      ...(isWavOutput
+        ? ['-c:a', 'pcm_s16le']
+        : ['-c:a', 'libmp3lame', '-q:a', '4']),
+      '-ar',
+      String(TTS_INTERNAL_SAMPLE_RATE),
+      '-ac',
+      String(TTS_INTERNAL_CHANNELS),
       destinationPath
     ];
     const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
@@ -3429,7 +3473,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   };
 
   if (usableCueIndices.length <= TTS_MIX_CHUNK_SIZE) {
-    await runMixGraph(usableCueIndices, outputPath, true, 'single-pass');
+    await runMixGraph(usableCueIndices, outputPath, 'single-pass');
   } else {
     const chunkStemDir = path.join(
       cueCacheRoot,
@@ -3444,21 +3488,21 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
         const chunkIndices = usableCueIndices.slice(chunkStart, chunkStart + TTS_MIX_CHUNK_SIZE);
         const chunkTimelineStart = chunkIndices.reduce((acc, cueIndex) => Math.min(acc, cues[cueIndex].start), Number.POSITIVE_INFINITY);
         const stemPath = path.join(chunkStemDir, `stem-${String(chunkIndex).padStart(4, '0')}.wav`);
-        await runMixGraph(chunkIndices, stemPath, false, `chunk-${chunkIndex + 1}`, chunkTimelineStart);
+        await runMixGraph(chunkIndices, stemPath, `chunk-${chunkIndex + 1}`, chunkTimelineStart);
         stemPaths.push(stemPath);
         stemOffsetsMs.push(Math.max(0, Math.round(chunkTimelineStart * 1000)));
       }
       const finalInputArgs = stemPaths.flatMap(stemPath => ['-i', stemPath]);
       const finalDelayChains = stemPaths.map((_path, index) => {
         const delayMs = stemOffsetsMs[index] ?? 0;
-        return `[${index}:a]asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs}[s${index}]`;
+        return `[${index}:a]asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs},aresample=async=1[s${index}]`;
       });
       const finalMixInputs = stemPaths.map((_path, index) => `[s${index}]`);
       const finalMixPlan = buildCascadedAmixFilters(finalMixInputs);
       const finalFilter = [
         ...finalDelayChains,
         ...finalMixPlan.filters,
-        `${finalMixPlan.outputLabel}loudnorm=I=-16:TP=-1.5:LRA=11[out]`
+        `${finalMixPlan.outputLabel}anull[out]`
       ].join(';');
       const finalFilterScriptPath = path.join(
         cueCacheRoot,
@@ -3476,6 +3520,10 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
         'libmp3lame',
         '-q:a',
         '4',
+        '-ar',
+        String(TTS_INTERNAL_SAMPLE_RATE),
+        '-ac',
+        String(TTS_INTERNAL_CHANNELS),
         outputPath
       ];
       const finalCommand = [ffmpegPath, ...finalArgs].map(formatArg).join(' ');
