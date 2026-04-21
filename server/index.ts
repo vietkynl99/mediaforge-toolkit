@@ -2912,7 +2912,7 @@ const buildCueCacheIdentity = (
 
 const buildCueCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
   const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
-  const stem = `cue-${String(cueIndex).padStart(4, '0')}-${key}`;
+  const stem = `cue-${String(cueIndex + 1).padStart(4, '0')}-${key}`;
   return {
     cacheDir,
     audioPath: path.join(cacheDir, `${stem}.${outputExt}`),
@@ -3057,7 +3057,7 @@ const assignCuesToNonOverlappingLanes = (
 
 const buildCueFxCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
   const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
-  const stem = `cue-${String(cueIndex).padStart(4, '0')}-fx-${key}`;
+  const stem = `cue-${String(cueIndex + 1).padStart(4, '0')}-fx-${key}`;
   return {
     cacheDir,
     audioPath: path.join(cacheDir, `${stem}.${outputExt}`),
