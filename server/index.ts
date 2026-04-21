@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs/promises';
-import { createReadStream } from 'fs';
+import { createReadStream, readFileSync } from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import os from 'os';
@@ -119,12 +119,29 @@ type RenderEffectV2 = {
   params?: Record<string, unknown>;
 };
 
+type ProjectConfig = {
+  renderV2?: {
+    ffmpegThreads?: number;
+  };
+};
+
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
 const AUDIO_EXT = new Set(['.wav', '.mp3', '.aac', '.flac', '.ogg', '.m4a']);
 const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff']);
 const PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const PREVIEW_MAX_SECONDS = 60;
+const loadProjectConfig = (): ProjectConfig => {
+  const configPath = path.join(process.cwd(), 'config.json');
+  try {
+    const raw = readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as ProjectConfig) : {};
+  } catch {
+    return {};
+  }
+};
+const PROJECT_CONFIG = loadProjectConfig();
 const EDGE_TTS_CMD = process.env.EDGE_TTS_CMD?.trim() || 'edge-tts';
 const EDGE_TTS_MAX_RETRIES = Number(process.env.EDGE_TTS_MAX_RETRIES ?? 10);
 const EDGE_TTS_RETRY_DELAY_MS = 1000;
@@ -157,6 +174,14 @@ const RENDER_V2_SEGMENT_SECONDS = Math.max(
     ? Number(process.env.RENDER_V2_SEGMENT_SECONDS)
     : 60
 );
+const RENDER_V2_FFMPEG_THREADS = (() => {
+  const valueFromConfig = Number(PROJECT_CONFIG.renderV2?.ffmpegThreads);
+  const valueFromEnv = Number(process.env.RENDER_V2_FFMPEG_THREADS);
+  const value = Number.isFinite(valueFromConfig) ? valueFromConfig : valueFromEnv;
+  if (!Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized >= 1 ? normalized : null;
+})();
 const MAX_AMIX_INPUTS = 1024;
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
@@ -1582,6 +1607,7 @@ const buildRenderV2FfmpegArgs = async (
 ) => {
   const graph = await buildRenderV2FilterGraph(config, tmpDir, options);
   const renderOptions = config.renderOptions ?? {};
+  const threadCount = RENDER_V2_FFMPEG_THREADS;
   const codec = renderOptions.codec === 'h265' ? 'libx265' : 'libx264';
   const preset = typeof renderOptions.preset === 'string' && renderOptions.preset.trim()
     ? renderOptions.preset.trim()
@@ -1611,6 +1637,7 @@ const buildRenderV2FfmpegArgs = async (
     String(crf),
     ...(tune ? ['-tune', tune] : []),
     ...(gop && gop > 0 ? ['-g', String(Math.round(gop))] : []),
+    ...(threadCount ? ['-threads', String(threadCount)] : []),
     '-r',
     String(graph.framerate),
     '-t',
