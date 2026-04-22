@@ -5194,6 +5194,7 @@ const runUvrTask = async (
     model,
     '--save-format',
     outputFormat,
+    '--both',
     '--yes',
   ];
   const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
