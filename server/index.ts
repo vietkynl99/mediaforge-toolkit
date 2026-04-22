@@ -161,15 +161,26 @@ const TTS_CUE_CONCURRENCY = Math.max(
       : 3
   )
 );
-const TTS_MIX_CHUNK_SIZE = Math.max(
-  25,
+const TTS_MIX_SEGMENT_SECONDS = Math.max(
+  120,
   Math.min(
-    1000,
-    Number.isFinite(Number(process.env.TTS_MIX_CHUNK_SIZE))
-      ? Number(process.env.TTS_MIX_CHUNK_SIZE)
+    300,
+    Number.isFinite(Number(process.env.TTS_MIX_SEGMENT_SECONDS))
+      ? Number(process.env.TTS_MIX_SEGMENT_SECONDS)
       : 180
   )
 );
+const TTS_MP3_BITRATE_KBPS = Math.max(
+  64,
+  Math.min(
+    320,
+    Number.isFinite(Number(process.env.TTS_MP3_BITRATE_KBPS))
+      ? Number(process.env.TTS_MP3_BITRATE_KBPS)
+      : 128
+  )
+);
+const TTS_DEBUG_TIMING =
+  ['1', 'true', 'yes', 'on'].includes((process.env.TTS_DEBUG_TIMING ?? '').toLowerCase());
 const RENDER_V2_CACHE_DIRNAME = '.mediaforge/render-v2-cache';
 const RENDER_V2_SEGMENT_SECONDS = Math.max(
   5,
@@ -185,7 +196,6 @@ const RENDER_V2_FFMPEG_THREADS = (() => {
   const normalized = Math.floor(value);
   return normalized >= 1 ? normalized : null;
 })();
-const MAX_AMIX_INPUTS = 1024;
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
@@ -2809,6 +2819,44 @@ const runFfprobeSampleRateWithBin = (bin: string, input: string) => new Promise<
   });
 });
 
+const runFfprobeStreamSamplesWithBin = (bin: string, input: string) => new Promise<{ durationTs: number; sampleRate: number; timeBase: string }>((resolve, reject) => {
+  const args = [
+    '-v', 'error',
+    '-select_streams', 'a:0',
+    '-show_entries', 'stream=duration_ts,sample_rate,time_base',
+    '-of', 'default=noprint_wrappers=1:nokey=0',
+    input
+  ];
+  const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  let error = '';
+  proc.stdout.on('data', data => { output += data.toString(); });
+  proc.stderr.on('data', data => { error += data.toString(); });
+  proc.on('error', reject);
+  proc.on('close', code => {
+    if (code !== 0) {
+      reject(new Error(error || `ffprobe exited with code ${code}`));
+      return;
+    }
+    const values = new Map<string, string>();
+    output.split(/\r?\n/).forEach(raw => {
+      const line = raw.trim();
+      if (!line) return;
+      const idx = line.indexOf('=');
+      if (idx <= 0) return;
+      values.set(line.slice(0, idx), line.slice(idx + 1));
+    });
+    const sampleRate = Number.parseInt(values.get('sample_rate') ?? '', 10);
+    const durationTs = Number.parseInt(values.get('duration_ts') ?? '', 10);
+    const timeBase = values.get('time_base') ?? '0/1';
+    resolve({
+      durationTs: Number.isFinite(durationTs) ? durationTs : 0,
+      sampleRate: Number.isFinite(sampleRate) ? sampleRate : 0,
+      timeBase
+    });
+  });
+});
+
 const runFfprobeStartTimeWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
   const args = [
     '-v', 'error',
@@ -3005,65 +3053,7 @@ const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: nu
   return filters.length ? filters.join(',') : null;
 };
 
-const buildCascadedAmixFilters = (inputLabels: string[]) => {
-  if (!inputLabels.length) {
-    throw new Error('No audio inputs to mix');
-  }
-  const filters: string[] = [];
-  let stage = 0;
-  let current = [...inputLabels];
-  while (current.length > 1) {
-    const next: string[] = [];
-    for (let chunkStart = 0; chunkStart < current.length; chunkStart += MAX_AMIX_INPUTS) {
-      const chunk = current.slice(chunkStart, chunkStart + MAX_AMIX_INPUTS);
-      const chunkIndex = Math.floor(chunkStart / MAX_AMIX_INPUTS);
-      const outLabel = `mix${stage}_${chunkIndex}`;
-      const gainLabel = `mix${stage}_${chunkIndex}_gain`;
-      // Older ffmpeg builds may not support amix normalize option.
-      // Compensate attenuation with moderate gain and clamp peaks to avoid distortion.
-      const gain = Math.max(1, Math.sqrt(chunk.length));
-      const gainStr = gain.toFixed(4);
-      filters.push(`${chunk.join('')}amix=inputs=${chunk.length}:duration=longest:dropout_transition=0[${gainLabel}]`);
-      filters.push(`[${gainLabel}]volume=${gainStr},alimiter=limit=0.97[${outLabel}]`);
-      next.push(`[${outLabel}]`);
-    }
-    current = next;
-    stage += 1;
-  }
-  return { filters, outputLabel: current[0] };
-};
-
-type CueMixLaneItem = {
-  cueIndex: number;
-  start: number;
-  duration: number;
-};
-
 const MIX_TIMING_EPSILON = 0.0005;
-
-const assignCuesToNonOverlappingLanes = (
-  cues: SubtitleCue[],
-  cueDurations: number[],
-  audioDurations: number[],
-  overlapMode: 'overlap' | 'truncate'
-) => {
-  const lanes: Array<{ items: CueMixLaneItem[]; lastEnd: number }> = [];
-  for (let index = 0; index < cues.length; index += 1) {
-    const cue = cues[index];
-    const cueDuration = Math.max(0, cueDurations[index] ?? (cue.end - cue.start));
-    const audioDuration = Math.max(0, audioDurations[index] ?? cueDuration);
-    const effectiveDuration = overlapMode === 'truncate' ? Math.min(audioDuration, cueDuration) : audioDuration;
-    if (effectiveDuration <= MIX_TIMING_EPSILON) continue;
-    let lane = lanes.find(entry => cue.start + MIX_TIMING_EPSILON >= entry.lastEnd);
-    if (!lane) {
-      lane = { items: [], lastEnd: 0 };
-      lanes.push(lane);
-    }
-    lane.items.push({ cueIndex: index, start: cue.start, duration: effectiveDuration });
-    lane.lastEnd = cue.start + effectiveDuration;
-  }
-  return lanes;
-};
 
 const buildCueFxCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
   const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
@@ -3173,7 +3163,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   }
   const cueDurations = cues.map(cue => Math.max(0, cue.end - cue.start));
   const audioDurations: number[] = [];
-  const cueStartOffsets: number[] = [];
   await fs.mkdir(outputDir, { recursive: true });
   const { outputName, outputSignature } = buildTtsOutputName(inputFullPath, ttsSettings);
   const outputPath = path.join(outputDir, outputName);
@@ -3302,7 +3291,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     if (!cueFxFilter) {
       cuePaths[i] = sourceCuePath;
       audioDurations[i] = sourceDuration;
-      cueStartOffsets[i] = await runFfprobeStartTime(sourceCuePath).catch(() => 0);
       completedCueCount += 1;
       options?.onProgress?.(completedCueCount, cues.length);
       return;
@@ -3334,7 +3322,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
         const duration = await runFfprobe(fxPaths.audioPath).catch(() => 0);
         audioDurations[i] = duration;
       }
-      cueStartOffsets[i] = await runFfprobeStartTime(fxPaths.audioPath).catch(() => 0);
       options?.onLog?.(`CACHE HIT (tts cue fx ${i + 1}/${cues.length}): ${path.relative(projectRoot, fxPaths.audioPath)}\n`);
       completedCueCount += 1;
       options?.onProgress?.(completedCueCount, cues.length);
@@ -3381,7 +3368,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     await fs.writeFile(fxPaths.metaPath, JSON.stringify(fxMetaPayload, null, 2), 'utf-8');
     cuePaths[i] = fxPaths.audioPath;
     audioDurations[i] = fxDuration;
-    cueStartOffsets[i] = await runFfprobeStartTime(fxPaths.audioPath).catch(() => 0);
     completedCueCount += 1;
     options?.onProgress?.(completedCueCount, cues.length);
   };
@@ -3407,140 +3393,130 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   if (!usableCueIndices.length) {
     throw new Error('No usable cue audio to mix');
   }
-  const runMixGraph = async (
-    indices: number[],
-    destinationPath: string,
-    targetLabel: string,
-    baseDelaySeconds = 0
-  ) => {
-    const inputArgs: string[] = [];
-    const filterChains: string[] = [];
-    const mixInputs: string[] = [];
-    indices.forEach((cueIndex, inputIndex) => {
-      const cue = cues[cueIndex];
-      const cueDuration = Math.max(0, cueDurations[cueIndex] ?? (cue.end - cue.start));
-      const audioDuration = Math.max(0, audioDurations[cueIndex] ?? cueDuration);
-      const effectiveDuration = overlapMode === 'truncate' ? Math.min(audioDuration, cueDuration) : audioDuration;
-      if (effectiveDuration <= MIX_TIMING_EPSILON) return;
-      inputArgs.push('-i', cuePaths[cueIndex]);
-      const sourceStartOffset = Math.max(0, cueStartOffsets[cueIndex] ?? 0);
-      const delaySeconds = Math.max(0, cue.start - baseDelaySeconds - sourceStartOffset);
-      const delayMs = Math.max(0, Math.round(delaySeconds * 1000));
-      const trim = overlapMode === 'truncate' ? `atrim=0:${roundFactor(effectiveDuration)},` : '';
-      filterChains.push(`[${inputIndex}:a]${trim}asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs},aresample=async=1[a${inputIndex}]`);
-      mixInputs.push(`[a${inputIndex}]`);
-    });
-    if (!mixInputs.length) {
-      throw new Error('No usable cue audio to mix');
-    }
-    const mixPlan = buildCascadedAmixFilters(mixInputs);
-    const filter = [
-      ...filterChains,
-      ...mixPlan.filters,
-      `${mixPlan.outputLabel}anull[out]`
-    ].join(';');
-    const destinationExt = path.extname(destinationPath).toLowerCase();
-    const isWavOutput = destinationExt === '.wav';
-    const filterScriptPath = path.join(
-      cueCacheRoot,
-      `mix-filter-${targetLabel}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
-    );
-    await fs.writeFile(filterScriptPath, filter, 'utf-8');
-    const ffmpegArgs = [
-      '-y',
-      ...inputArgs,
-      '-filter_complex_script',
-      filterScriptPath,
-      '-map',
-      '[out]',
-      ...(isWavOutput
-        ? ['-c:a', 'pcm_s16le']
-        : ['-c:a', 'libmp3lame', '-q:a', '4']),
-      '-ar',
-      String(TTS_INTERNAL_SAMPLE_RATE),
-      '-ac',
-      String(TTS_INTERNAL_CHANNELS),
-      destinationPath
-    ];
-    const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
-    options?.onLog?.(`COMMAND (ffmpeg mix ${targetLabel}): ${ffmpegCommand}\n`);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-        let stderr = '';
-        proc.stderr.on('data', data => {
-          stderr += data.toString();
-        });
-        proc.on('error', reject);
-        proc.on('close', code => {
-          if (code === 0) resolve();
-          else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
-        });
-      });
-    } finally {
-      await fs.rm(filterScriptPath, { force: true }).catch(() => null);
-    }
+  const cueEffectiveDurations = cues.map((cue, index) => {
+    const cueDuration = Math.max(0, cueDurations[index] ?? (cue.end - cue.start));
+    const audioDuration = Math.max(0, audioDurations[index] ?? cueDuration);
+    return overlapMode === 'truncate' ? Math.min(audioDuration, cueDuration) : audioDuration;
+  });
+  const cueStartSamples = cues.map(cue => Math.max(0, Math.round(cue.start * TTS_INTERNAL_SAMPLE_RATE)));
+  const cueEffectiveDurationSamples = cueEffectiveDurations.map(duration =>
+    Math.max(0, Math.round(duration * TTS_INTERNAL_SAMPLE_RATE))
+  );
+  const timelineEndSamples = usableCueIndices.reduce((acc, cueIndex) => {
+    const cueEndSample = cueStartSamples[cueIndex] + Math.max(0, cueEffectiveDurationSamples[cueIndex] ?? 0);
+    return Math.max(acc, cueEndSample);
+  }, 0);
+  const debugLog = (message: string) => {
+    if (!TTS_DEBUG_TIMING) return;
+    options?.onLog?.(`[TTS_DEBUG] ${message}\n`);
   };
-
-  if (usableCueIndices.length <= TTS_MIX_CHUNK_SIZE) {
-    await runMixGraph(usableCueIndices, outputPath, 'single-pass');
-  } else {
-    const chunkStemDir = path.join(
-      cueCacheRoot,
-      `mix-stems-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  if (TTS_DEBUG_TIMING) {
+    const pick = Array.from(new Set([
+      usableCueIndices[0],
+      usableCueIndices[Math.floor(usableCueIndices.length / 2)],
+      usableCueIndices[usableCueIndices.length - 1]
+    ].filter((entry): entry is number => Number.isFinite(entry))));
+    debugLog(
+      `timeline samples: sampleRate=${TTS_INTERNAL_SAMPLE_RATE}, cues=${cues.length}, usableCues=${usableCueIndices.length}, timelineEndSamples=${timelineEndSamples}, timelineEndSeconds=${(timelineEndSamples / TTS_INTERNAL_SAMPLE_RATE).toFixed(6)}`
     );
-    await fs.mkdir(chunkStemDir, { recursive: true });
-    const stemPaths: string[] = [];
-    const stemOffsetsMs: number[] = [];
-    try {
-      for (let chunkStart = 0; chunkStart < usableCueIndices.length; chunkStart += TTS_MIX_CHUNK_SIZE) {
-        const chunkIndex = Math.floor(chunkStart / TTS_MIX_CHUNK_SIZE);
-        const chunkIndices = usableCueIndices.slice(chunkStart, chunkStart + TTS_MIX_CHUNK_SIZE);
-        const chunkTimelineStart = chunkIndices.reduce((acc, cueIndex) => Math.min(acc, cues[cueIndex].start), Number.POSITIVE_INFINITY);
-        const stemPath = path.join(chunkStemDir, `stem-${String(chunkIndex).padStart(4, '0')}.wav`);
-        await runMixGraph(chunkIndices, stemPath, `chunk-${chunkIndex + 1}`, chunkTimelineStart);
-        stemPaths.push(stemPath);
-        stemOffsetsMs.push(Math.max(0, Math.round(chunkTimelineStart * 1000)));
-      }
-      const finalInputArgs = stemPaths.flatMap(stemPath => ['-i', stemPath]);
-      const finalDelayChains = stemPaths.map((_path, index) => {
-        const delayMs = stemOffsetsMs[index] ?? 0;
-        return `[${index}:a]asetpts=PTS-STARTPTS,adelay=${delayMs}|${delayMs},aresample=async=1[s${index}]`;
-      });
-      const finalMixInputs = stemPaths.map((_path, index) => `[s${index}]`);
-      const finalMixPlan = buildCascadedAmixFilters(finalMixInputs);
-      const finalFilter = [
-        ...finalDelayChains,
-        ...finalMixPlan.filters,
-        `${finalMixPlan.outputLabel}anull[out]`
-      ].join(';');
-      const finalFilterScriptPath = path.join(
-        cueCacheRoot,
-        `mix-filter-final-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
+    pick.forEach(cueIndex => {
+      const cue = cues[cueIndex];
+      const startSample = cueStartSamples[cueIndex];
+      const durationSample = cueEffectiveDurationSamples[cueIndex];
+      debugLog(
+        `cue#${cueIndex + 1}: start=${cue.start.toFixed(3)}s(${startSample}), end=${cue.end.toFixed(3)}s, effectiveSamples=${durationSample}, textLen=${cue.text.length}`
       );
-      await fs.writeFile(finalFilterScriptPath, finalFilter, 'utf-8');
-      const finalArgs = [
+    });
+  }
+  if (timelineEndSamples <= 0) {
+    throw new Error('No usable cue audio to mix');
+  }
+  const segmentLengthSamples = Math.max(1, Math.round(TTS_MIX_SEGMENT_SECONDS * TTS_INTERNAL_SAMPLE_RATE));
+  const segmentCount = Math.max(1, Math.ceil(timelineEndSamples / segmentLengthSamples));
+  const segmentDir = path.join(
+    cueCacheRoot,
+    `mix-segments-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  );
+  await fs.mkdir(segmentDir, { recursive: true });
+  const segmentPaths: string[] = [];
+  const segmentDurationsSeconds: number[] = [];
+  try {
+    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+      const t0Sample = segmentIndex * segmentLengthSamples;
+      const t1Sample = Math.min(timelineEndSamples, t0Sample + segmentLengthSamples);
+      const segmentDurationSamples = Math.max(1, t1Sample - t0Sample);
+      const segmentPath = path.join(segmentDir, `segment-${String(segmentIndex).padStart(4, '0')}.wav`);
+      const cuesInSegment = usableCueIndices.filter(cueIndex => {
+        const cueStartSample = cueStartSamples[cueIndex];
+        const cueEndSample = cueStartSample + Math.max(0, cueEffectiveDurationSamples[cueIndex] ?? 0);
+        return cueEndSample > t0Sample && cueStartSample < t1Sample;
+      });
+
+      const inputArgs: string[] = [
+        '-f',
+        'lavfi',
+        '-i',
+        `anullsrc=r=${TTS_INTERNAL_SAMPLE_RATE}:cl=mono`
+      ];
+      const filterChains: string[] = [
+        `[0:a]atrim=start_sample=0:end_sample=${segmentDurationSamples},asetpts=PTS-STARTPTS[base]`
+      ];
+      const mixInputs: string[] = ['[base]'];
+      let inputIndex = 1;
+
+      usableCueIndices.forEach(cueIndex => {
+        const effectiveDurationSamples = Math.max(0, cueEffectiveDurationSamples[cueIndex] ?? 0);
+        if (effectiveDurationSamples <= 0) return;
+        const cueStartSample = cueStartSamples[cueIndex];
+        const cueEndSample = cueStartSample + effectiveDurationSamples;
+        if (cueEndSample <= t0Sample || cueStartSample >= t1Sample) return;
+
+        const sourceTrimStartSamples = Math.max(0, t0Sample - cueStartSample);
+        const playStartSample = Math.max(cueStartSample, t0Sample);
+        const playEndSample = Math.min(cueEndSample, t1Sample);
+        const playDurationSamples = Math.max(0, playEndSample - playStartSample);
+        if (playDurationSamples <= 0) return;
+
+        const delaySamples = Math.max(0, playStartSample - t0Sample);
+        const trimEndSample = sourceTrimStartSamples + playDurationSamples;
+        inputArgs.push('-i', cuePaths[cueIndex]);
+        filterChains.push(
+          `[${inputIndex}:a]atrim=start_sample=${sourceTrimStartSamples}:end_sample=${trimEndSample},asetpts=PTS-STARTPTS,adelay=${delaySamples}S|${delaySamples}S,aresample=${TTS_INTERNAL_SAMPLE_RATE}[a${inputIndex}]`
+        );
+        mixInputs.push(`[a${inputIndex}]`);
+        inputIndex += 1;
+      });
+
+      const filter = [
+        ...filterChains,
+        `${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=0[mix_raw]`,
+        `[mix_raw]volume=${mixInputs.length.toFixed(4)},alimiter=limit=0.97[out]`
+      ].join(';');
+      const filterScriptPath = path.join(
+        cueCacheRoot,
+        `mix-filter-segment-${segmentIndex + 1}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.ffgraph`
+      );
+      await fs.writeFile(filterScriptPath, filter, 'utf-8');
+      const ffmpegArgs = [
         '-y',
-        ...finalInputArgs,
+        ...inputArgs,
         '-filter_complex_script',
-        finalFilterScriptPath,
+        filterScriptPath,
         '-map',
         '[out]',
         '-c:a',
-        'libmp3lame',
-        '-q:a',
-        '4',
+        'pcm_s16le',
         '-ar',
         String(TTS_INTERNAL_SAMPLE_RATE),
         '-ac',
         String(TTS_INTERNAL_CHANNELS),
-        outputPath
+        segmentPath
       ];
-      const finalCommand = [ffmpegPath, ...finalArgs].map(formatArg).join(' ');
-      options?.onLog?.(`COMMAND (ffmpeg mix final): ${finalCommand}\n`);
+      const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
+      options?.onLog?.(`COMMAND (ffmpeg mix segment ${segmentIndex + 1}/${segmentCount}): ${ffmpegCommand}\n`);
       try {
         await new Promise<void>((resolve, reject) => {
-          const proc = spawn(ffmpegPath, finalArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+          const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
           let stderr = '';
           proc.stderr.on('data', data => {
             stderr += data.toString();
@@ -3551,12 +3527,81 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
             else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
           });
         });
+        if (TTS_DEBUG_TIMING) {
+          const actualDuration = await runFfprobe(segmentPath).catch(() => 0);
+          debugLog(
+            `segment#${segmentIndex + 1}/${segmentCount}: t0=${t0Sample}, t1=${t1Sample}, expected=${(segmentDurationSamples / TTS_INTERNAL_SAMPLE_RATE).toFixed(6)}s, actual=${actualDuration.toFixed(6)}s, cues=${cuesInSegment.length}`
+          );
+        }
       } finally {
-        await fs.rm(finalFilterScriptPath, { force: true }).catch(() => null);
+        await fs.rm(filterScriptPath, { force: true }).catch(() => null);
       }
-    } finally {
-      await fs.rm(chunkStemDir, { recursive: true, force: true }).catch(() => null);
+      segmentPaths.push(segmentPath);
+      segmentDurationsSeconds.push(segmentDurationSamples / TTS_INTERNAL_SAMPLE_RATE);
     }
+
+    const concatListPath = path.join(segmentDir, 'concat.txt');
+    const concatLines = segmentPaths.flatMap((segmentPath, index) => {
+      const duration = segmentDurationsSeconds[index] ?? 0;
+      return [
+        `file '${escapeConcatFilePath(segmentPath)}'`,
+        `duration ${duration.toFixed(6)}`
+      ];
+    });
+    await fs.writeFile(concatListPath, `${concatLines.join('\n')}\n`, 'utf-8');
+    const concatArgs = [
+      '-y',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      concatListPath,
+      '-c:a',
+      'libmp3lame',
+      '-b:a',
+      `${TTS_MP3_BITRATE_KBPS}k`,
+      '-ar',
+      String(TTS_INTERNAL_SAMPLE_RATE),
+      '-ac',
+      String(TTS_INTERNAL_CHANNELS),
+      outputPath
+    ];
+    const concatCommand = [ffmpegPath, ...concatArgs].map(formatArg).join(' ');
+    options?.onLog?.(`COMMAND (ffmpeg concat tts segments): ${concatCommand}\n`);
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath, concatArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      proc.stderr.on('data', data => {
+        stderr += data.toString();
+      });
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+      });
+    });
+    if (TTS_DEBUG_TIMING) {
+      const expectedDuration = segmentDurationsSeconds.reduce((acc, value) => acc + value, 0);
+      const actualDuration = await runFfprobe(outputPath).catch(() => 0);
+      const streamInfo = await runFfprobeStreamSamples(outputPath).catch(() => ({ durationTs: 0, sampleRate: 0, timeBase: '0/1' }));
+      const expectedSamples = Math.round(expectedDuration * TTS_INTERNAL_SAMPLE_RATE);
+      const [tbNumRaw, tbDenRaw] = streamInfo.timeBase.split('/');
+      const tbNum = Number.parseInt(tbNumRaw ?? '', 10);
+      const tbDen = Number.parseInt(tbDenRaw ?? '', 10);
+      const durationFromTsSeconds = tbDen > 0
+        ? streamInfo.durationTs * (Number.isFinite(tbNum) ? tbNum : 0) / tbDen
+        : 0;
+      const streamSamples = Math.round(durationFromTsSeconds * Math.max(1, streamInfo.sampleRate || TTS_INTERNAL_SAMPLE_RATE));
+      debugLog(
+        `concat final: segments=${segmentPaths.length}, expected=${expectedDuration.toFixed(6)}s, actual=${actualDuration.toFixed(6)}s, diff=${(actualDuration - expectedDuration).toFixed(6)}s`
+      );
+      debugLog(
+        `concat final stream: expectedSamples@${TTS_INTERNAL_SAMPLE_RATE}=${expectedSamples}, durationTs=${streamInfo.durationTs}, timeBase=${streamInfo.timeBase}, streamSampleRate=${streamInfo.sampleRate}, streamSamples=${streamSamples}, sampleDiff=${streamSamples - expectedSamples}`
+      );
+    }
+  } finally {
+    await fs.rm(segmentDir, { recursive: true, force: true }).catch(() => null);
   }
   const segments = cues.map((cue, index) => {
     const duration = audioDurations[index] ?? 0;
@@ -3595,6 +3640,17 @@ const runFfprobeSampleRate = async (input: string) => {
   } catch (error) {
     if (error instanceof Error && error.message.includes('ENOENT')) {
       return await runFfprobeSampleRateWithBin('/usr/bin/ffprobe', input);
+    }
+    throw error;
+  }
+};
+
+const runFfprobeStreamSamples = async (input: string) => {
+  try {
+    return await runFfprobeStreamSamplesWithBin(process.env.FFPROBE_PATH ?? 'ffprobe', input);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('ENOENT')) {
+      return await runFfprobeStreamSamplesWithBin('/usr/bin/ffprobe', input);
     }
     throw error;
   }
