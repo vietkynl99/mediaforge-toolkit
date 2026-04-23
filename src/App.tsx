@@ -170,6 +170,7 @@ type RenderConfigV2 = {
   timeline: {
     resolution: string;
     framerate: number;
+    start?: number;
     duration?: number;
     backgroundColor?: string;
     /** Display names keyed by placeholder ref (inputsMap keys) plus `text` for the text overlay track. */
@@ -200,6 +201,7 @@ type RenderConfigV2 = {
       opacity?: number;
       fit?: 'contain' | 'cover' | 'stretch';
       crop?: { x: number; y: number; w: number; h: number };
+      mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
     };
     audioMix?: {
       levelControl?: 'gain' | 'lufs';
@@ -727,6 +729,7 @@ interface VaultFile {
   name: string;
   type: VaultFileType;
   size: string;
+  sizeBytes?: number;
   relativePath?: string;
   duration?: string;
   durationSeconds?: number;
@@ -742,6 +745,31 @@ interface VaultFile {
     backend?: string;
     model?: string;
     outputFormat?: string;
+    outputs?: string[];
+    role?: 'source' | 'output';
+    sourceRelativePath?: string;
+  };
+  tts?: {
+    processedAt: string;
+    voice?: string;
+    rate?: number;
+    pitch?: number;
+    volume?: number;
+    overlapSeconds?: number;
+    overlapMode?: 'overlap' | 'truncate';
+    removeLineBreaks?: boolean;
+    outputSignature?: string;
+    outputDetails?: Record<string, {
+      processedAt?: string;
+      voice?: string;
+      rate?: number;
+      pitch?: number;
+      volume?: number;
+      overlapSeconds?: number;
+      overlapMode?: 'overlap' | 'truncate';
+      removeLineBreaks?: boolean;
+      outputSignature?: string;
+    }>;
     outputs?: string[];
     role?: 'source' | 'output';
     sourceRelativePath?: string;
@@ -1340,8 +1368,8 @@ export default function App() {
     desc: string;
     inputs: string[];
     outputs: string[];
-    params?: Array<{ name: string; desc: string; type: 'string' | 'number' | 'boolean'; default?: string | number | boolean }>;
-    preview?: 'tts';
+    params?: Array<{ name: string; desc: string; type: string; default?: string | number | boolean }>;
+    preview?: string;
   } | null>(null);
   const [showParamPresetEditor, setShowParamPresetEditor] = useState(false);
   const [paramPresetEditorMode, setParamPresetEditorMode] = useState<'create' | 'edit'>('create');
@@ -1470,7 +1498,11 @@ export default function App() {
       maskBottom: '0',
       mirror: 'none',
       fadeIn: '0',
-      fadeOut: '0'
+      fadeOut: '0',
+      levelControl: 'gain',
+      targetLufs: '-14',
+      gainDb: '0',
+      mute: false
     },
     audio: {
       levelControl: 'gain',
@@ -3739,7 +3771,7 @@ export default function App() {
             scale: normalizeScaleFactor(renderParams.video.scale, 100),
             rotation: coerceNumber(renderParams.video.rotation, 0),
             opacity: coerceNumber(renderParams.video.opacity, 100),
-            fit: renderParams.video.fit,
+            fit: renderParams.video.fit as any,
             crop: {
               x: coerceNumber(renderParams.video.cropX, 0),
               y: coerceNumber(renderParams.video.cropY, 0),
@@ -4672,7 +4704,7 @@ export default function App() {
     setShowPipelinePreview(true);
     setPreviewTtsError(null);
     if (task?.params?.length) {
-      const defaults: Record<string, string | number> = {};
+      const defaults: Record<string, any> = {};
       task.params.forEach(param => {
         if (param.default !== undefined) {
           defaults[param.name] = param.default;
@@ -5426,7 +5458,7 @@ export default function App() {
       }
     }
 
-    const renderMeta = jobParams.render ?? {};
+    const renderMeta = (jobParams.render ?? {}) as any;
     if (projectMatch) {
       const renderInputPaths = Array.isArray(renderMeta.inputPaths)
         ? renderMeta.inputPaths.filter((value: unknown) => typeof value === 'string')
@@ -5481,8 +5513,8 @@ export default function App() {
     else if (typeof jobAny.__backend === 'string') setRunPipelineBackend(jobAny.__backend);
     if (typeof jobParams.uvr?.model === 'string') setVrModel(jobParams.uvr.model);
     else if (typeof jobAny.__model === 'string') setVrModel(jobAny.__model);
-    if (typeof jobParams.uvr?.outputFormat === 'string') setVrOutputType(jobParams.uvr.outputFormat);
-    else if (typeof jobAny.__outputFormat === 'string') setVrOutputType(jobAny.__outputFormat);
+    if (typeof jobParams.uvr?.outputFormat === 'string') setVrOutputType(jobParams.uvr.outputFormat as any);
+    else if (typeof jobAny.__outputFormat === 'string') setVrOutputType(jobAny.__outputFormat as any);
     if (typeof jobParams.tts?.voice === 'string') setRunPipelineTtsVoice(jobParams.tts.voice);
     else if (typeof jobAny.__ttsVoice === 'string') setRunPipelineTtsVoice(jobAny.__ttsVoice);
     if (typeof jobParams.tts?.rate === 'number') setRunPipelineTtsRate(String(jobParams.tts.rate));
@@ -6021,6 +6053,13 @@ export default function App() {
           targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs),
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
           mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
+        },
+        audio: {
+          ...prev.audio,
+          levelControl: firstVideoItem.audioMix?.levelControl ?? prev.audio.levelControl,
+          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.audio.targetLufs),
+          gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.audio.gainDb),
+          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.audio.mute)
         }
       }));
       const videoBlurEffects = normalizeItemEffects(firstVideoItem.effects);
@@ -7915,7 +7954,7 @@ export default function App() {
                                   </label>
                                 ) : param.name === 'downloadMode' ? (
                                   <select
-                                    value={typeof paramPresetValues[param.name] === 'string' ? paramPresetValues[param.name] : 'all'}
+                                    value={String(paramPresetValues[param.name] ?? 'all')}
                                     onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.value }))}
                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                                   >
@@ -7928,7 +7967,7 @@ export default function App() {
                                 ) : (
                                   <input
                                     type={param.type === 'number' ? 'number' : 'text'}
-                                    value={typeof paramPresetValues[param.name] === 'string' ? paramPresetValues[param.name] : ''}
+                                    value={String(paramPresetValues[param.name] ?? '')}
                                     onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.value }))}
                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
                                     placeholder={param.default !== undefined ? String(param.default) : ''}
@@ -8269,7 +8308,7 @@ export default function App() {
                                           }
                                         }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-                                        placeholder={param.default ?? `Enter ${param.name}`}
+                                        placeholder={String(param.default ?? `Enter ${param.name}`)}
                                       />
                                     ) : null}
                                   </div>
@@ -9113,7 +9152,7 @@ export default function App() {
                     )}
                     {!isNewJobProjectLoading && (
                       <button
-                        onClick={runPipelineJob}
+                        onClick={() => runPipelineJob()}
                         disabled={runPipelineSubmitting}
                         className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
