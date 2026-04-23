@@ -1,5 +1,5 @@
 import React from 'react';
-import { File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload } from 'lucide-react';
+import { File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload, Volume2, VolumeX } from 'lucide-react';
 
 type RenderStudioPageProps = Record<string, any>;
 
@@ -1072,8 +1072,21 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[renderVideoFile.id] ?? 'video', e.target.value)}
                                   />
                                 ) : (
-                                  <span className="text-zinc-500 text-[10px]">Video</span>
+                                  <span className="text-zinc-500 text-[10px] w-full min-w-0">Video</span>
                                 )}
+                                <button
+                                  type="button"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    const v = !renderParamsDraft.video.mute;
+                                    updateRenderParamDraft('video', 'mute', v);
+                                    updateRenderParam('video', 'mute', v);
+                                  }}
+                                  className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${renderParamsDraft.video.mute ? 'text-red-400' : 'text-zinc-500'}`}
+                                  title={renderParamsDraft.video.mute ? "Unmute" : "Mute"}
+                                >
+                                  {renderParamsDraft.video.mute ? <VolumeX size={10} /> : <Volume2 size={10} />}
+                                </button>
                               </div>
                             ) : null}
                             {showRenderTimelineAudioTrack ? (
@@ -1089,8 +1102,21 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[renderAudioFile.id] ?? 'audio', e.target.value)}
                                   />
                                 ) : (
-                                  <span className="text-zinc-500 text-[10px]">Audio</span>
+                                  <span className="text-zinc-500 text-[10px] w-full min-w-0">Audio</span>
                                 )}
+                                <button
+                                  type="button"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    const v = !renderParamsDraft.audio.mute;
+                                    updateRenderParamDraft('audio', 'mute', v);
+                                    updateRenderParam('audio', 'mute', v);
+                                  }}
+                                  className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${renderParamsDraft.audio.mute ? 'text-red-400' : 'text-zinc-500'}`}
+                                  title={renderParamsDraft.audio.mute ? "Unmute" : "Mute"}
+                                >
+                                  {renderParamsDraft.audio.mute ? <VolumeX size={10} /> : <Volume2 size={10} />}
+                                </button>
                               </div>
                             ) : null}
                           </div>
@@ -2486,21 +2512,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                       />
                                     </div>
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <label className="flex items-center gap-2 text-[11px] text-zinc-300">
-                                      <input
-                                        type="checkbox"
-                                        checked={Boolean(renderParamsDraft.audio.mute)}
-                                        onChange={e => {
-                                          const v = e.target.checked;
-                                          updateRenderParamDraft('audio', 'mute', v);
-                                          updateRenderParam('audio', 'mute', v);
-                                        }}
-                                        className="accent-lime-400"
-                                      />
-                                      Mute
-                                    </label>
                                   </div>
                                 </>
                               ) : (
