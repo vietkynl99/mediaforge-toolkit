@@ -3138,7 +3138,7 @@ export default function App() {
     setRenderPlayheadSeconds(prev => Math.min(prev, renderTimelineDuration));
   }, [renderTimelineDuration]);
 
-  const renderConfigPreview = useMemo(() => {
+  const renderConfigPreviewRaw = useMemo(() => {
     return buildRenderConfigV2();
   }, [
     renderConfigV2Override,
@@ -3150,12 +3150,66 @@ export default function App() {
     renderImageTransforms,
     renderVideoTransforms,
     renderTrackLabels,
+    renderParams
+  ]);
+
+  const renderConfigPreview = useMemo(() => {
+    return renderConfigPreviewRaw;
+  }, [renderConfigPreviewRaw]);
+
+  const renderConfigPreviewForPreview = useMemo(() => {
+    if (isRenderV2DebugEnabled()) {
+      console.log('RENDER_V2_DEBUG: Recomputing renderConfigPreviewForPreview candidate');
+    }
+    const fullConfig = buildRenderConfigV2();
+    if (!fullConfig) return null;
+
+    // Deep stabilize: Loại bỏ các thành phần không liên quan đến visual trước khi so sánh
+    const previewStabilized = {
+      ...fullConfig,
+      timeline: {
+        ...fullConfig.timeline,
+        trackLabels: {} // Ignore labels
+      },
+      items: fullConfig.items.map(item => {
+        const { audioMix, ...visualPart } = item;
+        return visualPart;
+      })
+    };
+
+    return previewStabilized;
+  }, [
+    renderConfigV2Override,
+    runPipelineProject?.id,
+    renderInputFileIds,
+    renderImageOrderIds,
+    renderImageDurations,
+    renderImageMatchDuration,
+    renderImageTransforms,
+    renderVideoTransforms,
     renderParams.timeline,
-    renderParams.video,
-    renderParams.audio,
+    renderParams.video.speed, // Chỉ track các thông số visual của video
+    renderParams.video.scale,
+    renderParams.video.positionX,
+    renderParams.video.positionY,
+    renderParams.video.opacity,
+    renderParams.video.fit,
+    renderParams.video.cropX,
+    renderParams.video.cropY,
+    renderParams.video.cropW,
+    renderParams.video.cropH,
+    renderParams.video.maskType,
+    renderParams.video.maskLeft,
+    renderParams.video.maskRight,
+    renderParams.video.maskTop,
+    renderParams.video.maskBottom,
     renderParams.subtitle,
     renderParams.text
   ]);
+
+  const renderPreviewParamsKey = useMemo(() => {
+    return JSON.stringify(renderConfigPreviewForPreview);
+  }, [renderConfigPreviewForPreview]);
 
   useEffect(() => {
     if (!renderConfigV2Override) return;
@@ -3173,12 +3227,12 @@ export default function App() {
     renderInputFileIds
   ]);
 
-  const renderPreviewParamsKey = JSON.stringify({
-    renderParams,
-    renderConfigPreview
-  });
-
   useEffect(() => {
+    if (isRenderV2DebugEnabled()) {
+      console.log('RENDER_V2_DEBUG: Preview useEffect triggered', {
+        renderPreviewParamsKey,
+      });
+    }
     if (!showRenderStudio) return;
     if (renderStudioFocus !== 'timeline') {
       setRenderPreviewLoading(false);
@@ -3188,7 +3242,7 @@ export default function App() {
       setRenderPreviewLoading(false);
       return;
     }
-    if (!renderConfigPreview || !Array.isArray(renderConfigPreview.items) || renderConfigPreview.items.length === 0) {
+    if (!renderConfigPreviewForPreview || !Array.isArray(renderConfigPreviewForPreview.items) || renderConfigPreviewForPreview.items.length === 0) {
       setRenderPreviewUrl(null);
       setRenderPreviewError(null);
       setRenderPreviewLoading(false);
@@ -3210,13 +3264,13 @@ export default function App() {
           console.log('RENDER_V2_DEBUG preview request', {
             at: previewAt,
             timelineDuration: renderTimelineDuration,
-            config: summarizeRenderConfigForDebug(renderConfigPreview)
+            config: summarizeRenderConfigForDebug(renderConfigPreviewForPreview)
           });
         }
         const response = await fetch('/api/render-preview-v2', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ config: renderConfigPreview, at: previewAt }),
+          body: JSON.stringify({ config: renderConfigPreviewForPreview, at: previewAt }),
           signal: controller.signal
         });
         const useBlackPreview = () => {
@@ -3267,7 +3321,7 @@ export default function App() {
   }, [
     showRenderStudio,
     renderStudioFocus,
-    renderConfigPreview,
+    renderConfigPreviewForPreview,
     renderPlayheadSeconds,
     renderTimelineDuration,
     renderPreviewParamsKey,
