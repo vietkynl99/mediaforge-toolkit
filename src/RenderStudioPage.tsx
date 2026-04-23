@@ -2027,57 +2027,56 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </button>
                           </div>
                           {activeInspectorSection === 'timeline' && (
-                            <div className="p-3 flex flex-col gap-3">
-                              <div className="grid grid-cols-2 gap-2">
+                              <div className="flex flex-col gap-3">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Resolution</label>
+                                    <input
+                                      type="text"
+                                      placeholder="1920x1080"
+                                      value={renderParamsDraft.timeline.resolution}
+                                      onChange={e => updateRenderParamDraft('timeline', 'resolution', e.target.value)}
+                                      onBlur={() => commitRenderParamDraftValue('timeline', 'resolution')}
+                                      onKeyDown={commitRenderParamDraftOnEnter('timeline', 'resolution')}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Framerate</label>
+                                    <select
+                                      value={renderParamsDraft.timeline.framerate}
+                                      onChange={e => {
+                                        const v = e.target.value;
+                                        updateRenderParamDraft('timeline', 'framerate', v);
+                                        updateRenderParam('timeline', 'framerate', v);
+                                      }}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                    >
+                                      <option value="24">24 fps</option>
+                                      <option value="25">25 fps</option>
+                                      <option value="30">30 fps</option>
+                                      <option value="50">50 fps</option>
+                                      <option value="60">60 fps</option>
+                                    </select>
+                                  </div>
+                                </div>
                                 <div className="flex flex-col gap-1">
-                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Resolution</label>
+                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
                                   <input
-                                    type="text"
-                                    placeholder="1920x1080"
-                                    value={renderParamsDraft.timeline.resolution}
-                                    onChange={e => updateRenderParamDraft('timeline', 'resolution', e.target.value)}
-                                    onBlur={() => commitRenderParamDraftValue('timeline', 'resolution')}
-                                    onKeyDown={commitRenderParamDraftOnEnter('timeline', 'resolution')}
+                                    type="number"
+                                    step="0.5"
+                                    value={renderParamsDraft.timeline?.targetLufs ?? '-14'}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      updateRenderParamDraft('timeline', 'targetLufs', v);
+                                      updateRenderParam('timeline', 'targetLufs', v);
+                                    }}
+                                    onBlur={() => commitRenderParamDraftValue('timeline', 'targetLufs')}
+                                    onKeyDown={commitRenderParamDraftOnEnter('timeline', 'targetLufs')}
                                     className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                   />
                                 </div>
-                                <div className="flex flex-col gap-1">
-                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Framerate</label>
-                                  <select
-                                    value={renderParamsDraft.timeline.framerate}
-                                    onChange={e => {
-                                      const v = e.target.value;
-                                      updateRenderParamDraft('timeline', 'framerate', v);
-                                      updateRenderParam('timeline', 'framerate', v);
-                                    }}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                  >
-                                    <option value="24">24 fps</option>
-                                    <option value="25">25 fps</option>
-                                    <option value="30">30 fps</option>
-                                    <option value="50">50 fps</option>
-                                    <option value="60">60 fps</option>
-                                  </select>
-                                </div>
                               </div>
-                              <div className="grid grid-cols-2 gap-2">
-                                <div className="flex flex-col gap-1">
-                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Codec</label>
-                                  <select
-                                    value={renderParamsDraft.render?.codec ?? 'h264'}
-                                    onChange={e => {
-                                      const v = e.target.value === 'h265' ? 'h265' : 'h264';
-                                      updateRenderParamDraft('render', 'codec', v);
-                                      updateRenderParam('render', 'codec', v);
-                                    }}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                  >
-                                    <option value="h264">H.264 (libx264)</option>
-                                    <option value="h265">H.265 (libx265)</option>
-                                  </select>
-                                </div>
-                              </div>
-                            </div>
                           )}
                         </div>
                         )}

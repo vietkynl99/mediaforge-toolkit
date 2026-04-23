@@ -168,6 +168,7 @@ type RenderSubtitleAssState = {
 type RenderConfigV2 = {
   version: '2';
   timeline: {
+    targetLufs?: number;
     resolution: string;
     framerate: number;
     start?: number;
@@ -176,13 +177,6 @@ type RenderConfigV2 = {
     /** Display names keyed by placeholder ref (inputsMap keys) plus `text` for the text overlay track. */
     trackLabels?: Record<string, string>;
     imageMatchDuration?: boolean | Record<string, boolean>;
-  };
-  renderOptions?: {
-    codec?: 'h264' | 'h265';
-    preset?: string;
-    crf?: number;
-    gop?: number;
-    tune?: string;
   };
   inputsMap: Record<string, string>;
   items: Array<{
@@ -1473,7 +1467,8 @@ export default function App() {
   const DEFAULT_RENDER_PARAMS = {
     timeline: {
       framerate: '30',
-      resolution: '1920x1080'
+      resolution: '1920x1080',
+      targetLufs: '-14'
     },
     video: {
       trimStart: '',
@@ -1513,14 +1508,7 @@ export default function App() {
       fadeOut: '0'
     },
     subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
-    text: { ...DEFAULT_RENDER_SUBTITLE_ASS },
-    render: {
-      codec: 'h264',
-      preset: 'fast',
-      crf: '21',
-      gop: '',
-      tune: ''
-    }
+    text: { ...DEFAULT_RENDER_SUBTITLE_ASS }
   };
   const [renderParams, setRenderParams] = useState(DEFAULT_RENDER_PARAMS);
   const runAgainPrefillRef = useRef(false);
@@ -1557,6 +1545,44 @@ export default function App() {
   const [downloadUrl, setDownloadUrl] = useState('');
   const [downloadProjectName, setDownloadProjectName] = useState('');
   const [downloadProjectPickerOpen, setDownloadProjectPickerOpen] = useState(false);
+
+  const [renderParamsDraft, setRenderParamsDraft] = useState(renderParams);
+
+  useEffect(() => {
+    setRenderParamsDraft(renderParams);
+  }, [renderParams]);
+
+  const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text', key: string, value: any) => {
+    setRenderParams(prev => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        [key]: value
+      }
+    }));
+  };
+
+  const updateRenderParamDraft = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text', key: string, value: any) => {
+    setRenderParamsDraft(prev => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        [key]: value
+      }
+    }));
+  };
+
+  const commitRenderParamDraftValue = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text', key: string) => {
+    const value = (renderParamsDraft as any)?.[section]?.[key];
+    updateRenderParam(section, key, value);
+  };
+
+  const commitRenderParamDraftOnEnter = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text', key: string) =>
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === 'Enter') {
+        commitRenderParamDraftValue(section, key);
+      }
+    };
   const [downloadCookiesFile, setDownloadCookiesFile] = useState<File | null>(null);
   const [downloadNoPlaylist, setDownloadNoPlaylist] = useState(true);
   const [downloadMode, setDownloadMode] = useState<'all' | 'subs' | 'media'>('all');
@@ -1667,43 +1693,6 @@ export default function App() {
   const singleTextTrackEndTemp = singleTextValue ? singleTextStart + singleTextDurationTemp : 0;
   const renderSubtitleDuration = renderSubtitleFile?.durationSeconds
     ?? parseDurationToSeconds(renderSubtitleFile?.duration);
-  const updateRenderParam = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string, value: any) => {
-    setRenderParams(prev => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        [key]: value
-      }
-    }));
-  };
-
-  const [renderParamsDraft, setRenderParamsDraft] = useState(renderParams);
-
-  useEffect(() => {
-    setRenderParamsDraft(renderParams);
-  }, [renderParams]);
-
-  const updateRenderParamDraft = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string, value: any) => {
-    setRenderParamsDraft(prev => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        [key]: value
-      }
-    }));
-  };
-
-  const commitRenderParamDraftValue = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string) => {
-    const value = (renderParamsDraft as any)?.[section]?.[key];
-    updateRenderParam(section, key, value);
-  };
-
-  const commitRenderParamDraftOnEnter = (section: 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', key: string) =>
-    (event: React.KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === 'Enter') {
-        commitRenderParamDraftValue(section, key);
-      }
-    };
 
   const defaultBlurRegionEffect = (): RenderBlurRegionEffect => ({
     type: 'blur_region',
@@ -2486,7 +2475,7 @@ export default function App() {
           legacyMask[field] = String(value);
           return;
         }
-        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'render', field, String(value));
+        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text', field, String(value));
       });
       if (!hasNewMaskInsets && Object.keys(legacyMask).length > 0) {
         const x = coerceNumber(legacyMask.maskX, 0) ?? 0;
@@ -3574,9 +3563,6 @@ export default function App() {
     Object.entries(renderParams.text).forEach(([k, v]) => {
       out[`text.${k}`] = typeof v === 'boolean' ? v : String(v);
     });
-    Object.entries(renderParams.render ?? {}).forEach(([k, v]) => {
-      out[`render.${k}`] = typeof v === 'boolean' ? v : String(v);
-    });
     return out;
   };
 
@@ -3612,6 +3598,7 @@ export default function App() {
 
     const timelineResolution = renderParams.timeline.resolution || '1920x1080';
     const timelineFramerate = coerceNumber(renderParams.timeline.framerate, 30) ?? 30;
+    const targetLufs = coerceNumber(renderParams.timeline?.targetLufs, -14) ?? -14;
     const normalizeScaleFactor = (value: string | number | null | undefined, fallbackPercent = 100) => {
       const numeric = coerceNumber(value, fallbackPercent) ?? fallbackPercent;
       return numeric > 2 ? numeric / 100 : numeric;
@@ -3878,18 +3865,12 @@ export default function App() {
     return {
       version: '2',
       timeline: {
+        targetLufs,
         resolution: timelineResolution,
         framerate: timelineFramerate,
         duration: renderTimelineDuration > 0 ? renderTimelineDuration : undefined,
         trackLabels: trackLabelsOut,
         imageMatchDuration: renderImageMatchDuration
-      },
-      renderOptions: {
-        codec: renderParams.render?.codec === 'h265' ? 'h265' : 'h264',
-        preset: 'fast',
-        crf: 21,
-        gop: 0,
-        tune: ''
       },
       inputsMap,
       items
@@ -4103,17 +4084,11 @@ export default function App() {
     return {
       version: '2',
       timeline: {
+        targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.targetLufs, -14),
         resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
         framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
         trackLabels,
         imageMatchDuration: {}
-      },
-      renderOptions: {
-        codec: 'h264',
-        preset: 'fast',
-        crf: 21,
-        gop: 0,
-        tune: ''
       },
       inputsMap,
       items
@@ -4170,8 +4145,13 @@ export default function App() {
       if (file?.relativePath) inputsMap[key] = file.relativePath;
     });
     const nextConfig: RenderConfigV2 = {
-      ...template.config,
-      inputsMap
+      version: '2',
+      timeline: {
+        targetLufs: Number(template.config.timeline?.targetLufs ?? renderParams.timeline.targetLufs),
+        ...template.config.timeline
+      },
+      inputsMap,
+      items: template.config.items
     };
     setRenderConfigV2Override(nextConfig);
     setRenderTrackLabels(template.config.timeline?.trackLabels ?? {});
@@ -4225,15 +4205,8 @@ export default function App() {
         timeline: {
           ...prev.timeline,
           framerate: String(template.config.timeline?.framerate ?? prev.timeline.framerate),
-          resolution: String(template.config.timeline?.resolution ?? prev.timeline.resolution)
-        },
-        render: {
-          ...prev.render,
-          codec: (template.config.renderOptions?.codec ?? prev.render.codec) as string,
-          preset: (template.config.renderOptions?.preset ?? prev.render.preset) as string,
-          crf: String(template.config.renderOptions?.crf ?? prev.render.crf ?? '21'),
-          gop: String(template.config.renderOptions?.gop ?? prev.render.gop ?? ''),
-          tune: String(template.config.renderOptions?.tune ?? prev.render.tune ?? '')
+          resolution: String(template.config.timeline?.resolution ?? prev.timeline.resolution),
+          targetLufs: String(template.config.timeline?.targetLufs ?? prev.timeline.targetLufs)
         },
         video: {
           ...prev.video,
@@ -6023,14 +5996,6 @@ export default function App() {
           framerate: String(renderConfigV2Override.timeline?.framerate ?? prev.timeline.framerate),
           resolution: String(renderConfigV2Override.timeline?.resolution ?? prev.timeline.resolution)
         },
-        render: {
-          ...prev.render,
-          codec: (renderConfigV2Override.renderOptions?.codec ?? prev.render.codec) as string,
-          preset: (renderConfigV2Override.renderOptions?.preset ?? prev.render.preset) as string,
-          crf: String(renderConfigV2Override.renderOptions?.crf ?? prev.render.crf ?? '21'),
-          gop: String(renderConfigV2Override.renderOptions?.gop ?? prev.render.gop ?? ''),
-          tune: String(renderConfigV2Override.renderOptions?.tune ?? prev.render.tune ?? '')
-        },
         video: {
           ...prev.video,
           fit: transform.fit ?? prev.video.fit,
@@ -6065,11 +6030,7 @@ export default function App() {
       const videoBlurEffects = normalizeItemEffects(firstVideoItem.effects);
       if (videoBlurEffects && renderVideoId) {
         setRenderVideoTransforms(prev => ({
-          ...prev,
-          [renderVideoId]: {
-            ...(prev[renderVideoId] ?? {}),
-            blurEffects: videoBlurEffects
-          }
+          ...prev
         }));
       }
     } else {
@@ -6078,15 +6039,8 @@ export default function App() {
         timeline: {
           ...prev.timeline,
           framerate: String(renderConfigV2Override.timeline?.framerate ?? prev.timeline.framerate),
-          resolution: String(renderConfigV2Override.timeline?.resolution ?? prev.timeline.resolution)
-        },
-        render: {
-          ...prev.render,
-          codec: (renderConfigV2Override.renderOptions?.codec ?? prev.render.codec) as string,
-          preset: (renderConfigV2Override.renderOptions?.preset ?? prev.render.preset) as string,
-          crf: String(renderConfigV2Override.renderOptions?.crf ?? prev.render.crf ?? '21'),
-          gop: String(renderConfigV2Override.renderOptions?.gop ?? prev.render.gop ?? ''),
-          tune: String(renderConfigV2Override.renderOptions?.tune ?? prev.render.tune ?? '')
+          resolution: String(renderConfigV2Override.timeline?.resolution ?? prev.timeline.resolution),
+          targetLufs: String(renderConfigV2Override.timeline?.targetLufs ?? prev.timeline.targetLufs ?? '-14')
         }
       }));
     }
@@ -7134,7 +7088,7 @@ export default function App() {
     return {
       resolution: config.timeline?.resolution ?? '--',
       framerate: config.timeline?.framerate ?? '--',
-      renderOptions: config.renderOptions ?? {},
+      targetLufs: config.timeline?.targetLufs ?? '--',
       placeholderCounts,
       effectCounts
     };
@@ -9622,25 +9576,9 @@ export default function App() {
                             <span className="text-zinc-200">{renderTemplateSummary.framerate}</span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span>Codec</span>
-                            <span className="text-zinc-200">{renderTemplateSummary.renderOptions.codec ?? 'h264'}</span>
+                            <span>Target LUFS</span>
+                            <span className="text-zinc-200">{renderTemplateSummary.targetLufs ?? '--'}</span>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <span>Preset</span>
-                            <span className="text-zinc-200">{renderTemplateSummary.renderOptions.preset ?? 'fast'}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>CRF</span>
-                            <span className="text-zinc-200">{renderTemplateSummary.renderOptions.crf ?? 21}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>GOP</span>
-                            <span className="text-zinc-200">
-                              {renderTemplateSummary.renderOptions.gop ? renderTemplateSummary.renderOptions.gop : 'auto'}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="mt-2">
                           <div className="flex items-center justify-between">
                             <span>Placeholders</span>
                             <span className="text-zinc-200">

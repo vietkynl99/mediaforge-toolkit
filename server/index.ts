@@ -65,6 +65,7 @@ type VaultFolderDTO = {
 type RenderConfigV2 = {
   version: '2';
   timeline: {
+    targetLufs?: number;
     resolution: string;
     framerate: number;
     duration?: number;
@@ -72,13 +73,6 @@ type RenderConfigV2 = {
     backgroundColor?: string;
     trackLabels?: Record<string, string>;
     imageMatchDuration?: Record<string, boolean>;
-  };
-  renderOptions?: {
-    codec?: 'h264' | 'h265';
-    preset?: string;
-    crf?: number;
-    gop?: number;
-    tune?: string;
   };
   inputsMap: Record<string, string>;
   items: RenderItemV2[];
@@ -144,6 +138,11 @@ const loadProjectConfig = (): ProjectConfig => {
 };
 const PROJECT_CONFIG = loadProjectConfig();
 const EDGE_TTS_CMD = process.env.EDGE_TTS_CMD?.trim() || 'edge-tts';
+const RENDER_V2_CODEC = process.env.RENDER_V2_CODEC?.trim() || 'h264';
+const RENDER_V2_PRESET = process.env.RENDER_V2_PRESET?.trim() || 'fast';
+const RENDER_V2_CRF = Number(process.env.RENDER_V2_CRF ?? 21);
+const RENDER_V2_GOP = Number(process.env.RENDER_V2_GOP ?? 0);
+const RENDER_V2_TUNE = process.env.RENDER_V2_TUNE?.trim() || '';
 const EDGE_TTS_MAX_RETRIES = Number(process.env.EDGE_TTS_MAX_RETRIES ?? 10);
 const EDGE_TTS_RETRY_DELAY_MS = 1000;
 const DEFAULT_TTS_VOICE = 'vi-VN-HoaiMyNeural';
@@ -1621,6 +1620,7 @@ const buildRenderV2FfmpegArgs = async (
   outputPath: string,
   tmpDir: string,
   options?: {
+    includeAudio?: boolean;
     outputStart?: number;
     outputDuration?: number;
     allowShortDuration?: boolean;
@@ -1629,17 +1629,12 @@ const buildRenderV2FfmpegArgs = async (
   }
 ) => {
   const graph = await buildRenderV2FilterGraph(config, tmpDir, options);
-  const renderOptions = config.renderOptions ?? {};
   const threadCount = RENDER_V2_FFMPEG_THREADS;
-  const codec = renderOptions.codec === 'h265' ? 'libx265' : 'libx264';
-  const preset = typeof renderOptions.preset === 'string' && renderOptions.preset.trim()
-    ? renderOptions.preset.trim()
-    : 'fast';
-  const crf = Number.isFinite(renderOptions.crf) ? Number(renderOptions.crf) : 21;
-  const tune = typeof renderOptions.tune === 'string' && renderOptions.tune.trim()
-    ? renderOptions.tune.trim()
-    : '';
-  let gop = Number.isFinite(renderOptions.gop) ? Number(renderOptions.gop) : 0;
+  const codec = RENDER_V2_CODEC === 'h265' ? 'libx265' : 'libx264';
+  const preset = RENDER_V2_PRESET;
+  const crf = RENDER_V2_CRF;
+  const tune = RENDER_V2_TUNE;
+  let gop = RENDER_V2_GOP;
   if (!Number.isFinite(gop) || gop <= 0) {
     const fr = Number(graph.framerate);
     if (Number.isFinite(fr) && fr > 0) gop = Math.round(fr * 2);
