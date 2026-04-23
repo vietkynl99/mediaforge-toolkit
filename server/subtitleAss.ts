@@ -147,13 +147,12 @@ const assColor = (hex: string, opacityPercent: number) => {
 
 const formatAssTime = (seconds: number) => {
   const s = Math.max(0, seconds);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  const whole = Math.floor(sec);
-  const centis = Math.round((sec - whole) * 100);
-  const cs = centis >= 100 ? 99 : centis;
-  return `${h}:${String(m).padStart(2, '0')}:${String(whole).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+  const totalCs = Math.round(s * 100);
+  const h = Math.floor(totalCs / 360000);
+  const m = Math.floor((totalCs % 360000) / 6000);
+  const sec = Math.floor((totalCs % 6000) / 100);
+  const cs = totalCs % 100;
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
 };
 
 /** Escape user text for ASS Dialogue (newlines → \\N). */

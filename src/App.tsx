@@ -6424,7 +6424,7 @@ export default function App() {
     }
   };
 
-  const runPipelineJob = async (options?: { renderPreviewSeconds?: number | null, forceNew?: boolean, skipCheck?: boolean }) => {
+  const runPipelineJob = async (options?: { renderPreviewSeconds?: number | null, renderPreviewStartSeconds?: number, forceNew?: boolean, skipCheck?: boolean }) => {
     if (!runPipelineId) {
       showToast('Select a pipeline first', 'warning');
       return;
@@ -6459,7 +6459,7 @@ export default function App() {
           const response = await fetch('/api/render-v2/check-status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ config })
+            body: JSON.stringify({ config, projectName: runPipelineProject?.name })
           });
           const check = await response.json();
           setRunPipelineSubmitting(false);
@@ -6485,6 +6485,19 @@ export default function App() {
               description: 'Video với nội dung này đã được render xong. Bạn muốn render lại bản mới hoàn toàn hay hủy lệnh?',
               confirmLabel: 'Render mới (Xóa cũ)',
               variant: 'danger'
+            }, () => {
+              runPipelineJob({ ...options, forceNew: true, skipCheck: true });
+            });
+            return;
+          } else if (check.hasCache) {
+             openConfirm({
+              title: 'Tìm thấy cache render',
+              description: 'Cache của lần render trước đã tồn tại. Bạn muốn sử dụng lại cache để tiếp tục hay xóa cache và render lại từ đầu?',
+              confirmLabel: 'Sử dụng cache',
+              secondaryLabel: 'Render lại từ đầu (Xóa cache)',
+              variant: 'primary'
+            }, () => {
+              runPipelineJob({ ...options, skipCheck: true });
             }, () => {
               runPipelineJob({ ...options, forceNew: true, skipCheck: true });
             });

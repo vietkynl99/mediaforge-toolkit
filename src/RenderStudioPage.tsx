@@ -173,6 +173,45 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const [addTrackMenuOpen, setAddTrackMenuOpen] = React.useState(false);
   const addTrackMenuCloseRef = React.useRef<number | null>(null);
   const [renderConfirmOpen, setRenderConfirmOpen] = React.useState(false);
+  const formatSecondsToTime = (seconds: number): string => {
+    if (!Number.isFinite(seconds) || seconds < 0) return '00:00:00.0';
+    const totalMs = Math.max(0, Math.round(seconds * 1000));
+    const hours = Math.floor(totalMs / 3600000);
+    const minutes = Math.floor((totalMs % 3600000) / 60000);
+    const secs = Math.floor((totalMs % 60000) / 1000);
+    const ms = Math.floor((totalMs % 1000) / 100);
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${ms}`;
+  };
+
+  const parseTimeToSeconds = (timeStr: string): number => {
+    if (!timeStr) return 0;
+    const str = timeStr.trim().toLowerCase();
+    
+    if (str.match(/[hms]/)) {
+      let total = 0;
+      const hMatch = str.match(/([\d.]+)h/);
+      const mMatch = str.match(/([\d.]+)m/);
+      const sMatch = str.match(/([\d.]+)s/);
+      if (hMatch) total += Number(hMatch[1]) * 3600;
+      if (mMatch) total += Number(mMatch[1]) * 60;
+      if (sMatch) total += Number(sMatch[1]);
+      return Number.isFinite(total) ? total : 0;
+    }
+
+    const parts = str.split(':');
+    let seconds = 0;
+    if (parts.length === 3) {
+      seconds += Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
+    } else if (parts.length === 2) {
+      seconds += Number(parts[0]) * 60 + Number(parts[1]);
+    } else if (parts.length === 1) {
+      seconds += Number(parts[0]);
+    }
+    return Number.isFinite(seconds) ? seconds : 0;
+  };
+
+  const [customRenderStart, setCustomRenderStart] = React.useState('00:00:00.0');
+  const [customRenderEnd, setCustomRenderEnd] = React.useState('');
   const [templateSaveConfirmOpen, setTemplateSaveConfirmOpen] = React.useState(false);
   const singleTextStartDraft = `${renderParamsDraft?.text?.singleTextStart ?? ''}`;
   const singleTextEndDraft = `${renderParamsDraft?.text?.singleTextEnd ?? ''}`;
@@ -474,24 +513,48 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         >
                           Preview first 30s
                         </button>
-                        <button
-                          type="button"
-                          disabled={runPipelineSubmitting}
-                          onClick={() => {
-                            setRenderConfirmOpen(false);
-                            const duration = 30;
-                            const start = Math.max(0, renderTimelineDuration - duration);
-                            runPipelineJob({ 
-                              renderPreviewSeconds: duration,
-                              renderPreviewStartSeconds: start
-                            });
-                            setShowRenderStudio(false);
-                            setActiveTab('dashboard');
-                          }}
-                          className="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-zinc-800 text-zinc-200 hover:border-zinc-700 hover:text-zinc-50 disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          Preview last 30s
-                        </button>
+                        <div className="flex flex-col gap-2 p-3 rounded-lg border border-zinc-800 bg-zinc-900/50">
+                          <div className="text-xs text-zinc-400">Custom Range (HH:MM:SS.S)</div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              placeholder="00:00:00.0"
+                              value={customRenderStart}
+                              onChange={(e) => setCustomRenderStart(e.target.value)}
+                              onBlur={(e) => setCustomRenderStart(formatSecondsToTime(parseTimeToSeconds(e.target.value)))}
+                              className="w-full px-2 py-1.5 text-xs bg-zinc-950 border border-zinc-800 rounded text-zinc-200 focus:outline-none focus:border-zinc-700 font-mono text-center"
+                            />
+                            <span className="text-zinc-600">-</span>
+                            <input
+                              type="text"
+                              placeholder="End"
+                              value={customRenderEnd === '' ? formatSecondsToTime(renderTimelineDuration || 10) : customRenderEnd}
+                              onChange={(e) => setCustomRenderEnd(e.target.value)}
+                              onBlur={(e) => setCustomRenderEnd(e.target.value ? formatSecondsToTime(parseTimeToSeconds(e.target.value)) : '')}
+                              className="w-full px-2 py-1.5 text-xs bg-zinc-950 border border-zinc-800 rounded text-zinc-200 focus:outline-none focus:border-zinc-700 font-mono text-center"
+                            />
+                            <button
+                              type="button"
+                              disabled={runPipelineSubmitting}
+                              onClick={() => {
+                                setRenderConfirmOpen(false);
+                                const start = Math.max(0, parseTimeToSeconds(customRenderStart) || 0);
+                                const endVal = customRenderEnd !== '' ? parseTimeToSeconds(customRenderEnd) : renderTimelineDuration;
+                                const end = Math.max(start + 0.1, endVal || start + 10);
+                                const duration = end - start;
+                                runPipelineJob({ 
+                                  renderPreviewSeconds: duration,
+                                  renderPreviewStartSeconds: start
+                                });
+                                setShowRenderStudio(false);
+                                setActiveTab('dashboard');
+                              }}
+                              className="px-3 py-1.5 text-xs font-semibold rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
+                            >
+                              Render
+                            </button>
+                          </div>
+                        </div>
                         <button
                           type="button"
                           disabled={runPipelineSubmitting}

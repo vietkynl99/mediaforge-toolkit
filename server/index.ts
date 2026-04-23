@@ -1276,7 +1276,7 @@ const buildRenderV2FilterGraph = async (
   });
 
   const filters: string[] = [];
-  filters.push(`color=c=${background}:s=${outW}x${outH}:d=${outputDuration}[base]`);
+  filters.push(`color=c=${background}:s=${outW}x${outH}:d=${outputDuration}:r=${framerate}[base]`);
 
   let currentVideo = '[base]';
   let visualIndex = 0;
@@ -1803,6 +1803,7 @@ const runRenderV2Task = async (
     if (totalSeconds <= 0) {
       throw new Error('Render has no output duration');
     }
+    const configStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
     const { signature, payload } = await buildRenderV2Signature(config);
     const segmentSeconds = Math.min(payload.segmentSeconds, Math.max(1, totalSeconds));
     const cacheRoot = path.join(projectRoot, RENDER_V2_CACHE_DIRNAME, signature);
@@ -1818,6 +1819,7 @@ const runRenderV2Task = async (
       JSON.stringify({
         createdAt: new Date().toISOString(),
         totalSeconds,
+        configStart,
         signature,
         ...payload
       }, null, 2),
@@ -1827,8 +1829,8 @@ const runRenderV2Task = async (
     const segmentCount = Math.max(1, Math.ceil(totalSeconds / segmentSeconds));
     let completedSeconds = 0;
     for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-      const startSeconds = segmentIndex * segmentSeconds;
-      const expectedDuration = Math.max(0.001, Math.min(segmentSeconds, totalSeconds - startSeconds));
+      const localStartSeconds = segmentIndex * segmentSeconds;
+      const expectedDuration = Math.max(0.001, Math.min(segmentSeconds, totalSeconds - localStartSeconds));
       const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}.mp4`;
       const segmentPath = path.join(segmentsDir, segmentName);
       // Keep ".mp4" extension on temporary segment files so older ffmpeg builds
@@ -1836,7 +1838,7 @@ const runRenderV2Task = async (
       const partialSegmentPath = `${segmentPath.replace(/\.mp4$/i, '')}.part.mp4`;
       const reusable = await isReusableRenderSegment(segmentPath, expectedDuration);
       if (reusable) {
-        completedSeconds = Math.min(totalSeconds, startSeconds + expectedDuration);
+        completedSeconds = Math.min(totalSeconds, localStartSeconds + expectedDuration);
         onLog?.(`CACHE HIT (render segment ${segmentIndex + 1}/${segmentCount}): ${path.relative(projectRoot, segmentPath)}\n`);
         onProgress?.(completedSeconds, totalSeconds);
         continue;
@@ -1847,7 +1849,7 @@ const runRenderV2Task = async (
         partialSegmentPath,
         tmpDir,
         {
-          outputStart: startSeconds,
+          outputStart: configStart + localStartSeconds,
           outputDuration: expectedDuration,
           allowShortDuration: true,
           debugEnabled: LOG_RENDER_V2_DEBUG,
@@ -1863,11 +1865,11 @@ const runRenderV2Task = async (
         seconds => {
           if (!onProgress) return;
           const bounded = Math.min(expectedDuration, Math.max(0, seconds));
-          onProgress(Math.min(totalSeconds, startSeconds + bounded), totalSeconds);
+          onProgress(Math.min(totalSeconds, localStartSeconds + bounded), totalSeconds);
         }
       );
       await fs.rename(partialSegmentPath, segmentPath);
-      completedSeconds = Math.min(totalSeconds, startSeconds + expectedDuration);
+      completedSeconds = Math.min(totalSeconds, localStartSeconds + expectedDuration);
       onProgress?.(completedSeconds, totalSeconds);
     }
 
@@ -2359,6 +2361,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
     if (renderTask) {
       const rawConfig = (job as any).__renderConfigV2 ?? (job.params as any)?.render?.configV2;
       const config = resolveRenderConfigV2(rawConfig);
+      appendJobLog(job, "DEBUG_CONFIG: " + JSON.stringify({ start: config?.timeline?.start, duration: config?.timeline?.duration }) + "\n");
       if (!config) {
         throw new Error('Missing renderConfigV2');
       }
@@ -4590,9 +4593,24 @@ app.post('/api/jobs/:id/cancel', async (req, res) => {
 
 app.post('/api/render-v2/check-status', async (req, res) => {
   const config = req.body?.config as RenderConfigV2;
+  const projectName = typeof req.body?.projectName === 'string' ? req.body.projectName.trim() : '';
   if (!config) return res.status(400).json({ error: 'Missing config' });
   try {
     const { signature } = await buildRenderV2Signature(config);
+    let hasCache = false;
+
+    if (projectName) {
+      const projectRoot = path.join(MEDIA_VAULT_ROOT, sanitizeProjectName(projectName) || '');
+      const cacheRoot = path.join(projectRoot, RENDER_V2_CACHE_DIRNAME, signature);
+      try {
+        const stats = await fs.stat(cacheRoot);
+        if (stats.isDirectory()) {
+          hasCache = true;
+        }
+      } catch {
+        // no cache
+      }
+    }
 
     // Tìm job gần nhất có cùng signature
     let match: JobRecord | undefined;
@@ -4617,9 +4635,9 @@ app.post('/api/render-v2/check-status', async (req, res) => {
       }
     }
 
-    if (!match) return res.json({ signature, status: 'none' });
+    if (!match) return res.json({ signature, status: 'none', hasCache });
     const isFinished = match.status === 'completed';
-    return res.json({ signature, status: isFinished ? 'completed' : 'unfinished', jobId: match.id });
+    return res.json({ signature, status: isFinished ? 'completed' : 'unfinished', jobId: match.id, hasCache });
   } catch (error) {
     res.status(500).json({ error: 'Internal error' });
   }
