@@ -329,6 +329,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
       setSubtitlePreviewPage(subtitleTotalPages);
     }
   }, [subtitlePreviewPage, subtitleTotalPages]);
+
   React.useEffect(() => {
     if (!templateMenuOpen) return;
     const onWindowMouseDown = (event: MouseEvent) => {
@@ -2082,34 +2083,61 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   <div className="flex items-center gap-2 text-sm text-zinc-100">
                                     <span className="text-[11px] truncate font-semibold">{renderVideoFile.name}</span>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col gap-2 mt-1">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Speed</label>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        min="0.25"
-                                        value={renderParamsDraft.video.speed}
-                                        onChange={e => updateRenderParamDraft('video', 'speed', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'speed'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'speed'))}
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Audio level control</label>
+                                      <select
+                                        value={renderParamsDraft.video.levelControl ?? 'gain'}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('video', 'levelControl', v);
+                                          updateRenderParam('video', 'levelControl', v);
+                                        }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
+                                      >
+                                        <option value="lufs">Loudness Normalization (LUFS)</option>
+                                        <option value="gain">Gain Adjustment (dB)</option>
+                                      </select>
                                     </div>
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Volume (%)</label>
-                                      <input
-                                        type="number"
-                                        step="1"
-                                        min="0"
-                                        value={renderParamsDraft.video.volume}
-                                        onChange={e => updateRenderParamDraft('video', 'volume', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'volume'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'volume'))}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {(!renderParamsDraft.video.levelControl || renderParamsDraft.video.levelControl === 'gain') && (
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            value={renderParamsDraft.video.gainDb ?? '0'}
+                                            onChange={e => {
+                                            const v = e.target.value;
+                                            updateRenderParamDraft('video', 'gainDb', v);
+                                            updateRenderParam('video', 'gainDb', v);
+                                          }}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'gainDb'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'gainDb'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      )}
+                                      {renderParamsDraft.video.levelControl === 'lufs' && (
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            value={renderParamsDraft.video.targetLufs ?? '-14'}
+                                            onChange={e => {
+                                            const v = e.target.value;
+                                            updateRenderParamDraft('video', 'targetLufs', v);
+                                            updateRenderParam('video', 'targetLufs', v);
+                                          }}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'targetLufs'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'targetLufs'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-2 gap-2">

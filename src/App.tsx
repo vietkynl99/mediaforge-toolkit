@@ -3713,6 +3713,13 @@ export default function App() {
           if (videoBlurEffects && videoBlurEffects.length > 0) {
             baseItem.effects = videoBlurEffects;
           }
+          // Add audioMix for video track to support audio parameters
+          baseItem.audioMix = {
+            levelControl: renderParams.video.levelControl as any,
+            targetLufs: coerceNumber(renderParams.video.targetLufs, -14),
+            gainDb: coerceNumber(renderParams.video.gainDb, 0),
+            mute: Boolean(renderParams.video.mute)
+          };
         }
       }
 
@@ -4158,7 +4165,26 @@ export default function App() {
           maskLeft: maskLeft !== undefined ? String(maskLeft) : prev.video.maskLeft,
           maskRight: maskRight !== undefined ? String(maskRight) : prev.video.maskRight,
           maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
-          maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom
+          maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom,
+          mirror: transform.mirror ?? prev.video.mirror,
+          levelControl: firstVideoItem.audioMix?.levelControl ?? prev.video.levelControl,
+          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs),
+          gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
+          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
+        }
+      }));
+    }
+
+    const firstAudioItem = template.config.items.find(item => item.type === 'audio') ?? null;
+    if (firstAudioItem?.audioMix) {
+      setRenderParams(prev => ({
+        ...prev,
+        audio: {
+          ...prev.audio,
+          levelControl: firstAudioItem.audioMix?.levelControl ?? prev.audio.levelControl,
+          targetLufs: String(firstAudioItem.audioMix?.targetLufs ?? prev.audio.targetLufs),
+          gainDb: String(firstAudioItem.audioMix?.gainDb ?? prev.audio.gainDb),
+          mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute)
         }
       }));
     }
@@ -4223,6 +4249,7 @@ export default function App() {
             maskRight: maskRight !== undefined ? String(maskRight) : (next[targetId]?.maskRight ?? '0'),
             maskTop: maskTop !== undefined ? String(maskTop) : (next[targetId]?.maskTop ?? '0'),
             maskBottom: maskBottom !== undefined ? String(maskBottom) : (next[targetId]?.maskBottom ?? '0'),
+            mirror: transform.mirror ?? next[targetId]?.mirror ?? 'none',
             blurEffects
           };
         });
@@ -5934,7 +5961,12 @@ export default function App() {
           maskLeft: maskLeft !== undefined ? String(maskLeft) : prev.video.maskLeft,
           maskRight: maskRight !== undefined ? String(maskRight) : prev.video.maskRight,
           maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
-          maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom
+          maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom,
+          mirror: transform.mirror ?? prev.video.mirror,
+          levelControl: firstVideoItem.audioMix?.levelControl ?? prev.video.levelControl,
+          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs),
+          gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
+          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
         }
       }));
       const videoBlurEffects = normalizeItemEffects(firstVideoItem.effects);
