@@ -2498,19 +2498,53 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   <div className="flex items-center gap-2 text-sm text-zinc-100">
                                     <span className="text-[11px] truncate font-semibold">{renderAudioFile.name}</span>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col gap-2 mt-1">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
-                                      <input
-                                        type="number"
-                                        step="0.5"
-                                        value={renderParamsDraft.audio.gainDb}
-                                        onChange={e => updateRenderParamDraft('audio', 'gainDb', e.target.value)}
-                                        onFocus={holdPreview}
-                                        onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'gainDb'))}
-                                        onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'gainDb'))}
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Audio level control</label>
+                                      <select
+                                        value={renderParamsDraft.audio.levelControl ?? 'gain'}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('audio', 'levelControl', v);
+                                          updateRenderParam('audio', 'levelControl', v);
+                                        }}
                                         className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      />
+                                      >
+                                        <option value="lufs">Loudness Normalization (LUFS)</option>
+                                        <option value="gain">Gain Adjustment (dB)</option>
+                                      </select>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {(!renderParamsDraft.audio.levelControl || renderParamsDraft.audio.levelControl === 'gain') && (
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            value={renderParamsDraft.audio.gainDb}
+                                            onChange={e => updateRenderParamDraft('audio', 'gainDb', e.target.value)}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'gainDb'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'gainDb'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      )}
+                                      {renderParamsDraft.audio.levelControl === 'lufs' && (
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            value={renderParamsDraft.audio.targetLufs}
+                                            onChange={e => updateRenderParamDraft('audio', 'targetLufs', e.target.value)}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                 </>

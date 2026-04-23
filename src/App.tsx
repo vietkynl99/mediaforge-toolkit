@@ -202,6 +202,8 @@ type RenderConfigV2 = {
       crop?: { x: number; y: number; w: number; h: number };
     };
     audioMix?: {
+      levelControl?: 'gain' | 'lufs';
+      targetLufs?: number;
       gainDb?: number;
       mute?: boolean;
       fadeIn?: number;
@@ -1471,6 +1473,8 @@ export default function App() {
       fadeOut: '0'
     },
     audio: {
+      levelControl: 'gain',
+      targetLufs: '-14',
       gainDb: '0',
       mute: false,
       fadeIn: '0',
@@ -3714,6 +3718,8 @@ export default function App() {
 
       if (file.type === 'audio') {
         baseItem.audioMix = {
+          levelControl: renderParams.audio.levelControl as any,
+          targetLufs: coerceNumber(renderParams.audio.targetLufs, -14),
           gainDb: coerceNumber(renderParams.audio.gainDb, 0),
           mute: Boolean(renderParams.audio.mute)
         };
@@ -3961,6 +3967,8 @@ export default function App() {
         timeline: { start: 0 },
         layer: 0,
         audioMix: {
+          levelControl: DEFAULT_RENDER_PARAMS.audio.levelControl as any,
+          targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.audio.targetLufs, -14),
           gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.audio.gainDb, 0),
           mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute)
         }
@@ -5962,6 +5970,8 @@ export default function App() {
         ...prev,
         audio: {
           ...prev.audio,
+          levelControl: firstAudioItem.audioMix?.levelControl ?? prev.audio.levelControl,
+          targetLufs: String(firstAudioItem.audioMix?.targetLufs ?? prev.audio.targetLufs),
           gainDb: String(firstAudioItem.audioMix?.gainDb ?? prev.audio.gainDb),
           mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute)
         }
@@ -6570,6 +6580,8 @@ export default function App() {
             }
           },
           audio: {
+            levelControl: renderParams.audio.levelControl,
+            targetLufs: coerceNumber(renderParams.audio.targetLufs, -14),
             gainDb: coerceNumber(renderParams.audio.gainDb, 0),
             mute: Boolean(renderParams.audio.mute)
           },
