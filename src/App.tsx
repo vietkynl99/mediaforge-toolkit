@@ -1379,6 +1379,7 @@ export default function App() {
     maskRight?: string;
     maskTop?: string;
     maskBottom?: string;
+    mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
     blurEffects?: RenderBlurRegionEffect[];
   }>>({});
   const [renderVideoTransforms, setRenderVideoTransforms] = useState<Record<string, {
@@ -1465,6 +1466,7 @@ export default function App() {
       maskRight: '0',
       maskTop: '0',
       maskBottom: '0',
+      mirror: 'none',
       fadeIn: '0',
       fadeOut: '0'
     },
@@ -3650,7 +3652,8 @@ export default function App() {
                 y: coerceNumber(t.cropY, 0),
                 w: coerceNumber(t.cropW, 100),
                 h: coerceNumber(t.cropH, 100)
-              }
+              },
+              mirror: t.mirror ?? 'none'
             };
             const mask = buildMaskFromParams(t.maskType, {
               left: t.maskLeft,
@@ -3684,7 +3687,8 @@ export default function App() {
               y: coerceNumber(renderParams.video.cropY, 0),
               w: coerceNumber(renderParams.video.cropW, 100),
               h: coerceNumber(renderParams.video.cropH, 100)
-            }
+            },
+            mirror: renderParams.video.mirror as 'none' | 'horizontal' | 'vertical' | 'both' | undefined ?? 'none'
           };
           const mask = buildMaskFromParams(renderParams.video.maskType, {
             left: renderParams.video.maskLeft,
@@ -3941,7 +3945,8 @@ export default function App() {
             y: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropY, 0),
             w: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropW, 100),
             h: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropH, 100)
-          }
+          },
+          mirror: DEFAULT_RENDER_PARAMS.video.mirror as 'none' | 'horizontal' | 'vertical' | 'both' | undefined ?? 'none'
         }
       });
     }

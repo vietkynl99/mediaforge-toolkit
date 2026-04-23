@@ -101,6 +101,7 @@ type RenderItemV2 = {
     opacity?: number;
     fit?: 'contain' | 'cover' | 'stretch';
     crop?: { x: number; y: number; w: number; h: number };
+    mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
   };
   audioMix?: {
     gainDb?: number;
@@ -1328,6 +1329,15 @@ const buildRenderV2FilterGraph = async (
       addFilter(`scale=${outW}:${outH}:force_original_aspect_ratio=increase`);
     } else {
       addFilter(`scale=${outW}:${outH}:force_original_aspect_ratio=decrease`);
+    }
+
+    const mirror = item.transform?.mirror;
+    if (mirror === 'horizontal') {
+      addFilter('hflip');
+    } else if (mirror === 'vertical') {
+      addFilter('vflip');
+    } else if (mirror === 'both') {
+      addFilter('hflip,vflip');
     }
     if (scale !== 1) {
       addFilter(`scale=iw*${scale}:ih*${scale}`);

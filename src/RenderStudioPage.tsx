@@ -2117,7 +2117,22 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       />
                                     </div>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
+                                  <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <div className="flex flex-col gap-1 col-span-2">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Mirror</label>
+                                      <select
+                                        value={renderParamsDraft.video.mirror ?? 'none'}
+                                        onChange={e => updateRenderParam('video', 'mirror', e.target.value)}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      >
+                                        <option value="none">none</option>
+                                        <option value="horizontal">horizontal</option>
+                                        <option value="vertical">vertical</option>
+                                        <option value="both">both</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 mt-2">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Crop X (%)</label>
                                       <input
@@ -3460,6 +3475,22 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                                 <option value="contain">contain</option>
                                                 <option value="cover">cover</option>
                                                 <option value="stretch">stretch</option>
+                                              </select>
+                                            </div>
+                                            <div className="flex flex-col gap-1 col-span-2">
+                                              <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Mirror</label>
+                                              <select
+                                                value={transform.mirror ?? 'none'}
+                                                onChange={e => setRenderImageTransforms(prev => ({
+                                                  ...prev,
+                                                  [file.id]: { ...prev[file.id], mirror: e.target.value as any }
+                                                }))}
+                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none"
+                                              >
+                                                <option value="none">none</option>
+                                                <option value="horizontal">horizontal</option>
+                                                <option value="vertical">vertical</option>
+                                                <option value="both">both</option>
                                               </select>
                                             </div>
                                           </div>
