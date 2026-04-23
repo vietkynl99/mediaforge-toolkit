@@ -598,8 +598,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                   </div>
                 )}
 
-                <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_300px]">
-                  <div className="border-r border-zinc-800 bg-zinc-900/60 p-4 flex flex-col gap-4 min-h-0">
+                <div className={`grid min-h-0 flex-1 ${renderStudioMediaBinOpen ? 'grid-cols-[260px_minmax(0,1fr)_300px]' : 'grid-cols-[auto_minmax(0,1fr)_300px]'}`}>
+                  <div className={`border-r border-zinc-800 bg-zinc-900/60 flex flex-col gap-4 min-h-0 ${renderStudioMediaBinOpen ? 'p-4' : 'p-2 w-12 items-center'}`}>
                     <div
                       role="button"
                       tabIndex={0}
@@ -611,38 +611,68 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           setRenderStudioMediaBinOpen(prev => !prev);
                         }
                       }}
-                      className="flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest cursor-pointer hover:text-zinc-300 transition-colors"
+                      className={`flex items-center justify-between text-[11px] text-zinc-500 uppercase tracking-widest cursor-pointer hover:text-zinc-300 transition-colors ${!renderStudioMediaBinOpen ? 'flex-col gap-4 py-2' : ''}`}
                     >
-                      <span>Media Bin</span>
-                      <div className="flex items-center gap-2">
-                        <span>{runPipelineProject?.files.length ?? 0} items</span>
-                        <button
-                          type="button"
-                          onClick={event => {
-                            event.stopPropagation();
-                            setImportPopupOpen(true);
-                          }}
-                          className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
-                          title="Import files"
-                        >
-                          <Upload size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={event => {
-                            event.stopPropagation();
-                            setRenderStudioMediaBinOpen(prev => !prev);
-                          }}
-                          className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
-                        >
-                          <Menu size={12} />
-                        </button>
-                      </div>
+                      {renderStudioMediaBinOpen ? (
+                        <>
+                          <span>Media Bin</span>
+                          <div className="flex items-center gap-2">
+                            <span>{runPipelineProject?.files.length ?? 0} items</span>
+                            <button
+                              type="button"
+                              onClick={event => {
+                                event.stopPropagation();
+                                setImportPopupOpen(true);
+                              }}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                              title="Import files"
+                            >
+                              <Upload size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={event => {
+                                event.stopPropagation();
+                                setRenderStudioMediaBinOpen(prev => !prev);
+                              }}
+                              className="h-6 w-6 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700"
+                            >
+                              <Menu size={12} />
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center gap-6">
+                          <button
+                            type="button"
+                            onClick={event => {
+                              event.stopPropagation();
+                              setRenderStudioMediaBinOpen(prev => !prev);
+                            }}
+                            className="h-8 w-8 rounded-md border border-zinc-800 flex items-center justify-center hover:border-zinc-700 bg-zinc-900"
+                            title="Open Media Bin"
+                          >
+                            <Menu size={16} />
+                          </button>
+                          <div className="[writing-mode:vertical-lr] rotate-180 font-bold tracking-[0.2em] opacity-40 select-none">
+                            MEDIA BIN
+                          </div>
+                        </div>
+                      )}
                     </div>
                     {renderStudioMediaBinOpen && (
                       <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1">
-                        {(runPipelineProject?.files ?? []).map(file => {
-                          const isVideo = file.type === 'video';
+                        {(runPipelineProject?.files ?? [])
+                          .slice()
+                          .sort((a, b) => {
+                            const aAdded = renderInputFileIds.includes(a.id);
+                            const bAdded = renderInputFileIds.includes(b.id);
+                            if (aAdded && !bAdded) return -1;
+                            if (!aAdded && bAdded) return 1;
+                            return 0;
+                          })
+                          .map(file => {
+                            const isVideo = file.type === 'video';
                           const isAudio = file.type === 'audio';
                           const isSubtitle = file.type === 'subtitle';
                           const isImage = file.type === 'image';

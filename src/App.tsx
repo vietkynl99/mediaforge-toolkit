@@ -1318,7 +1318,7 @@ export default function App() {
   const lastRenderProjectIdRef = useRef<string | null>(null);
   const [renderPresetSaveMenuOpen, setRenderPresetSaveMenuOpen] = useState(false);
   const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
-  const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(true);
+  const [renderStudioMediaBinOpen, setRenderStudioMediaBinOpen] = useState(false);
   const [renderStudioProjectOpen, setRenderStudioProjectOpen] = useState(false);
   const [renderStudioInspectorOpen, setRenderStudioInspectorOpen] = useState<
     Record<'timeline' | 'video' | 'audio' | 'subtitle' | 'text' | 'effects' | 'image', boolean>
