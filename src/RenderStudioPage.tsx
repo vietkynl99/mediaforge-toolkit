@@ -416,11 +416,10 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     const item = currentItem ?? baselineItem;
     if (!item) return `items[${index}]`;
     const ref = typeof item.source?.ref === 'string' ? item.source.ref.trim() : '';
-    if (ref) return ref;
-    if (item.type === 'text') return 'text';
-    if (typeof item.type === 'string' && item.type.trim() !== '') return item.type;
-    return `items[${index}]`;
-  }, [renderTemplateDiffCurrentConfig, renderTemplateDiffBaselineConfig]);
+    const key = ref || (item.type === 'text' ? 'text' : item.type);
+    const label = key ? (renderTrackLabels?.[key] ?? '').trim() || key : `items[${index}]`;
+    return label;
+  }, [renderTemplateDiffCurrentConfig, renderTemplateDiffBaselineConfig, renderTrackLabels]);
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('image:') ? 'image'
       : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
@@ -1816,6 +1815,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               : null}
                             {isCustomTemplate && renderSubtitleFile && (() => {
                               const key = placeholderKeyByFileId[renderSubtitleFile.id] ?? 'subtitle';
+                              const subtitlePlaceholderLabel = (renderTrackLabels?.[key] ?? '').trim() || key;
                               return (
                                 <div key="tpl-ph-subtitle" className="flex items-center gap-2 min-w-0">
                                   <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
@@ -1823,9 +1823,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </span>
                                   <span
                                     className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300"
-                                    title={key}
+                                    title={subtitlePlaceholderLabel}
                                   >
-                                    {key}
+                                    {subtitlePlaceholderLabel}
                                   </span>
                                   <select
                                     value={renderSubtitleId ?? ''}
@@ -1853,6 +1853,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             })()}
                             {isCustomTemplate && renderVideoFile && (() => {
                               const key = placeholderKeyByFileId[renderVideoFile.id] ?? 'video';
+                              const videoPlaceholderLabel = (renderTrackLabels?.[key] ?? '').trim() || key;
                               return (
                                 <div key="tpl-ph-video" className="flex items-center gap-2 min-w-0">
                                   <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
@@ -1860,9 +1861,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </span>
                                   <span
                                     className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300"
-                                    title={key}
+                                    title={videoPlaceholderLabel}
                                   >
-                                    {key}
+                                    {videoPlaceholderLabel}
                                   </span>
                                   <select
                                     value={renderVideoId ?? ''}
@@ -1890,6 +1891,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             })()}
                             {isCustomTemplate && renderAudioFile && (() => {
                               const key = placeholderKeyByFileId[renderAudioFile.id] ?? 'audio';
+                              const audioPlaceholderLabel = (renderTrackLabels?.[key] ?? '').trim() || key;
                               return (
                                 <div key="tpl-ph-audio" className="flex items-center gap-2 min-w-0">
                                   <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
@@ -1897,9 +1899,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   </span>
                                   <span
                                     className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300"
-                                    title={key}
+                                    title={audioPlaceholderLabel}
                                   >
-                                    {key}
+                                    {audioPlaceholderLabel}
                                   </span>
                                   <select
                                     value={renderAudioId ?? ''}
@@ -1928,6 +1930,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             {isCustomTemplate && renderImageFiles.length > 0
                               ? renderImageFiles.map((file, idx) => {
                                   const key = placeholderKeyByFileId[file.id] ?? `image${idx + 1}`;
+                                  const imagePlaceholderLabel = (renderTrackLabels?.[key] ?? '').trim() || key;
                                   return (
                                     <div key={`tpl-ph-img-${file.id}`} className="flex items-center gap-2 min-w-0">
                                       <span className="shrink-0 w-7 flex justify-center text-zinc-500" aria-hidden>
@@ -1935,9 +1938,9 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       </span>
                                       <span
                                         className="w-24 shrink-0 truncate text-[10px] font-medium text-zinc-300"
-                                        title={key}
+                                        title={imagePlaceholderLabel}
                                       >
-                                        {key}
+                                        {imagePlaceholderLabel}
                                       </span>
                                       <select
                                         value={file.id}
@@ -2060,21 +2063,40 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     </select>
                                   </div>
                                 </div>
-                                <div className="flex flex-col gap-1">
-                                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
-                                  <input
-                                    type="number"
-                                    step="0.5"
-                                    value={renderParamsDraft.timeline?.targetLufs ?? '-14'}
-                                    onChange={e => {
-                                      const v = e.target.value;
-                                      updateRenderParamDraft('timeline', 'targetLufs', v);
-                                      updateRenderParam('timeline', 'targetLufs', v);
-                                    }}
-                                    onBlur={() => commitRenderParamDraftValue('timeline', 'targetLufs')}
-                                    onKeyDown={commitRenderParamDraftOnEnter('timeline', 'targetLufs')}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                  />
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Audio control</label>
+                                    <select
+                                      value={renderParamsDraft.timeline.levelControl ?? 'gain'}
+                                      onChange={e => {
+                                        const v = e.target.value;
+                                        updateRenderParamDraft('timeline', 'levelControl', v);
+                                        updateRenderParam('timeline', 'levelControl', v);
+                                      }}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none w-full truncate"
+                                    >
+                                      <option value="lufs">Loudness Normalization (LUFS)</option>
+                                      <option value="gain">Gain Adjustment (dB)</option>
+                                    </select>
+                                  </div>
+                                  {renderParamsDraft.timeline.levelControl === 'lufs' && (
+                                    <div className="flex flex-col gap-1">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
+                                      <input
+                                        type="number"
+                                        step="0.5"
+                                        value={renderParamsDraft.timeline?.targetLufs ?? '-14'}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          updateRenderParamDraft('timeline', 'targetLufs', v);
+                                          updateRenderParam('timeline', 'targetLufs', v);
+                                        }}
+                                        onBlur={() => commitRenderParamDraftValue('timeline', 'targetLufs')}
+                                        onKeyDown={commitRenderParamDraftOnEnter('timeline', 'targetLufs')}
+                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                      />
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                           )}
@@ -2115,42 +2137,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     <span className="text-[11px] truncate font-semibold">{renderVideoFile.name}</span>
                                   </div>
                                   <div className="flex flex-col gap-2 mt-1">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Audio level control</label>
-                                      <select
-                                        value={renderParamsDraft.video.levelControl ?? 'gain'}
-                                        onChange={e => {
-                                          const v = e.target.value;
-                                          updateRenderParamDraft('video', 'levelControl', v);
-                                          updateRenderParam('video', 'levelControl', v);
-                                        }}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      >
-                                        <option value="lufs">Loudness Normalization (LUFS)</option>
-                                        <option value="gain">Gain Adjustment (dB)</option>
-                                      </select>
-                                    </div>
                                     <div className="grid grid-cols-2 gap-2">
-                                      {(!renderParamsDraft.video.levelControl || renderParamsDraft.video.levelControl === 'gain') && (
-                                        <div className="flex flex-col gap-1">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
-                                          <input
-                                            type="number"
-                                            step="0.5"
-                                            value={renderParamsDraft.video.gainDb ?? '0'}
-                                            onChange={e => {
-                                            const v = e.target.value;
-                                            updateRenderParamDraft('video', 'gainDb', v);
-                                            updateRenderParam('video', 'gainDb', v);
-                                          }}
-                                            onFocus={holdPreview}
-                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'gainDb'))}
-                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'gainDb'))}
-                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                          />
-                                        </div>
-                                      )}
-                                      {renderParamsDraft.video.levelControl === 'lufs' && (
+                                      {renderParamsDraft.timeline.levelControl === 'lufs' ? (
                                         <div className="flex flex-col gap-1">
                                           <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
                                           <input
@@ -2158,13 +2146,31 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                             step="0.5"
                                             value={renderParamsDraft.video.targetLufs ?? '-14'}
                                             onChange={e => {
-                                            const v = e.target.value;
-                                            updateRenderParamDraft('video', 'targetLufs', v);
-                                            updateRenderParam('video', 'targetLufs', v);
-                                          }}
+                                              const v = e.target.value;
+                                              updateRenderParamDraft('video', 'targetLufs', v);
+                                              updateRenderParam('video', 'targetLufs', v);
+                                            }}
                                             onFocus={holdPreview}
                                             onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'targetLufs'))}
                                             onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'targetLufs'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            value={renderParamsDraft.video.gainDb ?? '0'}
+                                            onChange={e => {
+                                              const v = e.target.value;
+                                              updateRenderParamDraft('video', 'gainDb', v);
+                                              updateRenderParam('video', 'gainDb', v);
+                                            }}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('video', 'gainDb'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('video', 'gainDb'))}
                                             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                           />
                                         </div>
@@ -2558,23 +2564,26 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     <span className="text-[11px] truncate font-semibold">{renderAudioFile.name}</span>
                                   </div>
                                   <div className="flex flex-col gap-2 mt-1">
-                                    <div className="flex flex-col gap-1">
-                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Audio level control</label>
-                                      <select
-                                        value={renderParamsDraft.audio.levelControl ?? 'gain'}
-                                        onChange={e => {
-                                          const v = e.target.value;
-                                          updateRenderParamDraft('audio', 'levelControl', v);
-                                          updateRenderParam('audio', 'levelControl', v);
-                                        }}
-                                        className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                      >
-                                        <option value="lufs">Loudness Normalization (LUFS)</option>
-                                        <option value="gain">Gain Adjustment (dB)</option>
-                                      </select>
-                                    </div>
                                     <div className="grid grid-cols-2 gap-2">
-                                      {(!renderParamsDraft.audio.levelControl || renderParamsDraft.audio.levelControl === 'gain') && (
+                                      {renderParamsDraft.timeline.levelControl === 'lufs' ? (
+                                        <div className="flex flex-col gap-1">
+                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
+                                          <input
+                                            type="number"
+                                            step="0.5"
+                                            value={renderParamsDraft.audio.targetLufs ?? '-14'}
+                                            onChange={e => {
+                                              const v = e.target.value;
+                                              updateRenderParamDraft('audio', 'targetLufs', v);
+                                              updateRenderParam('audio', 'targetLufs', v);
+                                            }}
+                                            onFocus={holdPreview}
+                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
+                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
+                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+                                          />
+                                        </div>
+                                      ) : (
                                         <div className="flex flex-col gap-1">
                                           <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Gain (dB)</label>
                                           <input
@@ -2585,21 +2594,6 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                             onFocus={holdPreview}
                                             onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'gainDb'))}
                                             onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'gainDb'))}
-                                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
-                                          />
-                                        </div>
-                                      )}
-                                      {renderParamsDraft.audio.levelControl === 'lufs' && (
-                                        <div className="flex flex-col gap-1">
-                                          <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Target LUFS</label>
-                                          <input
-                                            type="number"
-                                            step="0.5"
-                                            value={renderParamsDraft.audio.targetLufs}
-                                            onChange={e => updateRenderParamDraft('audio', 'targetLufs', e.target.value)}
-                                            onFocus={holdPreview}
-                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
-                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
                                             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                           />
                                         </div>

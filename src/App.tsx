@@ -168,6 +168,7 @@ type RenderSubtitleAssState = {
 type RenderConfigV2 = {
   version: '2';
   timeline: {
+    levelControl?: 'gain' | 'lufs';
     targetLufs?: number;
     resolution: string;
     framerate: number;
@@ -1468,6 +1469,7 @@ export default function App() {
     timeline: {
       framerate: '30',
       resolution: '1920x1080',
+      levelControl: 'gain',
       targetLufs: '-14'
     },
     video: {
@@ -1494,13 +1496,11 @@ export default function App() {
       mirror: 'none',
       fadeIn: '0',
       fadeOut: '0',
-      levelControl: 'gain',
       targetLufs: '-14',
       gainDb: '0',
       mute: false
     },
     audio: {
-      levelControl: 'gain',
       targetLufs: '-14',
       gainDb: '0',
       mute: false,
@@ -3788,8 +3788,8 @@ export default function App() {
           }
           // Add audioMix for video track to support audio parameters
           baseItem.audioMix = {
-            levelControl: renderParams.video.levelControl as any,
-            targetLufs: coerceNumber(renderParams.video.targetLufs, -14),
+            levelControl: renderParams.timeline.levelControl as any,
+            targetLufs: coerceNumber(renderParams.timeline.targetLufs, -14),
             gainDb: coerceNumber(renderParams.video.gainDb, 0),
             mute: Boolean(renderParams.video.mute)
           };
@@ -3798,8 +3798,8 @@ export default function App() {
 
       if (file.type === 'audio') {
         baseItem.audioMix = {
-          levelControl: renderParams.audio.levelControl as any,
-          targetLufs: coerceNumber(renderParams.audio.targetLufs, -14),
+          levelControl: renderParams.timeline.levelControl as any,
+          targetLufs: coerceNumber(renderParams.timeline.targetLufs, -14),
           gainDb: coerceNumber(renderParams.audio.gainDb, 0),
           mute: Boolean(renderParams.audio.mute)
         };
@@ -3865,6 +3865,7 @@ export default function App() {
     return {
       version: '2',
       timeline: {
+        levelControl: renderParams.timeline.levelControl as 'gain' | 'lufs',
         targetLufs,
         resolution: timelineResolution,
         framerate: timelineFramerate,
@@ -3953,6 +3954,14 @@ export default function App() {
         if (matchDuration) {
           const { start: _start, end: _end, ...textWithoutRange } = nextItem.text;
           nextItem.text = textWithoutRange;
+        }
+      }
+      if (nextItem.audioMix) {
+        const { levelControl: _levelControl, targetLufs: _targetLufs, ...audioMixRest } = nextItem.audioMix;
+        if (Object.keys(audioMixRest).length > 0) {
+          nextItem.audioMix = audioMixRest;
+        } else {
+          delete nextItem.audioMix;
         }
       }
       return nextItem;
@@ -4084,6 +4093,7 @@ export default function App() {
     return {
       version: '2',
       timeline: {
+        levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
         targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.targetLufs, -14),
         resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
         framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
@@ -4206,6 +4216,7 @@ export default function App() {
           ...prev.timeline,
           framerate: String(template.config.timeline?.framerate ?? prev.timeline.framerate),
           resolution: String(template.config.timeline?.resolution ?? prev.timeline.resolution),
+          levelControl: template.config.timeline?.levelControl ?? prev.timeline.levelControl,
           targetLufs: String(template.config.timeline?.targetLufs ?? prev.timeline.targetLufs)
         },
         video: {
@@ -4226,8 +4237,6 @@ export default function App() {
           maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
           maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom,
           mirror: transform.mirror ?? prev.video.mirror,
-          levelControl: firstVideoItem.audioMix?.levelControl ?? prev.video.levelControl,
-          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs),
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
           mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
         }
@@ -6014,15 +6023,11 @@ export default function App() {
           maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
           maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom,
           mirror: transform.mirror ?? prev.video.mirror,
-          levelControl: firstVideoItem.audioMix?.levelControl ?? prev.video.levelControl,
-          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs),
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
           mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
         },
         audio: {
           ...prev.audio,
-          levelControl: firstVideoItem.audioMix?.levelControl ?? prev.audio.levelControl,
-          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.audio.targetLufs),
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.audio.gainDb),
           mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.audio.mute)
         }
@@ -6040,6 +6045,7 @@ export default function App() {
           ...prev.timeline,
           framerate: String(renderConfigV2Override.timeline?.framerate ?? prev.timeline.framerate),
           resolution: String(renderConfigV2Override.timeline?.resolution ?? prev.timeline.resolution),
+          levelControl: renderConfigV2Override.timeline?.levelControl ?? prev.timeline.levelControl,
           targetLufs: String(renderConfigV2Override.timeline?.targetLufs ?? prev.timeline.targetLufs ?? '-14')
         }
       }));
@@ -6049,8 +6055,6 @@ export default function App() {
         ...prev,
         audio: {
           ...prev.audio,
-          levelControl: firstAudioItem.audioMix?.levelControl ?? prev.audio.levelControl,
-          targetLufs: String(firstAudioItem.audioMix?.targetLufs ?? prev.audio.targetLufs),
           gainDb: String(firstAudioItem.audioMix?.gainDb ?? prev.audio.gainDb),
           mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute)
         }
