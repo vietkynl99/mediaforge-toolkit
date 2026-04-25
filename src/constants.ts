@@ -113,6 +113,7 @@ export const DOWNLOAD_MODE_OPTIONS = [
 export const RENDER_STUDIO_PATH = '/render-studio';
 
 export const RENDER_TIMELINE_VIEW_PAD = 0.12;
+export const RENDER_TIMELINE_MAX_VIEW_DURATION = 20;
 
 export const RENDER_BLUR_FEATHER_MAX = 10;
 

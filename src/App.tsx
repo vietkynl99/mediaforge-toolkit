@@ -34,6 +34,7 @@ import {
   RENDER_PREVIEW_BLACK_DATA_URL,
   RENDER_STUDIO_PATH,
   RENDER_TIMELINE_VIEW_PAD,
+  RENDER_TIMELINE_MAX_VIEW_DURATION,
   TAB_PATH_MAP
 } from './constants';
 import { formatLocalDateTime } from './utils/format';
@@ -446,7 +447,7 @@ export default function App() {
   const downloadTemplateMenuCloseRef = React.useRef<number | null>(null);
   const uvrTemplateMenuCloseRef = React.useRef<number | null>(null);
   const ttsTemplateMenuCloseRef = React.useRef<number | null>(null);
-  const [renderTimelineScale, setRenderTimelineScale] = useState(1);
+  const [renderTimelineScale, setRenderTimelineScale] = useState(-1);
   const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
   const [renderPreviewUrl, setRenderPreviewUrl] = useState<string | null>(null);
   const [renderPreviewLoading, setRenderPreviewLoading] = useState(false);
@@ -876,8 +877,11 @@ export default function App() {
     return null;
   }, [renderStudioFocus, renderStudioItemType, runPipelineProject?.files, renderVideoId, renderAudioId, renderSubtitleId, renderInputFileIds]);
   const renderTimelineMinScale = renderTimelineViewDuration > 0 && renderTimelineViewportWidth > 0
-    ? Math.min(1, Math.max(0.1, renderTimelineViewportWidth / (renderTimelineViewDuration * 24)))
+    ? renderTimelineViewportWidth / (renderTimelineViewDuration * 24)
     : 0.1;
+  const renderTimelineMaxScale = renderTimelineViewportWidth > 0
+    ? renderTimelineViewportWidth / (RENDER_TIMELINE_MAX_VIEW_DURATION * 24)
+    : 4;
   const renderTimelineWidth = Math.max(320, renderTimelineViewDuration * 24 * renderTimelineScale);
   const renderTimelineTickCount = Math.max(4, Math.round(renderTimelineWidth / 160));
   const downloadAnalyzeData = downloadAnalyzeResult?.data ?? null;
@@ -5855,6 +5859,7 @@ export default function App() {
       renderTimelineTickCount,
       renderPlayheadSeconds,
       renderTimelineMinScale,
+      renderTimelineMaxScale,
       renderTimelineScale,
       setRenderTimelineScale
     },

@@ -13,7 +13,7 @@ import {
   parseDurationToSeconds, 
   coerceNumber 
 } from '../../../utils/helpers';
-import { RENDER_TIMELINE_VIEW_PAD } from '../../../constants';
+import { RENDER_TIMELINE_VIEW_PAD, RENDER_TIMELINE_MAX_VIEW_DURATION } from '../../../constants';
 import { 
   buildRenderConfigV2, 
   buildTemplateFromConfig, 
@@ -33,7 +33,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
   const [renderImageTransforms, setRenderImageTransforms] = useState<Record<string, any>>({});
   const [renderVideoTransforms, setRenderVideoTransforms] = useState<Record<string, any>>({});
   const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
-  const [renderTimelineScale, setRenderTimelineScale] = useState(1);
+  const [renderTimelineScale, setRenderTimelineScale] = useState(-1);
   const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
   const [renderStudioFocus, setRenderStudioFocus] = useState<'timeline' | 'item'>('timeline');
   const [renderStudioItemType, setRenderStudioItemType] = useState<VaultFileType | 'text' | null>(null);
@@ -191,9 +191,21 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
 
   const renderTimelineMinScale = useMemo(() => 
     renderTimelineViewDuration > 0 && renderTimelineViewportWidth > 0
-      ? Math.min(1, Math.max(0.1, renderTimelineViewportWidth / (renderTimelineViewDuration * 24)))
+      ? renderTimelineViewportWidth / (renderTimelineViewDuration * 24)
       : 0.1
   , [renderTimelineViewDuration, renderTimelineViewportWidth]);
+
+  const renderTimelineMaxScale = useMemo(() => 
+    renderTimelineViewportWidth > 0
+      ? renderTimelineViewportWidth / (RENDER_TIMELINE_MAX_VIEW_DURATION * 24)
+      : 4
+  , [renderTimelineViewportWidth]);
+
+  useEffect(() => {
+    if (renderTimelineScale < renderTimelineMinScale) {
+      setRenderTimelineScale(renderTimelineMinScale);
+    }
+  }, [renderTimelineMinScale, renderTimelineScale]);
 
   const configV2 = useMemo(() => {
     if (!project) return null;
@@ -713,6 +725,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     renderSubtitleLanes,
     renderSelectedItem,
     renderTimelineMinScale,
+    renderTimelineMaxScale,
     configV2,
     renderTimelineScale,
     setRenderTimelineScale,

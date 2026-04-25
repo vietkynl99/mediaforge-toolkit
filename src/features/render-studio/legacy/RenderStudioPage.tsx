@@ -110,6 +110,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     renderTimelineTickCount,
     renderPlayheadSeconds,
     renderTimelineMinScale,
+    renderTimelineMaxScale,
     renderTimelineScale,
     setRenderTimelineScale,
     renderPreviewUrl,
@@ -163,6 +164,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
 
   const RENDER_RESOLUTION_PRESETS = flat.RENDER_RESOLUTION_PRESETS ?? DEFAULT_RENDER_RESOLUTION_PRESETS;
   const [selectedTrackKey, setSelectedTrackKey] = React.useState<string | null>(null);
+  const [localZoom, setLocalZoom] = React.useState<number | null>(null);
   const timelineScrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const selectedImageId = selectedTrackKey?.startsWith('image:') ? selectedTrackKey.slice('image:'.length) : null;
   const activeVideoId = renderVideoId ?? null;
@@ -971,16 +973,25 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px]">Zoom</span>
-                              <input
-                                type="range"
-                                min={renderTimelineMinScale}
-                                max={4}
-                                step={0.25}
-                                value={renderTimelineScale}
-                                onChange={e => setRenderTimelineScale(Number(e.target.value))}
-                                className="w-20 accent-lime-400"
-                              />
-                              <span className="text-[10px]">{renderTimelineScale.toFixed(2)}x</span>
+                                <input
+                                  type="range"
+                                  min={renderTimelineMinScale}
+                                  max={Math.max(renderTimelineMinScale, renderTimelineMaxScale)}
+                                  step={0.01}
+                                  value={localZoom !== null ? localZoom : renderTimelineScale}
+                                  onChange={e => {
+                                    const v = Number(e.target.value);
+                                    setLocalZoom(v);
+                                    React.startTransition(() => {
+                                      setRenderTimelineScale(v);
+                                    });
+                                  }}
+                                  onBlur={() => setLocalZoom(null)}
+                                  onMouseUp={() => setLocalZoom(null)}
+                                  onTouchEnd={() => setLocalZoom(null)}
+                                  className="w-20 accent-lime-400"
+                                />
+                                <span className="text-[10px]">{(localZoom !== null ? localZoom : renderTimelineScale).toFixed(2)}x</span>
                             </div>
                             <span className="h-5" />
                           </div>
