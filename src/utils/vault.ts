@@ -1,11 +1,11 @@
 import { VaultFile, VaultFolder, VaultFileType } from '../types/vault';
 
 import { num } from './helpers';
-import type { RenderBlurRegionEffect } from '../types';
+import type { BlurRegionEffect } from '../types';
 
-export const normalizeLoadedRenderEffects = (raw: unknown): RenderBlurRegionEffect[] | undefined => {
+export const normalizeLoadedRenderEffects = (raw: unknown): BlurRegionEffect[] | undefined => {
   if (!Array.isArray(raw)) return undefined;
-  const out: RenderBlurRegionEffect[] = [];
+  const out: BlurRegionEffect[] = [];
   raw.forEach(item => {
     if (!item || typeof item !== 'object') return;
     const o = item as Record<string, unknown>;

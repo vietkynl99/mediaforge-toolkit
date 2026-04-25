@@ -23,69 +23,8 @@ import {
   Languages,
   Scissors
 } from 'lucide-react';
-
-export type JobStatus = 'queued' | 'processing' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
-
-export interface ProcessingTask {
-  id: string;
-  type: 'download' | 'download_subs' | 'download_video' | 'download_audio' | 'download_merge' | 'uvr' | 'tts' | 'stt' | 'translate' | 'edit' | 'burn' | 'render';
-  name: string;
-  status: 'pending' | 'active' | 'done' | 'error';
-  progress: number;
-}
-
-export interface MediaJob {
-  id: string;
-  name: string;
-  projectName?: string;
-  fileName: string;
-  fileSize: string;
-  status: JobStatus;
-  progress: number;
-  tasks: ProcessingTask[];
-  createdAt: string;
-  startedAt?: string;
-  finishedAt?: string;
-  durationMs?: number;
-  eta?: string;
-  cpuUsage?: number;
-  gpuUsage?: number;
-  log?: string;
-  error?: string;
-  params?: {
-    pipelineId?: number;
-    pipelineName?: string;
-    projectName?: string;
-    inputPaths?: string[];
-    inputRelativePath?: string;
-    download?: {
-      url?: string;
-      mode?: 'all' | 'subs' | 'media';
-      noPlaylist?: boolean;
-      subLangs?: string;
-    };
-    render?: {
-      inputPaths?: string[];
-      videoPath?: string;
-      audioPath?: string;
-      subtitlePath?: string;
-    };
-    uvr?: {
-      backend?: string;
-      model?: string;
-      outputFormat?: string;
-    };
-    tts?: {
-      voice?: string;
-      rate?: number;
-      pitch?: number;
-      volume?: number;
-      overlapSeconds?: number;
-      overlapMode?: 'overlap' | 'truncate';
-      removeLineBreaks?: boolean;
-    };
-  };
-}
+import type { JobStatus, ProcessingTask, MediaJob } from './types/job';
+export type { JobStatus, ProcessingTask, MediaJob };
 
 export const MOCK_JOBS: MediaJob[] = [];
 
@@ -106,6 +45,6 @@ export const TASK_ICONS = {
 
 export type { AuthUser } from './types/auth';
 export type { PipelineSummary, TaskTemplate } from './types/pipeline';
-export type { RenderBlurRegionEffect, RenderConfigV2, RenderSubtitleAssState, RenderTemplate, SubtitleStylePreset } from './types/render';
+export type { RenderConfigV2, RenderSubtitleAssState, RenderTemplate, SubtitleStylePreset, BlurRegionEffect } from './types/render';
 export { BASE_SUBTITLE_STYLE, DEFAULT_RENDER_SUBTITLE_ASS, SUBTITLE_STYLE_PRESETS, VIET_SUBTITLE_FONTS } from './types/render';
 export type { VaultFile, VaultFileDTO, VaultFileType, VaultFolder, VaultFolderDTO, VaultStatus } from './types/vault';

@@ -1,5 +1,5 @@
-import { RenderConfigV2, RenderItemV2, RenderEffectV2, LevelControl } from '../../shared/types';
-export type { RenderConfigV2, RenderItemV2, RenderEffectV2, LevelControl };
+import { RenderConfigV2, RenderItemV2, RenderEffectV2, LevelControl, BlurRegionEffect } from '../../shared/types';
+export type { RenderConfigV2, RenderItemV2, RenderEffectV2, LevelControl, BlurRegionEffect };
 
 export interface RenderSubtitleAssState {
   fontName: string;
@@ -217,16 +217,6 @@ export const DEFAULT_RENDER_PARAMS = {
   },
   subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
   text: { ...DEFAULT_RENDER_SUBTITLE_ASS }
-};
-
-export type RenderBlurRegionEffect = {
-  type: 'blur_region';
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-  sigma: number;
-  feather: number;
 };
 
 export type RenderTemplate = {

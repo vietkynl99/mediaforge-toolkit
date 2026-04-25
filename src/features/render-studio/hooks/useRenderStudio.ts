@@ -4,7 +4,7 @@ import {
   VaultFile, 
   RenderConfigV2, 
   DEFAULT_RENDER_PARAMS,
-  RenderBlurRegionEffect,
+  BlurRegionEffect,
   RenderSubtitleAssState,
   VaultFileType,
   RenderTemplate
@@ -259,7 +259,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     updateRenderParam(section, key, value);
   }, [renderParamsDraft, updateRenderParam]);
 
-  const defaultBlurRegionEffect = (): RenderBlurRegionEffect => ({
+  const defaultBlurRegionEffect = (): BlurRegionEffect => ({
     type: 'blur_region',
     left: 10,
     right: 10,
@@ -283,7 +283,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     });
   }, []);
 
-  const updateRenderVideoBlurEffect = useCallback((fileId: string | null, index: number, patch: Partial<RenderBlurRegionEffect>) => {
+  const updateRenderVideoBlurEffect = useCallback((fileId: string | null, index: number, patch: Partial<BlurRegionEffect>) => {
     if (!fileId) return;
     setRenderVideoTransforms(prev => {
       const current = prev[fileId] ?? {};
@@ -329,7 +329,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     });
   }, []);
 
-  const updateRenderImageBlurEffect = useCallback((fileId: string, index: number, patch: Partial<RenderBlurRegionEffect>) => {
+  const updateRenderImageBlurEffect = useCallback((fileId: string, index: number, patch: Partial<BlurRegionEffect>) => {
     if (!fileId) return;
     setRenderImageTransforms(prev => {
       const current = prev[fileId] ?? {};

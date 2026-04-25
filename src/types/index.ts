@@ -1,7 +1,7 @@
 import { AuthUser } from './auth';
 import { MediaJob } from './job';
 import { VaultFile, VaultFolder, VaultFileType } from './vault';
-import { RenderConfigV2, RenderTemplate, RenderBlurRegionEffect } from './render';
+import { RenderConfigV2, RenderTemplate, BlurRegionEffect } from './render';
 import { PipelineSummary, TaskTemplate } from './pipeline';
 
 export * from './auth';

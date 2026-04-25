@@ -1,5 +1,15 @@
 export type LevelControl = 'gain' | 'loudness' | 'lufs';
 
+export type BlurRegionEffect = {
+  type: 'blur_region';
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  sigma: number;
+  feather: number;
+};
+
 export type RenderEffectV2 = {
   type: string;
   params?: Record<string, unknown>;

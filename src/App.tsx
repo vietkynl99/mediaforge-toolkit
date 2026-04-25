@@ -49,7 +49,7 @@ import { summarizeRenderConfigForDebug } from './features/render-studio/utils/co
 import { BASE_SUBTITLE_STYLE, DEFAULT_RENDER_SUBTITLE_ASS, SUBTITLE_STYLE_PRESETS, VIET_SUBTITLE_FONTS } from './types';
 import type {
   AuthUser,
-  RenderBlurRegionEffect,
+  BlurRegionEffect,
   RenderConfigV2,
   RenderSubtitleAssState,
   RenderTemplate,
@@ -407,10 +407,10 @@ export default function App() {
     maskTop?: string;
     maskBottom?: string;
     mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
-    blurEffects?: RenderBlurRegionEffect[];
+    blurEffects?: BlurRegionEffect[];
   }>>({});
   const [renderVideoTransforms, setRenderVideoTransforms] = useState<Record<string, {
-    blurEffects?: RenderBlurRegionEffect[];
+    blurEffects?: BlurRegionEffect[];
   }>>({});
   const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
   const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
@@ -700,7 +700,7 @@ export default function App() {
   const renderSubtitleDuration = renderSubtitleFile?.durationSeconds
     ?? parseDurationToSeconds(renderSubtitleFile?.duration);
 
-  const defaultBlurRegionEffect = (): RenderBlurRegionEffect => ({
+  const defaultBlurRegionEffect = (): BlurRegionEffect => ({
     type: 'blur_region',
     left: 10,
     right: 10,
@@ -722,7 +722,7 @@ export default function App() {
       };
     });
   };
-  const updateRenderVideoBlurEffect = (fileId: string | null, index: number, patch: Partial<RenderBlurRegionEffect>) => {
+  const updateRenderVideoBlurEffect = (fileId: string | null, index: number, patch: Partial<BlurRegionEffect>) => {
     if (!fileId) return;
     setRenderVideoTransforms(prev => {
       const current = prev[fileId] ?? {};
@@ -738,7 +738,7 @@ export default function App() {
       };
     });
   };
-  const commitRenderVideoBlurEffectValue = (_fileId: string | null, _index: number, _key: keyof RenderBlurRegionEffect) => { };
+  const commitRenderVideoBlurEffectValue = (_fileId: string | null, _index: number, _key: keyof BlurRegionEffect) => { };
   const removeRenderVideoBlurEffect = (fileId: string | null, index: number) => {
     if (!fileId) return;
     setRenderVideoTransforms(prev => {
@@ -766,7 +766,7 @@ export default function App() {
       };
     });
   };
-  const updateRenderImageBlurEffect = (fileId: string, index: number, patch: Partial<RenderBlurRegionEffect>) => {
+  const updateRenderImageBlurEffect = (fileId: string, index: number, patch: Partial<BlurRegionEffect>) => {
     if (!fileId) return;
     setRenderImageTransforms(prev => {
       const current = prev[fileId] ?? {};
@@ -782,7 +782,7 @@ export default function App() {
       };
     });
   };
-  const commitRenderImageBlurEffectValue = (_fileId: string, _index: number, _key: keyof RenderBlurRegionEffect) => { };
+  const commitRenderImageBlurEffectValue = (_fileId: string, _index: number, _key: keyof BlurRegionEffect) => { };
   const removeRenderImageBlurEffect = (fileId: string, index: number) => {
     if (!fileId) return;
     setRenderImageTransforms(prev => {
