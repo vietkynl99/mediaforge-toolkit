@@ -66,6 +66,7 @@ type VaultFolderDTO = {
 type RenderConfigV2 = {
   version: '2';
   timeline: {
+    levelControl?: 'gain' | 'loudness' | 'lufs';
     targetLufs?: number;
     resolution: string;
     framerate: number;
@@ -99,6 +100,8 @@ type RenderItemV2 = {
     mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
   };
   audioMix?: {
+    levelControl?: 'gain' | 'loudness' | 'lufs';
+    targetLufs?: number;
     gainDb?: number;
     mute?: boolean;
     fadeIn?: number;
@@ -672,20 +675,25 @@ const appendJobLog = (job: JobRecord, message: string) => {
   const timestamp = formatLocalTimestamp();
   const prefixed = message
     .split(/\r?\n|\r/)
-    .map(line => (line ? `[${timestamp}] ${line}` : line))
+    .filter(line => line.trim().length > 0)
+    .map(line => `[${timestamp}] ${line}`)
     .join('\n');
-  
-  // Also keep a small buffer in memory for quick UI updates if needed, 
+
+  // Also keep a small buffer in memory for quick UI updates if needed,
   // but the source of truth is the file.
-  job.log = compactJobLogProgressLines(`${job.log ?? ''}${prefixed}\n`);
+  if (prefixed) {
+    job.log = compactJobLogProgressLines(`${job.log ?? ''}${prefixed}\n`);
+  }
 
   // Write to file with structured path
   const { dir, fullPath } = getJobLogPath(job);
-  
+
   (async () => {
     try {
       await fs.mkdir(dir, { recursive: true });
-      await appendFile(fullPath, prefixed + '\n');
+      if (prefixed) {
+        await appendFile(fullPath, prefixed + '\n');
+      }
     } catch (err) {
       console.error(`Failed to write log for job ${job.id}:`, err);
     }
@@ -1133,10 +1141,12 @@ const buildRenderV2FilterGraph = async (
     sampleAt?: number;
     debugEnabled?: boolean;
     debugLabel?: string;
+    onLog?: (chunk: string) => void;
   }
 ) => {
   const debugEnabled = options?.debugEnabled === true;
   const debugLabel = options?.debugLabel ? ` ${options.debugLabel}` : '';
+  const onLog = options?.onLog;
   const INPUT_SEEK_PREROLL_SECONDS = 1;
   const includeAudio = options?.includeAudio !== false;
   const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
@@ -1563,59 +1573,216 @@ const buildRenderV2FilterGraph = async (
     }
   }
 
-  const audioFilters: string[] = [];
-  let audioIndex = 0;
-  for (const item of audioItems) {
-    if (!includeAudio) break;
-    const timing = finalItemTiming.find(t => t.entry.item === item);
-    if (!timing) continue;
+  // ─── Audio Mixing ─────────────────────────────────────────────────────────
+  // Resolve timeline-level audio settings
+  const timelineLevelControl = (config.timeline as any).levelControl as 'gain' | 'loudness' | 'lufs' | undefined;
+  const timelineTargetLufs = typeof (config.timeline as any).targetLufs === 'number'
+    ? Number((config.timeline as any).targetLufs)
+    : -14;
 
-    const inputIndex = inputEntries.findIndex(e => e.item === item);
-    if (inputIndex < 0) continue;
-    if (item.audioMix?.mute) continue;
+  // Build list of all items that contribute audio (audio-only tracks + video tracks with audio)
+  // Each entry carries its item, inputIndex, timing, and stream selector
+  type AudioCandidate = {
+    item: RenderItemV2;
+    inputIndex: number;
+    timing: { start: number; duration: number; trimStart: number };
+    streamSelector: string;  // e.g. '[0:a]' for use in filter chains
+    directMapSelector: string; // e.g. '0:a' for use in -map args
+    trackLabel: string;
+  };
 
-    const label = `[a${audioIndex}]`;
-    let chain = `[${inputIndex}:a]`;
+  const audioCandidates: AudioCandidate[] = [];
+
+  if (includeAudio) {
+    // 1. Video items: include their embedded audio stream if not muted
+    for (const item of visualItems) {
+      if (item.type !== 'video') continue;
+      const timing = finalItemTiming.find(t => t.entry.item === item);
+      if (!timing) continue;
+      const inputIndex = inputEntries.findIndex(e => e.item === item);
+      if (inputIndex < 0) continue;
+      const trackLabel = (config.timeline.trackLabels?.[item.source?.ref ?? ''] ?? item.id ?? 'video');
+      const isMuted = item.audioMix?.mute === true;
+      const muteMsg = `[AudioMix] Video track "${trackLabel}" (id=${item.id}): muted=${isMuted}, levelControl=${(item.audioMix as any)?.levelControl ?? timelineLevelControl ?? 'gain'}, gainDb=${(item.audioMix as any)?.gainDb ?? 0}`;
+      if (debugEnabled) console.log(muteMsg);
+      onLog?.(`${muteMsg}\n`);
+      if (isMuted) continue;
+      audioCandidates.push({
+        item,
+        inputIndex,
+        timing,
+        streamSelector: `[${inputIndex}:a]`,
+        directMapSelector: `${inputIndex}:a`,
+        trackLabel
+      });
+    }
+
+    // 2. Pure audio tracks
+    for (const item of audioItems) {
+      const timing = finalItemTiming.find(t => t.entry.item === item);
+      if (!timing) continue;
+      const inputIndex = inputEntries.findIndex(e => e.item === item);
+      if (inputIndex < 0) continue;
+      const trackLabel = (config.timeline.trackLabels?.[item.source?.ref ?? ''] ?? item.id ?? 'audio');
+      const isMuted = item.audioMix?.mute === true;
+      const muteMsg = `[AudioMix] Audio track "${trackLabel}" (id=${item.id}): muted=${isMuted}, levelControl=${(item.audioMix as any)?.levelControl ?? timelineLevelControl ?? 'gain'}, gainDb=${(item.audioMix as any)?.gainDb ?? 0}`;
+      if (debugEnabled) console.log(muteMsg);
+      onLog?.(`${muteMsg}\n`);
+      if (isMuted) continue;
+      audioCandidates.push({
+        item,
+        inputIndex,
+        timing,
+        streamSelector: `[${inputIndex}:a]`,
+        directMapSelector: `${inputIndex}:a`,
+        trackLabel
+      });
+    }
+  }
+
+  // ── Log mixing decision ──────────────────────────────────────────────────
+  const audioLog = (msg: string) => {
+    const fullMsg = `[AudioMix]${debugLabel} ${msg}`;
+    if (debugEnabled) console.log(fullMsg);
+    onLog?.(`${fullMsg}\n`);
+  };
+  audioLog(`Timeline levelControl="${timelineLevelControl ?? 'gain'}" targetLufs=${timelineTargetLufs}`);
+  audioLog(`Active audio candidates: ${audioCandidates.length} (after mute filter)`);
+
+  // ── Per-track: resolve effective level control ───────────────────────────
+  // 'loudness' and 'lufs' both map to loudnorm filter; 'gain' uses volume filter
+  const isLoudnessMode = (ctrl: string | undefined): boolean =>
+    ctrl === 'loudness' || ctrl === 'lufs';
+
+  const resolveTrackLevelControl = (item: RenderItemV2): 'gain' | 'loudness' => {
+    const trackLevel = (item.audioMix as any)?.levelControl as string | undefined;
+    const effectiveLevel = trackLevel ?? (timelineLevelControl as string | undefined);
+    return isLoudnessMode(effectiveLevel) ? 'loudness' : 'gain';
+  };
+  const resolveTrackTargetLufs = (item: RenderItemV2): number => {
+    const trackLufs = (item.audioMix as any)?.targetLufs;
+    return typeof trackLufs === 'number' ? trackLufs : timelineTargetLufs;
+  };
+
+  // ── Build per-candidate audio filter chains ──────────────────────────────
+  const buildAudioChain = (
+    candidate: AudioCandidate,
+    outputLabel: string
+  ): string => {
+    const { item, timing } = candidate;
+    const trimStart = timing.trimStart;
+    const duration = timing.duration;
+    const start = timing.start;
+    const endValue = trimStart + duration;
+
+    const levelControl = resolveTrackLevelControl(item);
+    const gainDb = (item.audioMix as any)?.gainDb ?? 0;
+    const targetLufs = resolveTrackTargetLufs(item);
+    const fadeIn = Math.max(0, item.audioMix?.fadeIn ?? 0);
+    const fadeOut = Math.max(0, item.audioMix?.fadeOut ?? 0);
+
+    audioLog(
+      `  Track "${candidate.trackLabel}": levelControl=${levelControl}, gainDb=${gainDb}, targetLufs=${targetLufs}, ` +
+      `trimStart=${trimStart.toFixed(3)}, duration=${duration.toFixed(3)}, start=${start.toFixed(3)}`
+    );
+
+    let chain = candidate.streamSelector;
     const addFilter = (filter: string) => {
       chain += chain.endsWith(']') ? filter : `,${filter}`;
     };
-    const trimStart = timing.trimStart;
-    const duration = timing.duration;
-    const endValue = trimStart + duration;
+
+    // Trim
     if (trimStart > 0 || duration > trimThreshold) {
       addFilter(`atrim=start=${trimStart}:end=${endValue}`);
     }
     addFilter('asetpts=PTS-STARTPTS');
-    const gainDb = item.audioMix?.gainDb ?? 0;
-    if (gainDb !== 0) {
-      const factor = Math.pow(10, gainDb / 20);
-      addFilter(`volume=${factor.toFixed(4)}`);
+
+    // Level control
+    if (levelControl === 'loudness') {
+      // Two-pass loudnorm: integrated loudness target
+      const lufsVal = Math.max(-70, Math.min(-5, targetLufs));
+      addFilter(`loudnorm=I=${lufsVal}:TP=-1.5:LRA=11`);
+      audioLog(`    → using loudnorm filter: I=${lufsVal} TP=-1.5 LRA=11`);
+    } else {
+      // Gain adjustment
+      if (gainDb !== 0) {
+        const factor = Math.pow(10, gainDb / 20);
+        addFilter(`volume=${factor.toFixed(6)}`);
+        audioLog(`    → using volume filter: ${factor.toFixed(6)} (${gainDb > 0 ? '+' : ''}${gainDb} dB)`);
+      } else {
+        audioLog(`    → no volume adjustment (gainDb=0)`);
+      }
     }
-    const start = timing.start;
+
+    // Delay (timeline offset)
     if (start > 0) {
       const ms = Math.round(start * 1000);
       addFilter(`adelay=${ms}|${ms}`);
     }
-    const fadeIn = Math.max(0, item.audioMix?.fadeIn ?? 0);
+
+    // Fade in/out
     if (fadeIn > 0) {
       addFilter(`afade=t=in:st=${start}:d=${fadeIn}`);
     }
-    const fadeOut = Math.max(0, item.audioMix?.fadeOut ?? 0);
     if (fadeOut > 0) {
       const end = Math.max(start + 0.01, start + duration);
       const fadeOutStart = Math.max(start, end - fadeOut);
       addFilter(`afade=t=out:st=${fadeOutStart}:d=${fadeOut}`);
     }
-    audioFilters.push(`${chain}${label}`);
-    audioIndex += 1;
-  }
 
+    return `${chain}${outputLabel}`;
+  };
+
+  const audioFilters: string[] = [];
   let audioMap: string[] = [];
-  if (includeAudio && audioFilters.length > 0) {
-    const mixInputs = audioFilters.map((_, idx) => `[a${idx}]`).join('');
-    filters.push(...audioFilters);
-    filters.push(`${mixInputs}amix=inputs=${audioFilters.length}:duration=longest[aout]`);
-    audioMap = ['-map', '[aout]'];
+
+  if (includeAudio && audioCandidates.length > 0) {
+    // ── Special-case optimization: single active audio track ────────────────
+    if (audioCandidates.length === 1) {
+      const sole = audioCandidates[0];
+      const levelControl = resolveTrackLevelControl(sole.item);
+      const gainDb = (sole.item.audioMix as any)?.gainDb ?? 0;
+      const targetLufs = resolveTrackTargetLufs(sole.item);
+      const trimStart = sole.timing.trimStart;
+      const duration = sole.timing.duration;
+      const start = sole.timing.start;
+      const fadeIn = Math.max(0, sole.item.audioMix?.fadeIn ?? 0);
+      const fadeOut = Math.max(0, sole.item.audioMix?.fadeOut ?? 0);
+      const needsFilter =
+        (levelControl === 'loudness') ||
+        (levelControl === 'gain' && gainDb !== 0) ||
+        trimStart > 0 ||
+        duration > trimThreshold ||
+        start > 0 ||
+        fadeIn > 0 ||
+        fadeOut > 0;
+
+      if (!needsFilter) {
+        // Pure stream copy — zero filter overhead
+        audioLog(`Optimization: single unmuted audio track with no adjustments → direct stream map (no filter)`);
+        audioMap = ['-map', sole.directMapSelector];
+      } else {
+        audioLog(`Single audio track with adjustments (levelControl=${levelControl}, gainDb=${gainDb}) → single filter chain`);
+        const chain = buildAudioChain(sole, '[aout]');
+        filters.push(chain);
+        audioMap = ['-map', '[aout]'];
+      }
+    } else {
+      // ── Multiple audio tracks: build filter chain per track then amix ──────
+      audioLog(`Multiple audio tracks (${audioCandidates.length}) → building per-track chains then amix`);
+      for (let i = 0; i < audioCandidates.length; i++) {
+        const label = `[a${i}]`;
+        const chain = buildAudioChain(audioCandidates[i], label);
+        audioFilters.push(chain);
+      }
+      const mixInputs = audioCandidates.map((_, idx) => `[a${idx}]`).join('');
+      filters.push(...audioFilters);
+      filters.push(`${mixInputs}amix=inputs=${audioCandidates.length}:normalize=0:duration=longest[aout]`);
+      audioMap = ['-map', '[aout]'];
+      audioLog(`amix: ${audioCandidates.length} inputs → [aout]`);
+    }
+  } else if (includeAudio) {
+    audioLog(`No active audio tracks after mute filter — output will have no audio stream`);
   }
 
   const filterComplex = filters.filter(f => f && f.trim().length > 0).join(';');
@@ -1652,6 +1819,7 @@ const buildRenderV2FfmpegArgs = async (
     allowShortDuration?: boolean;
     debugEnabled?: boolean;
     debugLabel?: string;
+    onLog?: (chunk: string) => void;
   }
 ) => {
   const graph = await buildRenderV2FilterGraph(config, tmpDir, options);
@@ -1828,7 +1996,8 @@ const runRenderV2Task = async (
     const ffmpegPath = await getFfmpegPath();
     const { outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir, {
       debugEnabled: LOG_RENDER_V2_DEBUG,
-      debugLabel: 'render-total'
+      debugLabel: 'render-total',
+      onLog
     });
     const totalSeconds = Number.isFinite(outputDuration) && outputDuration > 0 ? outputDuration : 0;
     if (totalSeconds <= 0) {
@@ -1884,7 +2053,8 @@ const runRenderV2Task = async (
           outputDuration: expectedDuration,
           allowShortDuration: true,
           debugEnabled: LOG_RENDER_V2_DEBUG,
-          debugLabel: `render-segment-${segmentIndex + 1}`
+          debugLabel: `render-segment-${segmentIndex + 1}`,
+          onLog: segmentIndex === 0 ? onLog : undefined
         }
       );
       await runFfmpegLoggedCommand(
