@@ -32,6 +32,7 @@ interface AppOverlaysProps {
   deleteVaultProject: (folder: any) => void;
   showFolderPanel: boolean;
   selectedFolder: any;
+  onOpenRunPipeline: (folder: any) => void;
   filteredFiles: any[];
   fileTypeIcons: Record<string, any>;
   fileTypeLabels: Record<string, string>;
@@ -41,8 +42,6 @@ interface AppOverlaysProps {
   setVaultTypeFilter: (value: any) => void;
   vaultSort: any;
   setVaultSort: (value: any) => void;
-  vaultView: any;
-  setVaultView: (value: any) => void;
   groupedFiles: any[];
   vaultGroupCollapsed: Record<string, boolean>;
   setVaultGroupCollapsed: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
@@ -90,6 +89,7 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
   deleteVaultProject,
   showFolderPanel,
   selectedFolder,
+  onOpenRunPipeline,
   filteredFiles,
   fileTypeIcons,
   fileTypeLabels,
@@ -99,8 +99,6 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
   setVaultTypeFilter,
   vaultSort,
   setVaultSort,
-  vaultView,
-  setVaultView,
   groupedFiles,
   vaultGroupCollapsed,
   setVaultGroupCollapsed,
@@ -192,8 +190,6 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
             setVaultTypeFilter={setVaultTypeFilter}
             vaultSort={vaultSort}
             setVaultSort={setVaultSort}
-            vaultView={vaultView}
-            setVaultView={setVaultView}
             groupedFiles={groupedFiles}
             vaultGroupCollapsed={vaultGroupCollapsed}
             setVaultGroupCollapsed={setVaultGroupCollapsed}
@@ -201,6 +197,7 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
             setVaultFileId={setVaultFileId}
             selectedFile={selectedFile}
             formatOverlapDisplay={formatOverlapDisplay}
+            onNewJob={onOpenRunPipeline}
           />
         </Suspense>
       )}

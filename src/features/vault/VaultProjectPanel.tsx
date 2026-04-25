@@ -6,6 +6,7 @@ interface VaultProjectPanelProps {
   open: boolean;
   selectedFolder: VaultFolder | null;
   onClose: () => void;
+  onNewJob: (folder: VaultFolder) => void;
   filteredFiles: any[];
   fileTypeIcons: Record<VaultFileType, any>;
   fileTypeLabels: Record<VaultFileType, string>;
@@ -15,8 +16,6 @@ interface VaultProjectPanelProps {
   setVaultTypeFilter: (value: VaultFileType | 'all') => void;
   vaultSort: 'recent' | 'name' | 'size';
   setVaultSort: (value: 'recent' | 'name' | 'size') => void;
-  vaultView: 'grouped' | 'flat';
-  setVaultView: (value: 'grouped' | 'flat') => void;
   groupedFiles: Array<{ type: VaultFileType; items: any[] }>;
   vaultGroupCollapsed: Record<VaultFileType, boolean>;
   setVaultGroupCollapsed: React.Dispatch<React.SetStateAction<Record<VaultFileType, boolean>>>;
@@ -30,6 +29,7 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
   open,
   selectedFolder,
   onClose,
+  onNewJob,
   filteredFiles,
   fileTypeIcons,
   fileTypeLabels,
@@ -39,8 +39,6 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
   setVaultTypeFilter,
   vaultSort,
   setVaultSort,
-  vaultView,
-  setVaultView,
   groupedFiles,
   vaultGroupCollapsed,
   setVaultGroupCollapsed,
@@ -66,10 +64,10 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="px-2.5 py-1.5 text-xs font-semibold bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/40 transition-colors">
-              Quick Actions
-            </button>
-            <button className="px-2.5 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400 transition-colors">
+            <button
+              onClick={() => selectedFolder && onNewJob(selectedFolder)}
+              className="px-2.5 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400 transition-colors"
+            >
               New Job
             </button>
             <button
@@ -143,19 +141,12 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
                 <option value="name">Name</option>
                 <option value="size">Size</option>
               </select>
-              <button
-                onClick={() => setVaultView(vaultView === 'grouped' ? 'flat' : 'grouped')}
-                className="px-2.5 py-1.5 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40"
-              >
-                {vaultView === 'grouped' ? 'Flat View' : 'Grouped View'}
-              </button>
             </div>
           </div>
 
           <div className="pr-1">
             <div className="flex flex-col gap-4">
-              {vaultView === 'grouped' ? (
-                groupedFiles.map(group => {
+              {groupedFiles.map(group => {
                   if (group.items.length === 0) return null;
                   return (
                     <div key={group.type} className="flex flex-col gap-1.5">
@@ -174,7 +165,7 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
                         <span>{group.items.length}</span>
                       </button>
                       {!vaultGroupCollapsed[group.type] && (
-                        <div className="flex flex-col gap-1.5">
+                        <div className="grid grid-cols-4 gap-3">
                           {group.items.map(file => {
                             const isSelected = file.id === selectedFile?.id;
                             const Icon = fileTypeIcons[file.type as VaultFileType];
@@ -183,45 +174,56 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
                                 key={file.id}
                                 onClick={() => setVaultFileId(file.id)}
                                 onContextMenu={event => openFileContextMenu(event, file)}
-                                className={`group text-left border rounded-xl p-2.5 transition-colors ${
-                                  isSelected ? 'border-lime-500/50 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700'
+                                className={`group text-left border rounded-xl p-3 transition-all ${
+                                  isSelected ? 'border-lime-500/50 bg-lime-500/10 shadow-lg shadow-lime-500/5' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700 hover:bg-zinc-800/50'
                                 }`}
                               >
-                                <div className="flex items-start justify-between gap-4">
-                                  <div className="flex items-start gap-3">
-                                    <div className="p-1.5 bg-zinc-800 rounded-lg text-zinc-400">
-                                      <Icon size={14} />
-                                    </div>
-                                    <div>
-                                      <div className="text-xs font-semibold text-zinc-100">{file.name}</div>
-                                      <div className="text-[11px] text-zinc-500 mt-0.5">
-                                        {fileTypeLabels[file.type as VaultFileType]} • {file.size}{file.duration ? ` • ${file.duration}` : ''}{file.language ? ` • ${file.language}` : ''}
-                                      </div>
-                                      {file.linkedTo && (
-                                        <div className="text-[11px] text-zinc-500 mt-0.5">
-                                          Generated from {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}
-                                        </div>
-                                      )}
-                                      {file.origin === 'tts' && file.tts?.overlapSeconds !== undefined && file.tts?.overlapMode !== 'truncate' && (
-                                        <div className="text-[11px] text-zinc-500 mt-0.5">
-                                          Overlap total {formatOverlapDisplay(file.tts.overlapSeconds, file.durationSeconds)}
-                                        </div>
-                                      )}
-                                    </div>
+                                <div className="flex items-start gap-3">
+                                  <div className={`p-2 rounded-xl ${
+                                    file.type === 'video' ? 'bg-blue-500/10 text-blue-400' :
+                                    file.type === 'audio' ? 'bg-purple-500/10 text-purple-400' :
+                                    file.type === 'subtitle' ? 'bg-amber-500/10 text-amber-400' :
+                                    file.type === 'image' ? 'bg-pink-500/10 text-pink-400' :
+                                    file.type === 'output' ? 'bg-lime-500/10 text-lime-400' :
+                                    'bg-zinc-800 text-zinc-400'
+                                  }`}>
+                                    <Icon size={18} />
                                   </div>
-                                  <div className="flex flex-col items-end gap-1.5">
-                                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                                      file.origin === 'tts'
-                                        ? 'bg-amber-500/15 text-amber-300'
-                                        : file.origin === 'vr'
-                                          ? 'bg-lime-500/15 text-lime-400'
-                                          : 'bg-zinc-500/15 text-zinc-400'
-                                    }`}>
-                                      {file.origin === 'tts' ? 'TTS' : file.origin === 'vr' ? 'VR' : 'Source'}
-                                    </span>
-                                    <span className="text-[10px] text-zinc-500">{file.createdAt}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-xs font-semibold text-zinc-100 truncate">{file.name}</div>
+                                    <div className="text-[11px] text-zinc-500 mt-0.5">
+                                      {file.size}{file.duration ? ` • ${file.duration}` : ''}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mt-2">
+                                      <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                                        file.origin === 'tts'
+                                          ? 'bg-amber-500/15 text-amber-300'
+                                          : file.origin === 'vr'
+                                            ? 'bg-lime-500/15 text-lime-400'
+                                            : 'bg-zinc-500/15 text-zinc-400'
+                                      }`}>
+                                        {file.origin === 'tts' ? 'TTS' : file.origin === 'vr' ? 'VR' : 'SRC'}
+                                      </span>
+                                      {file.language && (
+                                        <span className="text-[9px] text-zinc-500 uppercase">{file.language}</span>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
+                                {file.linkedTo && (
+                                  <div className="mt-2 pt-2 border-t border-zinc-800/50">
+                                    <div className="text-[10px] text-zinc-500 truncate">
+                                      From: {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source'}
+                                    </div>
+                                  </div>
+                                )}
+                                {file.origin === 'tts' && file.tts?.overlapSeconds !== undefined && file.tts?.overlapMode !== 'truncate' && (
+                                  <div className="mt-2 pt-2 border-t border-zinc-800/50">
+                                    <div className="text-[10px] text-zinc-500">
+                                      Overlap: {formatOverlapDisplay(file.tts.overlapSeconds, file.durationSeconds)}
+                                    </div>
+                                  </div>
+                                )}
                                 {file.status === 'processing' && typeof file.progress === 'number' && (
                                   <div className="mt-3">
                                     <div className="flex justify-between text-[10px] text-zinc-500">
@@ -234,22 +236,21 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
                                   </div>
                                 )}
                                 {isSelected && file.type === 'audio' && file.relativePath && (
-                                  <div className="mt-2 border border-zinc-800 rounded-lg p-2 bg-zinc-900/80">
+                                  <div className="mt-2 pt-2 border-t border-zinc-800/50">
                                     <audio
-                                      className="w-full mt-1.5 h-8 rounded-md bg-zinc-900"
+                                      className="w-full h-7 rounded-md bg-zinc-900"
                                       style={{ colorScheme: 'dark' }}
                                       controls
                                     >
                                       <source src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}&preview=1`} />
                                     </audio>
                                     {file.sizeBytes > 20 * 1024 * 1024 && (
-                                      <div className="text-[11px] text-zinc-500 mt-1.5">
-                                        Preview limited to the first 60 seconds for files over 20MB.
+                                      <div className="text-[10px] text-zinc-500 mt-1">
+                                        Preview: first 60s
                                       </div>
                                     )}
                                   </div>
                                 )}
-                                <div className="mt-2" />
                               </button>
                             );
                           })}
@@ -257,89 +258,7 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
                       )}
                     </div>
                   );
-                })
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  {filteredFiles.map(file => {
-                    const isSelected = file.id === selectedFile?.id;
-                    const Icon = fileTypeIcons[file.type as VaultFileType];
-                    return (
-                      <button
-                        key={file.id}
-                        onClick={() => setVaultFileId(file.id)}
-                        onContextMenu={event => openFileContextMenu(event, file)}
-                        className={`group text-left border rounded-xl p-2.5 transition-colors ${
-                          isSelected ? 'border-lime-500/50 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex items-start gap-3">
-                            <div className="p-1.5 bg-zinc-800 rounded-lg text-zinc-400">
-                              <Icon size={14} />
-                            </div>
-                            <div>
-                              <div className="text-xs font-semibold text-zinc-100">{file.name}</div>
-                              <div className="text-[11px] text-zinc-500 mt-0.5">
-                                {fileTypeLabels[file.type as VaultFileType]} • {file.size}{file.duration ? ` • ${file.duration}` : ''}{file.language ? ` • ${file.language}` : ''}
-                              </div>
-                              {file.linkedTo && (
-                                <div className="text-[11px] text-zinc-500 mt-0.5">
-                                  Generated from {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}
-                                </div>
-                              )}
-                              {file.origin === 'tts' && file.tts?.overlapSeconds !== undefined && file.tts?.overlapMode !== 'truncate' && (
-                                <div className="text-[11px] text-zinc-500 mt-0.5">
-                                  Overlap total {formatOverlapDisplay(file.tts.overlapSeconds, file.durationSeconds)}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex flex-col items-end gap-1.5">
-                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                              file.origin === 'tts'
-                                ? 'bg-amber-500/15 text-amber-300'
-                                : file.origin === 'vr'
-                                  ? 'bg-lime-500/15 text-lime-400'
-                                  : 'bg-zinc-500/15 text-zinc-400'
-                            }`}>
-                              {file.origin === 'tts' ? 'TTS' : file.origin === 'vr' ? 'VR' : 'Source'}
-                            </span>
-                            <span className="text-[10px] text-zinc-500">{file.createdAt}</span>
-                          </div>
-                        </div>
-                        {file.status === 'processing' && typeof file.progress === 'number' && (
-                          <div className="mt-3">
-                            <div className="flex justify-between text-[10px] text-zinc-500">
-                              <span>Processing</span>
-                              <span>{file.progress}%</span>
-                            </div>
-                            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1">
-                              <div className="h-full bg-blue-500" style={{ width: `${file.progress}%` }} />
-                            </div>
-                          </div>
-                        )}
-                        {isSelected && file.type === 'audio' && file.relativePath && (
-                          <div className="mt-2 border border-zinc-800 rounded-lg p-2 bg-zinc-900/80">
-                            <audio
-                              className="w-full mt-1.5 h-8 rounded-md bg-zinc-900"
-                              style={{ colorScheme: 'dark' }}
-                              controls
-                            >
-                              <source src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}&preview=1`} />
-                            </audio>
-                            {file.sizeBytes > 20 * 1024 * 1024 && (
-                              <div className="text-[11px] text-zinc-500 mt-1.5">
-                                Preview limited to the first 60 seconds for files over 20MB.
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <div className="mt-2" />
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                })}
             </div>
           </div>
         </div>

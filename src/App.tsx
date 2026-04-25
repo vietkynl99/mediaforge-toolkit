@@ -262,7 +262,6 @@ export default function App() {
   const [vaultQuery, setVaultQuery] = useState('');
   const [vaultTypeFilter, setVaultTypeFilter] = useState<'all' | VaultFileType>('all');
   const [vaultSort, setVaultSort] = useState<'recent' | 'name' | 'size'>('recent');
-  const [vaultView, setVaultView] = useState<'grouped' | 'flat'>('grouped');
   const [vaultGroupCollapsed, setVaultGroupCollapsed] = useState<Record<VaultFileType, boolean>>({
     video: false,
     audio: false,
@@ -7037,6 +7036,12 @@ export default function App() {
               deleteVaultProject={deleteVaultProject}
               showFolderPanel={showFolderPanel}
               selectedFolder={selectedFolder}
+              onOpenRunPipeline={(folder) => {
+                setRunPipelineProjectLocked(true);
+                setRunPipelineProjectId(folder.id);
+                resetDownloadForm();
+                setShowRunPipeline(true);
+              }}
               filteredFiles={filteredFiles}
               fileTypeIcons={fileTypeIcons}
               fileTypeLabels={fileTypeLabels}
@@ -7046,8 +7051,6 @@ export default function App() {
               setVaultTypeFilter={setVaultTypeFilter}
               vaultSort={vaultSort}
               setVaultSort={setVaultSort}
-              vaultView={vaultView}
-              setVaultView={setVaultView}
               groupedFiles={groupedFiles}
               vaultGroupCollapsed={vaultGroupCollapsed}
               setVaultGroupCollapsed={setVaultGroupCollapsed}
