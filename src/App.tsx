@@ -1991,7 +1991,10 @@ export default function App() {
     }
     const template = renderTemplates.find(t => t.id === value);
     if (!template) return;
-    const mapping = renderTemplateApplyMapById[template.id] ?? buildRenderTemplateApplyMap(template);
+    let mapping = renderTemplateApplyMapById[template.id];
+    if (!mapping || Object.keys(mapping).length === 0) {
+      mapping = buildRenderTemplateApplyMap(template);
+    }
     setRenderTemplateApplyTarget(template);
     commitRenderTemplateApplyMap(template.id, mapping);
     applyRenderTemplate(template, mapping);
@@ -2006,7 +2009,26 @@ export default function App() {
     if (!template) return;
     const key = `${runPipelineProject.id}:${template.id}`;
     if (lastAutoTemplateApplyKeyRef.current === key) return;
-    const mapping = renderTemplateApplyMapById[template.id] ?? buildRenderTemplateApplyMap(template);
+
+    let mapping = renderTemplateApplyMapById[template.id];
+    let isMappingValidForProject = false;
+    if (mapping && Object.keys(mapping).length > 0) {
+      const mappedFileIds = Object.values(mapping).filter(Boolean);
+      if (mappedFileIds.length === 0) {
+        // All inputs are empty/cleared, consider it valid so we don't force auto-fill if they just cleared it,
+        // UNLESS the project just changed. But wait, if they change project, they expect auto-fill.
+        // Actually, if mappedFileIds is empty, we just let it rebuild to auto-fill.
+      } else {
+        isMappingValidForProject = mappedFileIds.some(id => 
+          runPipelineProject.files.some(f => f.id === id)
+        );
+      }
+    }
+
+    if (!mapping || Object.keys(mapping).length === 0 || (!isMappingValidForProject && Object.values(mapping).filter(Boolean).length > 0) || (lastAutoTemplateApplyKeyRef.current !== null && lastAutoTemplateApplyKeyRef.current.split(':')[0] !== runPipelineProject.id)) {
+      mapping = buildRenderTemplateApplyMap(template);
+    }
+
     setRenderTemplateApplyTarget(template);
     commitRenderTemplateApplyMap(template.id, mapping);
     applyRenderTemplate(template, mapping);
