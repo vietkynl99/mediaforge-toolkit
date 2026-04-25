@@ -82,7 +82,9 @@ export const computePlaceholderKeyByFileId = (
   files: Array<{ id: string; type: string }>,
   renderInputFileIds: string[]
 ): Record<string, string> => {
-  const selected = files.filter(file => renderInputFileIds.includes(file.id));
+  const selected = renderInputFileIds
+    .map(id => files.find(file => file.id === id))
+    .filter((file): file is NonNullable<typeof file> => Boolean(file));
   const counts: Record<'video' | 'audio' | 'subtitle' | 'image', number> = {
     video: 0,
     audio: 0,

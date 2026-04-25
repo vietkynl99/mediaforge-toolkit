@@ -1,6 +1,7 @@
 import React from 'react';
 import { File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload, Volume2, VolumeX, X } from 'lucide-react';
 import { parseSubtitleCues } from '../../app/appData';
+import { parseDurationToSeconds } from '../../../utils/helpers';
 import { RenderStudioPageProvider } from './RenderStudioPageContext';
 import { RenderStudioHeaderBar } from './components/RenderStudioHeaderBar';
 import { RenderStudioRenderConfirmDialog } from './components/RenderStudioRenderConfirmDialog';
@@ -78,6 +79,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     setRenderTextTrackEnabled,
     renderVideoFile,
     renderAudioFile,
+    renderAudioFiles,
     renderSubtitleFile,
     renderImageFiles,
     renderImageDurationEntries,
@@ -1114,35 +1116,33 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 </button>
                               </div>
                             ) : null}
-                            {showRenderTimelineAudioTrack ? (
-                              <div className="h-3 flex items-center gap-1.5 min-w-0" title={renderAudioFile ? `Audio · ${placeholderKeyByFileId[renderAudioFile.id] ?? 'audio'}` : 'Audio'}>
-                                <FileAudio size={10} className="text-zinc-500 shrink-0" />
-                                {renderAudioFile ? (
+                            {showRenderTimelineAudioTrack && renderAudioFiles ? (
+                              renderAudioFiles.map((audioFile, idx) => (
+                                <div key={`audio-label-${audioFile.id}`} className="h-3 flex items-center gap-1.5 min-w-0 mb-1 last:mb-0" title={`Audio · ${placeholderKeyByFileId[audioFile.id] ?? (idx === 0 ? 'audio' : `audio${idx + 1}`)}`}>
+                                  <FileAudio size={10} className="text-zinc-500 shrink-0" />
                                   <input
                                     type="text"
                                     className="w-full min-w-0 h-3 bg-zinc-900/80 border border-zinc-700/60 rounded px-1 text-[9px] leading-none text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
-                                    value={renderTrackLabels[placeholderKeyByFileId[renderAudioFile.id] ?? ''] ?? ''}
-                                    placeholder={renderAudioFile.name}
+                                    value={renderTrackLabels[placeholderKeyByFileId[audioFile.id] ?? (idx === 0 ? 'audio' : `audio${idx + 1}`)] ?? ''}
+                                    placeholder={audioFile.name}
                                     onClick={e => e.stopPropagation()}
-                                    onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[renderAudioFile.id] ?? 'audio', e.target.value)}
+                                    onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[audioFile.id] ?? (idx === 0 ? 'audio' : `audio${idx + 1}`), e.target.value)}
                                   />
-                                ) : (
-                                  <span className="text-zinc-500 text-[10px] w-full min-w-0">Audio</span>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    const v = !renderParamsDraft.audio.mute;
-                                    updateRenderParamDraft('audio', 'mute', v);
-                                    updateRenderParam('audio', 'mute', v);
-                                  }}
-                                  className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${renderParamsDraft.audio.mute ? 'text-red-400' : 'text-zinc-500'}`}
-                                  title={renderParamsDraft.audio.mute ? "Unmute" : "Mute"}
-                                >
-                                  {renderParamsDraft.audio.mute ? <VolumeX size={10} /> : <Volume2 size={10} />}
-                                </button>
-                              </div>
+                                  <button
+                                    type="button"
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      const v = !renderParamsDraft.audio.mute;
+                                      updateRenderParamDraft('audio', 'mute', v);
+                                      updateRenderParam('audio', 'mute', v);
+                                    }}
+                                    className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${renderParamsDraft.audio.mute ? 'text-red-400' : 'text-zinc-500'}`}
+                                    title={renderParamsDraft.audio.mute ? "Unmute" : "Mute"}
+                                  >
+                                    {renderParamsDraft.audio.mute ? <VolumeX size={10} /> : <Volume2 size={10} />}
+                                  </button>
+                                </div>
+                              ))
                             ) : null}
                           </div>
                           <div
@@ -1434,51 +1434,48 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   ) : null}
                                 </div>
                               ) : null}
-                              {showRenderTimelineAudioTrack ? (
-                                <div
-                                  className="h-3 rounded-full bg-zinc-800 relative cursor-pointer"
-                                  role="button"
-                                  tabIndex={0}
-                                  title={renderAudioFile ? renderAudioFile.name : 'Audio track'}
-                                  onClick={event => {
-                                    event.stopPropagation();
-                                    setSelectedTrackKey('audio');
-                                    if (renderAudioFile) {
-                                      selectTrack('audio');
-                                      setRenderAudioId(renderAudioFile.id);
-                                    } else {
-                                      openInspectorSection('audio');
-                                    }
-                                  }}
-                                  onContextMenu={event => {
-                                    if (!renderAudioFile) return;
-                                    openRenderStudioTimelineContextMenu(event, { type: 'audio' });
-                                  }}
-                                  onKeyDown={event => {
-                                    if (event.key === 'Enter' || event.key === ' ') {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      setSelectedTrackKey('audio');
-                                      if (renderAudioFile) {
-                                        selectTrack('audio');
-                                        setRenderAudioId(renderAudioFile.id);
-                                      } else {
-                                        openInspectorSection('audio');
-                                      }
-                                    }
-                                  }}
-                                >
-                                  {renderAudioDuration && renderTimelineDuration > 0 ? (
+                              {showRenderTimelineAudioTrack && renderAudioFiles ? (
+                                renderAudioFiles.map((audioFile: any) => {
+                                  const audioDuration = audioFile?.durationSeconds ?? parseDurationToSeconds(audioFile?.duration);
+                                  return (
                                     <div
-                                      className={`h-full rounded-full bg-amber-500/50 ${
-                                        selectedTrackKey === 'audio' ? 'outline outline-2 outline-lime-400/80' : ''
-                                      }`}
-                                      style={{
-                                        width: `${Math.min(100, (renderAudioDuration / renderTimelineViewDuration) * 100)}%`
+                                      key={`audio-track-${audioFile.id}`}
+                                      className="h-3 rounded-full bg-zinc-800 relative cursor-pointer mb-1 last:mb-0 shrink-0"
+                                      role="button"
+                                      tabIndex={0}
+                                      title={audioFile.name}
+                                      onClick={event => {
+                                        event.stopPropagation();
+                                        setSelectedTrackKey(`audio:${audioFile.id}`);
+                                        selectTrack('audio');
+                                        setRenderAudioId(audioFile.id);
                                       }}
-                                    />
-                                  ) : null}
-                                </div>
+                                      onContextMenu={event => {
+                                        openRenderStudioTimelineContextMenu(event, { type: 'audio', id: audioFile.id });
+                                      }}
+                                      onKeyDown={event => {
+                                        if (event.key === 'Enter' || event.key === ' ') {
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          setSelectedTrackKey(`audio:${audioFile.id}`);
+                                          selectTrack('audio');
+                                          setRenderAudioId(audioFile.id);
+                                        }
+                                      }}
+                                    >
+                                      {audioDuration && renderTimelineDuration > 0 ? (
+                                        <div
+                                          className={`h-full rounded-full bg-amber-500/50 ${
+                                            (selectedTrackKey === `audio:${audioFile.id}` || selectedTrackKey === 'audio' && renderAudioId === audioFile.id) ? 'outline outline-2 outline-lime-400/80' : ''
+                                          }`}
+                                          style={{
+                                            width: `${Math.min(100, (audioDuration / renderTimelineViewDuration) * 100)}%`
+                                          }}
+                                        />
+                                      ) : null}
+                                    </div>
+                                  );
+                                })
                               ) : null}
                             </div>
                           </div>

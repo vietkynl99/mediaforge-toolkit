@@ -1,10 +1,10 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Play, 
-  Pause, 
-  CheckCircle2, 
-  Clock, 
+import {
+  Play,
+  Pause,
+  CheckCircle2,
+  Clock,
   AlertCircle,
   ChevronRight,
   Download,
@@ -501,13 +501,13 @@ export default function App() {
       targetLufs: '-14',
       gainDb: '0',
       mute: false
-	    },
-	    audio: {
-	      levelControl: 'lufs',
-	      targetLufs: '-14',
-	      gainDb: '0',
-	      mute: false,
-	      fadeIn: '0',
+    },
+    audio: {
+      levelControl: 'lufs',
+      targetLufs: '-14',
+      gainDb: '0',
+      mute: false,
+      fadeIn: '0',
       fadeOut: '0'
     },
     subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
@@ -642,6 +642,9 @@ export default function App() {
     .filter((file): file is NonNullable<typeof file> => Boolean(file));
   const renderVideoFile = runPipelineProject?.files.find(file => file.id === renderVideoId) ?? null;
   const renderAudioFile = runPipelineProject?.files.find(file => file.id === renderAudioId) ?? null;
+  const renderAudioFiles = renderInputFileIds
+    .map(id => runPipelineProject?.files.find(file => file.id === id))
+    .filter((file): file is VaultFile => file?.type === 'audio');
   const renderSubtitleFile = runPipelineProject?.files.find(file => file.id === renderSubtitleId) ?? null;
   const placeholderKeyByFileId = React.useMemo(() => {
     if (!runPipelineProject?.files) return {};
@@ -735,7 +738,7 @@ export default function App() {
       };
     });
   };
-  const commitRenderVideoBlurEffectValue = (_fileId: string | null, _index: number, _key: keyof RenderBlurRegionEffect) => {};
+  const commitRenderVideoBlurEffectValue = (_fileId: string | null, _index: number, _key: keyof RenderBlurRegionEffect) => { };
   const removeRenderVideoBlurEffect = (fileId: string | null, index: number) => {
     if (!fileId) return;
     setRenderVideoTransforms(prev => {
@@ -779,7 +782,7 @@ export default function App() {
       };
     });
   };
-  const commitRenderImageBlurEffectValue = (_fileId: string, _index: number, _key: keyof RenderBlurRegionEffect) => {};
+  const commitRenderImageBlurEffectValue = (_fileId: string, _index: number, _key: keyof RenderBlurRegionEffect) => { };
   const removeRenderImageBlurEffect = (fileId: string, index: number) => {
     if (!fileId) return;
     setRenderImageTransforms(prev => {
@@ -859,7 +862,7 @@ export default function App() {
   const showRenderTimelineTextTrack = renderTextTrackEnabled || Boolean(singleTextValue);
   const showRenderTimelineImageTrack = renderImageFiles.length > 0;
   const showRenderTimelineVideoTrack = Boolean(renderVideoFile);
-  const showRenderTimelineAudioTrack = Boolean(renderAudioFile);
+  const showRenderTimelineAudioTrack = renderAudioFiles.length > 0;
   const renderSelectedItem = useMemo(() => {
     if (renderStudioFocus !== 'item') return null;
     const files = runPipelineProject?.files ?? [];
@@ -1947,11 +1950,8 @@ export default function App() {
   const buildRenderTemplateApplyMap = (template: RenderTemplate) => {
     const inputs = Object.keys(template.config.inputsMap ?? {});
     const typeOfKey = (key: string) => {
-      if (key.startsWith('video')) return 'video';
-      if (key.startsWith('audio')) return 'audio';
-      if (key.startsWith('subtitle')) return 'subtitle';
-      if (key.startsWith('image')) return 'image';
-      return null;
+      const item = template.config.items.find((i: any) => i.source?.ref === key);
+      return item ? item.type : null;
     };
     const availableFiles = runPipelineProject?.files ?? [];
     const filesByType = {
@@ -2019,7 +2019,7 @@ export default function App() {
         // UNLESS the project just changed. But wait, if they change project, they expect auto-fill.
         // Actually, if mappedFileIds is empty, we just let it rebuild to auto-fill.
       } else {
-        isMappingValidForProject = mappedFileIds.some(id => 
+        isMappingValidForProject = mappedFileIds.some(id =>
           runPipelineProject.files.some(f => f.id === id)
         );
       }
@@ -2612,7 +2612,9 @@ export default function App() {
 
   function buildRenderConfigV2(): RenderConfigV2 {
     if (!runPipelineProject) return null;
-    const selected = runPipelineProject.files.filter(file => renderInputFileIds.includes(file.id));
+    const selected = renderInputFileIds
+      .map(id => runPipelineProject.files.find(file => file.id === id))
+      .filter((file): file is VaultFile => file !== undefined);
     if (!selected.length) return null;
 
     const counts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
@@ -2875,7 +2877,7 @@ export default function App() {
         textSubtitleStyle.autoMovePositions = parsedAutoMovePositions;
       }
       items.push({
-        id: 'text-1',
+        id: 'text-track',
         type: 'text',
         source: {},
         timeline: { start, duration: safeEnd - start },
@@ -2954,20 +2956,7 @@ export default function App() {
         return acc;
       }, {} as Record<string, string>);
     const normalizedTrackLabels = sortRecordByTemplateKey(config.timeline?.trackLabels);
-    const normalizedItems = [...(config.items ?? [])].sort((a, b) => {
-      const aRef = (a.source?.ref ?? '').trim();
-      const bRef = (b.source?.ref ?? '').trim();
-      const aHasRef = aRef.length > 0;
-      const bHasRef = bRef.length > 0;
-      if (aHasRef !== bHasRef) return aHasRef ? -1 : 1;
-      if (aHasRef && bHasRef) {
-        const refCmp = compareTemplateKeys(aRef, bRef);
-        if (refCmp !== 0) return refCmp;
-      }
-      const typeCmp = compareTemplateKeys(a.type, b.type);
-      if (typeCmp !== 0) return typeCmp;
-      return String(a.id ?? '').localeCompare(String(b.id ?? ''));
-    }).map(item => {
+    const normalizedItems = [...(config.items ?? [])].map(item => {
       const nextItem: RenderConfigV2['items'][number] = { ...item };
       if (nextItem.timeline) {
         const { duration: _duration, ...timelineWithoutDuration } = nextItem.timeline;
@@ -4048,14 +4037,15 @@ export default function App() {
       setRenderStudioItemType(null);
       return;
     }
-    const targetId =
+    const targetId = track.id || (
       track.type === 'image'
         ? track.id
         : track.type === 'video'
           ? renderVideoId
           : track.type === 'audio'
             ? renderAudioId
-            : renderSubtitleId;
+            : renderSubtitleId
+    );
     if (!targetId) return;
     const nextIds = renderInputFileIds.filter(id => id !== targetId);
     setRenderInputFileIds(nextIds);
@@ -4405,7 +4395,7 @@ export default function App() {
 
     // Restore render image order and transforms if available
     if (renderMeta.configV2?.timeline?.imageMatchDuration) {
-       setRenderImageMatchDuration(renderMeta.configV2.timeline.imageMatchDuration);
+      setRenderImageMatchDuration(renderMeta.configV2.timeline.imageMatchDuration);
     }
     // Restore image order based on config items
     const imageOrder = (renderMeta.configV2?.items ?? []).filter((it: any) => it.type === 'image').map((it: any) => it.id);
@@ -5079,12 +5069,12 @@ export default function App() {
     }
   }, [renderConfigV2Override, runPipelineProject?.id]);
 
-    const normalizeRenderVideoMaskInsets = (video: Record<string, any>) => {
-      const hasInsets = (
-        video.maskLeft !== undefined
-        || video.maskRight !== undefined
-        || video.maskTop !== undefined
-        || video.maskBottom !== undefined
+  const normalizeRenderVideoMaskInsets = (video: Record<string, any>) => {
+    const hasInsets = (
+      video.maskLeft !== undefined
+      || video.maskRight !== undefined
+      || video.maskTop !== undefined
+      || video.maskBottom !== undefined
     );
     const hasLegacy = (
       video.maskX !== undefined
@@ -5101,14 +5091,14 @@ export default function App() {
     const top = Math.max(0, Math.min(100, y));
     const right = Math.max(0, Math.min(100, 100 - x - w));
     const bottom = Math.max(0, Math.min(100, 100 - y - h));
-      return {
-        ...video,
-        maskLeft: String(left),
-        maskRight: String(right),
-        maskTop: String(top),
-        maskBottom: String(bottom)
-      };
+    return {
+      ...video,
+      maskLeft: String(left),
+      maskRight: String(right),
+      maskTop: String(top),
+      maskBottom: String(bottom)
     };
+  };
 
   const normalizeRenderVideoScalePercent = (video: Record<string, any>) => {
     const value = coerceNumber(video.scale, null);
@@ -5287,8 +5277,8 @@ export default function App() {
         const message = addedCount === 0 && removedCount === 0
           ? 'No project changes'
           : [addedCount > 0 ? `+${addedCount} added` : null, removedCount > 0 ? `-${removedCount} removed` : null]
-              .filter(Boolean)
-              .join(' • ');
+            .filter(Boolean)
+            .join(' • ');
         showToast(message, 'info');
       } else {
         setHasLoadedOnce(true);
@@ -5477,9 +5467,9 @@ export default function App() {
               // Tạo mới: Xóa cache
               runPipelineJob({ ...options, forceNew: true, skipCheck: true });
             });
-            return; 
+            return;
           } else if (check.status === 'completed') {
-             openConfirm({
+            openConfirm({
               title: 'Video đã tồn tại',
               description: 'Video với nội dung này đã được render xong. Bạn muốn render lại bản mới hoàn toàn hay hủy lệnh?',
               confirmLabel: 'Render mới (Xóa cũ)',
@@ -5489,7 +5479,7 @@ export default function App() {
             });
             return;
           } else if (check.hasCache) {
-             openConfirm({
+            openConfirm({
               title: 'Tìm thấy cache render',
               description: 'Cache của lần render trước đã tồn tại. Bạn muốn sử dụng lại cache để tiếp tục hay xóa cache và render lại từ đầu?',
               confirmLabel: 'Sử dụng cache',
@@ -5512,22 +5502,22 @@ export default function App() {
     const sendPipeline = async (overwrite: boolean) => {
       const pipelinePayload: Record<string, any> = runPipelineHasDownload
         ? {
-            url: downloadUrl.trim(),
-            projectName: downloadProjectName.trim(),
-            noPlaylist: downloadNoPlaylist,
-            downloadMode,
-            subLangs: downloadSubtitleLang.trim(),
-            model: vrModel,
-            backend: runPipelineBackend,
-            outputFormat: vrOutputType
-          }
+          url: downloadUrl.trim(),
+          projectName: downloadProjectName.trim(),
+          noPlaylist: downloadNoPlaylist,
+          downloadMode,
+          subLangs: downloadSubtitleLang.trim(),
+          model: vrModel,
+          backend: runPipelineBackend,
+          outputFormat: vrOutputType
+        }
         : {
-            inputPath: runPipelineResolvedInput?.relativePath,
-            inputPaths: runPipelineResolvedInput?.relativePath ? [runPipelineResolvedInput.relativePath] : undefined,
-            model: vrModel,
-            backend: runPipelineBackend,
-            outputFormat: vrOutputType
-          };
+          inputPath: runPipelineResolvedInput?.relativePath,
+          inputPaths: runPipelineResolvedInput?.relativePath ? [runPipelineResolvedInput.relativePath] : undefined,
+          model: vrModel,
+          backend: runPipelineBackend,
+          outputFormat: vrOutputType
+        };
       if (runPipelineHasRender) {
         const videoFile = runPipelineProject?.files.find(file => file.id === renderVideoId);
         const audioFile = runPipelineProject?.files.find(file => file.id === renderAudioId);
@@ -5842,6 +5832,7 @@ export default function App() {
       setRenderTextTrackEnabled,
       renderVideoFile,
       renderAudioFile,
+      renderAudioFiles,
       renderSubtitleFile,
       renderImageFiles,
       renderImageDurationEntries,
@@ -6275,7 +6266,7 @@ export default function App() {
             )}
 
             {activeTab === 'forge' && (
-              <motion.div 
+              <motion.div
                 key="forge"
                 initial={false}
                 animate={false as any}
@@ -6381,7 +6372,7 @@ export default function App() {
                         >
                           {/* Grid Background Effect */}
                           <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)', backgroundSize: '24px 24px' }} />
-                          
+
                           <div className="relative z-10 flex flex-col h-full min-h-0">
                             {graphNodes.length === 0 ? (
                               <div className="flex-1 min-h-0 h-full border border-dashed border-zinc-800 rounded-xl flex flex-col items-center justify-center gap-3 text-zinc-500 text-sm">
@@ -6486,7 +6477,7 @@ export default function App() {
                           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-5 flex-1 min-h-0">
                             <h4 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">Available Tasks</h4>
                             <div className="flex flex-col gap-2 overflow-y-auto pr-1">
-                            {availableTasks.map((task, i) => (
+                              {availableTasks.map((task, i) => (
                                 <button
                                   key={i}
                                   draggable
@@ -6820,11 +6811,10 @@ export default function App() {
                       </div>
 
                       <div
-                        className={`flex-1 min-h-0 grid gap-5 overflow-y-auto pr-1 ${
-                          pipelinePreviewTask?.preview === 'tts'
+                        className={`flex-1 min-h-0 grid gap-5 overflow-y-auto pr-1 ${pipelinePreviewTask?.preview === 'tts'
                             ? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
                             : 'grid-cols-1'
-                        }`}
+                          }`}
                       >
                         <div className="flex flex-col gap-4">
                           <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">

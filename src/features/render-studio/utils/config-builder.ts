@@ -1,15 +1,15 @@
-import { 
-  RenderConfigV2, 
-  VaultFolder, 
-  VaultFile, 
+import {
+  RenderConfigV2,
+  VaultFolder,
+  VaultFile,
   RenderSubtitleAssState,
   DEFAULT_RENDER_PARAMS
 } from '../../../types/index';
-import { 
+import {
   coerceNumber
 } from '../../../utils/helpers';
-import { 
-  RENDER_TEXT_PARAM_FIELDS 
+import {
+  RENDER_TEXT_PARAM_FIELDS
 } from '../../../utils/vault';
 
 /**
@@ -242,21 +242,8 @@ export const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 
     }, {} as Record<string, string>);
 
   const normalizedTrackLabels = sortRecordByTemplateKey(config.timeline?.trackLabels);
-  
-  const normalizedItems = [...(config.items ?? [])].sort((a, b) => {
-    const aRef = (a.source?.ref ?? '').trim();
-    const bRef = (b.source?.ref ?? '').trim();
-    const aHasRef = aRef.length > 0;
-    const bHasRef = bRef.length > 0;
-    if (aHasRef !== bHasRef) return aHasRef ? -1 : 1;
-    if (aHasRef && bHasRef) {
-      const refCmp = compareTemplateKeys(aRef, bRef);
-      if (refCmp !== 0) return refCmp;
-    }
-    const typeCmp = compareTemplateKeys(a.type, b.type);
-    if (typeCmp !== 0) return typeCmp;
-    return String(a.id ?? '').localeCompare(String(b.id ?? ''));
-  }).map(item => {
+
+  const normalizedItems = [...(config.items ?? [])].map(item => {
     const nextItem: RenderConfigV2['items'][number] = { ...item };
     if (nextItem.timeline) {
       const { duration: _duration, ...timelineWithoutDuration } = nextItem.timeline;
@@ -409,7 +396,9 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
   } = params;
 
   if (!project) return null;
-  const selected = project.files.filter(file => renderInputFileIds.includes(file.id));
+  const selected = renderInputFileIds
+    .map(id => project.files.find(file => file.id === id))
+    .filter((file): file is VaultFile => file !== undefined);
   if (!selected.length) return null;
 
   const counts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
@@ -446,16 +435,16 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
   selected.forEach((file) => {
     if (!file.relativePath) return;
     if (file.type !== 'video' && file.type !== 'audio' && file.type !== 'subtitle' && file.type !== 'image') return;
-    
+
     counts[file.type] += 1;
     const key = counts[file.type] === 1 ? file.type : `${file.type}${counts[file.type]}`;
     inputsMap[key] = file.relativePath;
-    
+
     const labelFromUser = (renderTrackLabels[key] ?? '').trim();
     trackLabelsOut[key] = labelFromUser || file.name || key;
 
     const baseItem: any = {
-      id: file.id,
+      id: `${file.type}-${counts[file.type]}`,
       type: file.type,
       source: { ref: key }
     };
@@ -467,7 +456,7 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
           ? renderTimelineDuration
           : (coerceNumber(renderImageDurations[file.id], 5) ?? 5);
         baseItem.timeline = { start: 0, duration };
-        
+
         const t = renderImageTransforms[file.id];
         if (t) {
           baseItem.transform = {
@@ -565,7 +554,7 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
     const start = isSingleTextMatchDuration ? 0 : (coerceNumber(singleTextStart, 0) ?? 0);
     const fallbackEnd = renderTimelineDuration > 0 ? renderTimelineDuration : start + 5;
     const end = isSingleTextMatchDuration ? fallbackEnd : (coerceNumber(singleTextEnd, fallbackEnd) ?? fallbackEnd);
-    
+
     const textSubtitleStyle: Record<string, unknown> = {
       ...textBaseStyle,
       opacity: coerceNumber(textOpacity, 100),

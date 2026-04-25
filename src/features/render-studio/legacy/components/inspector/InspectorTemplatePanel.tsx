@@ -207,43 +207,33 @@ export const InspectorTemplatePanel: React.FC = () => {
                 </button>
               </div>
             </div>
-            <div className="p-4 overflow-auto">
+            <div className="px-4 py-2 text-xs text-zinc-500 border-b border-zinc-800">
+              {Array.isArray(templateDiffRows) ? templateDiffRows.length : 0} change{Array.isArray(templateDiffRows) && templateDiffRows.length === 1 ? '' : 's'}
+            </div>
+            <div className="overflow-auto">
               {!Array.isArray(templateDiffRows) || templateDiffRows.length === 0 ? (
-                <div className="text-sm text-zinc-400">No changes.</div>
+                <div className="px-4 py-6 text-sm text-zinc-400">No differences.</div>
               ) : (
-                <div className="space-y-2">
-                  {templateDiffRows.map((row: any, idx: number) => (
-                    <div key={`diff-${idx}`} className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold text-zinc-200 truncate">
-                            {typeof row.path === 'string' && row.path.startsWith('items[')
-                              ? `${getTemplateDiffTrackLabel?.(row.path)} · ${row.path}`
-                              : row.path}
-                          </div>
-                          <div className="text-[10px] text-zinc-500 truncate">{row.path}</div>
-                        </div>
-                        <div className="text-[10px] text-zinc-500 shrink-0">
-                          {typeof row.path === 'string' && row.path.startsWith('items[') ? 'Track item' : 'Config'}
-                        </div>
-                      </div>
-                      <div className="mt-2 grid grid-cols-2 gap-3 text-[10px]">
-                        <div className="rounded-md border border-zinc-800 bg-zinc-950/40 p-2">
-                          <div className="text-[10px] uppercase tracking-widest text-zinc-600 mb-1">Before</div>
-                          <div className="font-mono text-zinc-200 whitespace-pre-wrap break-words">
-                            {formatDiffValue?.(row.before)}
-                          </div>
-                        </div>
-                        <div className="rounded-md border border-zinc-800 bg-zinc-950/40 p-2">
-                          <div className="text-[10px] uppercase tracking-widest text-zinc-600 mb-1">After</div>
-                          <div className="font-mono text-zinc-200 whitespace-pre-wrap break-words">
-                            {formatDiffValue?.(row.after)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <table className="w-full table-fixed border-collapse text-xs">
+                  <thead className="sticky top-0 bg-zinc-900/95 text-zinc-400">
+                    <tr>
+                      <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[24%]">Path</th>
+                      <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[16%]">Track name</th>
+                      <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[30%]">{renderTemplateDiffBaselineLabel}</th>
+                      <th className="text-left font-medium px-3 py-2 border-b border-zinc-800 w-[30%]">Current</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {templateDiffRows.map((row: any, idx: number) => (
+                      <tr key={`${row.path}-${idx}`} className="align-top border-b border-zinc-800/70">
+                        <td className="px-3 py-2 font-mono text-zinc-300 break-all">{row.path}</td>
+                        <td className="px-3 py-2 text-zinc-300 break-all">{getTemplateDiffTrackLabel?.(row.path)}</td>
+                        <td className="px-3 py-2 text-zinc-400 whitespace-pre-wrap break-all">{formatDiffValue?.(row.before)}</td>
+                        <td className="px-3 py-2 text-zinc-200 whitespace-pre-wrap break-all">{formatDiffValue?.(row.after)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
