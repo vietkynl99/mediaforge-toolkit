@@ -71,6 +71,7 @@ interface AppOverlaysProps {
   runPipelineModalProps: any;
   showRenderStudio: boolean;
   runPipelineHasRender: boolean;
+  vaultLoading: boolean;
   renderStudioProps: any;
   appContextMenusProps: any;
   renderStudioContextMenus: React.ReactNode;
@@ -128,6 +129,7 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
   runPipelineModalProps,
   showRenderStudio,
   runPipelineHasRender,
+  vaultLoading,
   renderStudioProps,
   appContextMenusProps,
   renderStudioContextMenus
@@ -237,9 +239,13 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
       </Suspense>
 
       {showRenderStudio && runPipelineHasRender && (
-        <Suspense fallback={<div className="fixed inset-0 z-50 bg-zinc-950 text-zinc-400 flex items-center justify-center">Loading render studio...</div>}>
-          <LazyRenderStudioPage {...renderStudioProps} />
-        </Suspense>
+        vaultLoading ? (
+          <div className="fixed inset-0 z-[100] bg-zinc-950 text-zinc-400 flex items-center justify-center">Loading project...</div>
+        ) : (
+          <Suspense fallback={<div className="fixed inset-0 z-[100] bg-zinc-950 text-zinc-400 flex items-center justify-center">Loading render studio...</div>}>
+            <LazyRenderStudioPage {...renderStudioProps} />
+          </Suspense>
+        )
       )}
 
       <Suspense fallback={null}>

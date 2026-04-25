@@ -7076,6 +7076,7 @@ export default function App() {
               runPipelineModalProps={runPipelineModalProps}
               showRenderStudio={showRenderStudio}
               runPipelineHasRender={runPipelineHasRender}
+              vaultLoading={vaultLoading}
               renderStudioProps={renderStudioProps}
               appContextMenusProps={appContextMenusProps}
               renderStudioContextMenus={renderStudioContextMenus}
