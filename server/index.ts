@@ -11,6 +11,7 @@ import initSqlJs from 'sql.js';
 import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR_CLI_PATH, UVR_OUTPUT_DIRNAME } from './constants.js';
 import { ttsRouter } from './tts.js';
 import { buildAssDocument, parseAssRenderStyle, writeStyledAssFile } from './subtitleAss.js';
+import { RenderConfigV2, RenderItemV2, RenderEffectV2 } from '../shared/types.js';
 
 type VaultFileDTO = {
   name: string;
@@ -61,61 +62,6 @@ type VaultFolderDTO = {
   name: string;
   path: string;
   files: VaultFileDTO[];
-};
-
-type RenderConfigV2 = {
-  version: '2';
-  timeline: {
-    levelControl?: 'gain' | 'loudness' | 'lufs';
-    targetLufs?: number;
-    resolution: string;
-    framerate: number;
-    duration?: number;
-    start?: number;
-    backgroundColor?: string;
-    trackLabels?: Record<string, string>;
-    imageMatchDuration?: Record<string, boolean>;
-  };
-  inputsMap: Record<string, string>;
-  items: RenderItemV2[];
-  effects?: RenderEffectV2[];
-};
-
-type RenderItemV2 = {
-  id: string;
-  type: 'video' | 'audio' | 'image' | 'subtitle' | 'text';
-  source: { ref?: string; path?: string };
-  timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
-  layer?: number;
-  mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
-  text?: { value: string; start?: number; end?: number; matchDuration?: string };
-  transform?: {
-    x?: number;
-    y?: number;
-    scale?: number;
-    rotation?: number;
-    opacity?: number;
-    fit?: 'contain' | 'cover' | 'stretch';
-    crop?: { x: number; y: number; w: number; h: number };
-    mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
-  };
-  audioMix?: {
-    levelControl?: 'gain' | 'loudness' | 'lufs';
-    targetLufs?: number;
-    gainDb?: number;
-    mute?: boolean;
-    fadeIn?: number;
-    fadeOut?: number;
-    delay?: number;
-    group?: string;
-  };
-  subtitleStyle?: Record<string, unknown>;
-  effects?: RenderEffectV2[];
-};
-
-type RenderEffectV2 = {
-  type: string;
-  params?: Record<string, unknown>;
 };
 
 type ProjectConfig = {

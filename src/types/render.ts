@@ -1,3 +1,6 @@
+import { RenderConfigV2, RenderItemV2, RenderEffectV2, LevelControl } from '../../shared/types';
+export type { RenderConfigV2, RenderItemV2, RenderEffectV2, LevelControl };
+
 export interface RenderSubtitleAssState {
   fontName: string;
   fontSize: string;
@@ -224,54 +227,6 @@ export type RenderBlurRegionEffect = {
   bottom: number;
   sigma: number;
   feather: number;
-};
-
-export type RenderConfigV2 = {
-  version: '2';
-  timeline: {
-    levelControl?: 'gain' | 'lufs';
-    targetLufs?: number;
-    resolution: string;
-    framerate: number;
-    start?: number;
-    duration?: number;
-    backgroundColor?: string;
-    trackLabels?: Record<string, string>;
-    imageMatchDuration?: boolean | Record<string, boolean>;
-  };
-  inputsMap: Record<string, string>;
-  items: Array<{
-    id: string;
-    type: 'video' | 'audio' | 'image' | 'subtitle' | 'text';
-    source: { ref?: string; path?: string };
-    timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
-    layer?: number;
-    mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
-    text?: { value: string; start?: number; end?: number; matchDuration?: string };
-    transform?: {
-      x?: number;
-      y?: number;
-      scale?: number;
-      rotation?: number;
-      opacity?: number;
-      fit?: 'contain' | 'cover' | 'stretch';
-      crop?: { x: number; y: number; w: number; h: number };
-      mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
-    };
-    audioMix?: {
-      levelControl?: 'gain' | 'lufs';
-      targetLufs?: number;
-      gainDb?: number;
-      mute?: boolean;
-      fadeIn?: number;
-      fadeOut?: number;
-      delay?: number;
-      group?: string;
-    };
-    subtitleStyle?: Record<string, unknown>;
-    effects?: Array<{ type: string; params?: Record<string, unknown> }>;
-  }>;
-  effects?: Array<{ type: string; params?: Record<string, unknown> }>;
 };
 
 export type RenderTemplate = {
