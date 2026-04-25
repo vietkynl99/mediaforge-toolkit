@@ -1020,14 +1020,6 @@ const summarizeRenderConfigForDebug = (config: RenderConfigV2) => ({
   }))
 });
 
-const normalizeFfmpegColor = (value: string) => {
-  const trimmed = value.trim();
-  if (trimmed.startsWith('#') && /^#[0-9a-fA-F]{6,8}$/.test(trimmed)) {
-    return `0x${trimmed.slice(1)}`;
-  }
-  return trimmed;
-};
-
 const ensureCircleMaskPgm = async (tmpDir: string) => {
   const size = 256;
   const maskPath = path.join(tmpDir, `circle-mask-${size}.pgm`);
@@ -1097,7 +1089,7 @@ const buildRenderV2FilterGraph = async (
   const includeAudio = options?.includeAudio !== false;
   const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
   const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
-  const background = normalizeFfmpegColor(config.timeline.backgroundColor || '#000000');
+  const background = '0x000000'; // Default black background
   const configOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
   const outputStart = Number.isFinite(options?.outputStart) ? Math.max(0, Number(options?.outputStart)) : configOutputStart;
 
@@ -1134,8 +1126,7 @@ const buildRenderV2FilterGraph = async (
     ? Number(config.timeline.duration)
     : computedMediaTimelineDuration;
   const isImageMatchDuration = (entry: { item: RenderItemV2 }) => {
-    const ref = entry.item.source?.ref ?? '';
-    return Boolean(ref && config.timeline?.imageMatchDuration?.[ref]);
+    return Boolean(entry.item.timeline?.matchDuration);
   };
 
   const defaultDuration = 5;
@@ -1547,7 +1538,7 @@ const buildRenderV2FilterGraph = async (
       if (!timing) continue;
       const inputIndex = inputEntries.findIndex(e => e.item === item);
       if (inputIndex < 0) continue;
-      const trackLabel = (config.timeline.trackLabels?.[item.source?.ref ?? ''] ?? item.id ?? 'video');
+      const trackLabel = item.name ?? item.id ?? 'video';
       const isMuted = item.audioMix?.mute === true;
       const muteMsg = `[AudioMix] Video track "${trackLabel}" (id=${item.id}): muted=${isMuted}, levelControl=${(item.audioMix as any)?.levelControl ?? timelineLevelControl ?? 'gain'}, gainDb=${(item.audioMix as any)?.gainDb ?? 0}`;
       if (debugEnabled) console.log(muteMsg);
@@ -1569,7 +1560,7 @@ const buildRenderV2FilterGraph = async (
       if (!timing) continue;
       const inputIndex = inputEntries.findIndex(e => e.item === item);
       if (inputIndex < 0) continue;
-      const trackLabel = (config.timeline.trackLabels?.[item.source?.ref ?? ''] ?? item.id ?? 'audio');
+      const trackLabel = item.name ?? item.id ?? 'audio';
       const isMuted = item.audioMix?.mute === true;
       const muteMsg = `[AudioMix] Audio track "${trackLabel}" (id=${item.id}): muted=${isMuted}, levelControl=${(item.audioMix as any)?.levelControl ?? timelineLevelControl ?? 'gain'}, gainDb=${(item.audioMix as any)?.gainDb ?? 0}`;
       if (debugEnabled) console.log(muteMsg);
@@ -1723,7 +1714,7 @@ const buildRenderV2FilterGraph = async (
       }
       const mixInputs = audioCandidates.map((_, idx) => `[a${idx}]`).join('');
       filters.push(...audioFilters);
-      filters.push(`${mixInputs}amix=inputs=${audioCandidates.length}:normalize=0:duration=longest[aout]`);
+      filters.push(`${mixInputs}amix=inputs=${audioCandidates.length}:duration=longest[aout]`);
       audioMap = ['-map', '[aout]'];
       audioLog(`amix: ${audioCandidates.length} inputs → [aout]`);
     }

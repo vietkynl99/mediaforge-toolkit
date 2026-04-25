@@ -28,13 +28,12 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
   const firstSubtitle = files.find(file => file.type === 'subtitle' && file.relativePath);
   const inputsMap: Record<string, string> = {};
   const items: RenderConfigV2['items'] = [];
-  const trackLabels: Record<string, string> = {};
 
   if (firstVideo?.relativePath) {
     inputsMap.video = firstVideo.relativePath;
-    trackLabels.video = firstVideo.name || 'video';
     items.push({
       id: 'video-1',
+      name: firstVideo.name || 'video',
       type: 'video',
       source: { ref: 'video' },
       timeline: { start: 0 },
@@ -59,9 +58,9 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
 
   if (firstAudio?.relativePath) {
     inputsMap.audio = firstAudio.relativePath;
-    trackLabels.audio = firstAudio.name || 'audio';
     items.push({
       id: 'audio-1',
+      name: firstAudio.name || 'audio',
       type: 'audio',
       source: { ref: 'audio' },
       timeline: { start: 0 },
@@ -77,9 +76,9 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
 
   if (firstSubtitle?.relativePath) {
     inputsMap.subtitle = firstSubtitle.relativePath;
-    trackLabels.subtitle = firstSubtitle.name || 'subtitle';
     items.push({
       id: 'subtitle-1',
+      name: firstSubtitle.name || 'subtitle',
       type: 'subtitle',
       source: { ref: 'subtitle' },
       timeline: { start: 0 },
@@ -113,9 +112,7 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
       levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
       targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.targetLufs, -14),
       resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
-      framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
-      trackLabels,
-      imageMatchDuration: {}
+      framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30
     },
     inputsMap,
     items
@@ -162,13 +159,19 @@ export const normalizeTemplateForComparison = (config: RenderConfigV2): RenderCo
     return acc;
   }, {} as Record<string, number>);
 
-  const items = (config.items ?? []).map(item => {
+  let items = (config.items ?? []).map(item => {
     const typeKey = String(item.type || '');
     if ((typeCounts[typeKey] ?? 0) <= 1 && item.layer !== undefined) {
       const { layer: _layer, ...rest } = item;
       return rest as RenderConfigV2['items'][number];
     }
     return item;
+  });
+
+  items = items.sort((a, b) => {
+    const refA = a.source?.ref || (a.type === 'text' ? 'text' : a.type);
+    const refB = b.source?.ref || (b.type === 'text' ? 'text' : b.type);
+    return compareTemplateKeys(refA, refB);
   });
 
   return {
@@ -241,8 +244,6 @@ export const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 
       return acc;
     }, {} as Record<string, string>);
 
-  const normalizedTrackLabels = sortRecordByTemplateKey(config.timeline?.trackLabels);
-
   const normalizedItems = [...(config.items ?? [])].map(item => {
     const nextItem: RenderConfigV2['items'][number] = { ...item };
     if (nextItem.timeline) {
@@ -257,7 +258,7 @@ export const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 
       }
     }
     if (nextItem.audioMix) {
-      const { levelControl: _levelControl, targetLufs: _targetLufs, ...audioMixRest } = nextItem.audioMix;
+      const { levelControl: _levelControl, ...audioMixRest } = nextItem.audioMix;
       if (Object.keys(audioMixRest).length > 0) {
         nextItem.audioMix = audioMixRest;
       } else {
@@ -272,8 +273,7 @@ export const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 
   return {
     version: '2',
     timeline: {
-      ...timelineWithoutDuration,
-      trackLabels: normalizedTrackLabels
+      ...timelineWithoutDuration
     },
     inputsMap: normalizedInputsMap,
     items: normalizedItems
@@ -403,7 +403,6 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
 
   const counts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
   const inputsMap: Record<string, string> = {};
-  const trackLabelsOut: Record<string, string> = {};
   const items: RenderConfigV2['items'] = [];
 
   const timelineResolution = renderParams.timeline.resolution || '1920x1080';
@@ -441,10 +440,11 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
     inputsMap[key] = file.relativePath;
 
     const labelFromUser = (renderTrackLabels[key] ?? '').trim();
-    trackLabelsOut[key] = labelFromUser || file.name || key;
+    const name = labelFromUser || file.name || key;
 
     const baseItem: any = {
       id: `${file.type}-${counts[file.type]}`,
+      name,
       type: file.type,
       source: { ref: key }
     };
@@ -455,7 +455,11 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
         const duration = (isMatch && renderTimelineDuration > 0)
           ? renderTimelineDuration
           : (coerceNumber(renderImageDurations[file.id], 5) ?? 5);
-        baseItem.timeline = { start: 0, duration };
+        baseItem.timeline = {
+          start: 0,
+          duration,
+          ...(isMatch ? { matchDuration: true } : {})
+        };
 
         const t = renderImageTransforms[file.id];
         if (t) {
@@ -506,7 +510,7 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
         if (videoBlurEffects && videoBlurEffects.length > 0) baseItem.effects = videoBlurEffects;
         baseItem.audioMix = {
           levelControl: renderParams.timeline.levelControl as any,
-          targetLufs: coerceNumber(renderParams.timeline.targetLufs, -14),
+          targetLufs: coerceNumber(renderParams.video.targetLufs, -14),
           gainDb: coerceNumber(renderParams.video.gainDb, 0),
           mute: Boolean(renderParams.video.mute)
         };
@@ -516,7 +520,7 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
     if (file.type === 'audio') {
       baseItem.audioMix = {
         levelControl: renderParams.timeline.levelControl as any,
-        targetLufs: coerceNumber(renderParams.timeline.targetLufs, -14),
+        targetLufs: coerceNumber(renderParams.audio.targetLufs, -14),
         gainDb: coerceNumber(renderParams.audio.gainDb, 0),
         mute: Boolean(renderParams.audio.mute)
       };
@@ -566,8 +570,10 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
       textSubtitleStyle.autoMovePositions = parsedAutoMovePositions;
     }
 
+    const textLabel = (renderTrackLabels.text ?? '').trim() || 'Text';
     items.push({
       id: 'text-track',
+      name: textLabel,
       type: 'text',
       source: {},
       timeline: { start, duration: Math.max(0.01, end - start) },
@@ -582,9 +588,7 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
       resolution: timelineResolution,
       framerate: timelineFramerate,
       levelControl: renderParams.timeline.levelControl as any,
-      targetLufs: targetLufs,
-      trackLabels: trackLabelsOut,
-      imageMatchDuration: renderImageMatchDuration
+      targetLufs: targetLufs
     },
     inputsMap,
     items

@@ -315,7 +315,8 @@ export const RunPipelineInputsSection: React.FC<RunPipelineInputsSectionProps> =
                               const fallbackKey = placeholders.length === 1 && placeholder.key === placeholder.type
                                 ? ''
                                 : (placeholder.key === placeholder.type ? `${placeholder.type}1` : placeholder.key);
-                              const savedName = (selectedRenderTemplate?.config?.timeline?.trackLabels?.[placeholder.key] ?? '').trim();
+                              const itemMatch = selectedRenderTemplate?.config?.items?.find((i: any) => i.source?.ref === placeholder.key);
+                              const savedName = (itemMatch?.name ?? '').trim();
                               const displayName = savedName || fallbackKey;
                               return (
                                 <div key={placeholder.key} className="flex flex-col gap-1 min-w-0">

@@ -17,9 +17,10 @@ export type RenderEffectV2 = {
 
 export type RenderItemV2 = {
   id: string;
+  name?: string;
   type: 'video' | 'audio' | 'image' | 'subtitle' | 'text';
   source: { ref?: string; path?: string };
-  timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
+  timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number; matchDuration?: boolean };
   layer?: number;
   mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
   text?: { value: string; start?: number; end?: number; matchDuration?: string };
@@ -56,9 +57,6 @@ export type RenderConfigV2 = {
     framerate: number;
     duration?: number;
     start?: number;
-    backgroundColor?: string;
-    trackLabels?: Record<string, string>;
-    imageMatchDuration?: Record<string, boolean>;
   };
   inputsMap: Record<string, string>;
   items: RenderItemV2[];

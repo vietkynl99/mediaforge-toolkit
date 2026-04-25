@@ -2208,8 +2208,7 @@ export default function App() {
     const previewStabilized = {
       ...fullConfig,
       timeline: {
-        ...fullConfig.timeline,
-        trackLabels: {} // Ignore labels
+        ...fullConfig.timeline
       },
       items: fullConfig.items.map(item => {
         const { audioMix, ...visualPart } = item;
@@ -2619,7 +2618,6 @@ export default function App() {
 
     const counts = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
     const inputsMap: Record<string, string> = {};
-    const trackLabelsOut: Record<string, string> = {};
     const items: RenderConfigV2['items'] = [];
 
     const timelineResolution = renderParams.timeline.resolution || '1920x1080';
@@ -2723,9 +2721,10 @@ export default function App() {
       const key = counts[file.type] === 1 ? file.type : `${file.type}${counts[file.type]}`;
       inputsMap[key] = file.relativePath;
       const labelFromUser = (renderTrackLabels[key] ?? '').trim();
-      trackLabelsOut[key] = labelFromUser || file.name || key;
+      const name = labelFromUser || file.name || key;
       const baseItem: RenderConfigV2['items'][number] = {
         id: `${file.type}-${counts[file.type]}`,
+        name,
         type: file.type,
         source: { ref: key },
         timeline: { start: 0 },
@@ -2740,7 +2739,11 @@ export default function App() {
           const duration = shouldMatchDuration && renderTimelineDuration > 0
             ? renderTimelineDuration
             : (coerceNumber(renderImageDurations[file.id], renderImageDurationFallback) ?? renderImageDurationFallback);
-          baseItem.timeline = { start: 0, duration };
+          baseItem.timeline = {
+            start: 0,
+            duration,
+            ...(shouldMatchDuration ? { matchDuration: true } : {})
+          };
           const t = renderImageTransforms[file.id];
           if (t) {
             baseItem.transform = {
@@ -2815,7 +2818,7 @@ export default function App() {
           // Add audioMix for video track to support audio parameters
           baseItem.audioMix = {
             levelControl: renderParams.timeline.levelControl as any,
-            targetLufs: coerceNumber(renderParams.timeline.targetLufs, -14),
+            targetLufs: coerceNumber(renderParams.video.targetLufs, -14),
             gainDb: coerceNumber(renderParams.video.gainDb, 0),
             mute: Boolean(renderParams.video.mute)
           };
@@ -2825,7 +2828,7 @@ export default function App() {
       if (file.type === 'audio') {
         baseItem.audioMix = {
           levelControl: renderParams.timeline.levelControl as any,
-          targetLufs: coerceNumber(renderParams.timeline.targetLufs, -14),
+          targetLufs: coerceNumber(renderParams.audio.targetLufs, -14),
           gainDb: coerceNumber(renderParams.audio.gainDb, 0),
           mute: Boolean(renderParams.audio.mute)
         };
@@ -2885,7 +2888,8 @@ export default function App() {
         subtitleStyle: textSubtitleStyle
       });
       const textLabel = (renderTrackLabels.text ?? '').trim();
-      trackLabelsOut.text = textLabel || 'Text';
+      const textName = textLabel || 'Text';
+      items[items.length - 1].name = textName;
     }
 
     return {
@@ -2895,9 +2899,7 @@ export default function App() {
         targetLufs,
         resolution: timelineResolution,
         framerate: timelineFramerate,
-        duration: renderTimelineDuration > 0 ? renderTimelineDuration : undefined,
-        trackLabels: trackLabelsOut,
-        imageMatchDuration: renderImageMatchDuration
+        duration: renderTimelineDuration > 0 ? renderTimelineDuration : undefined
       },
       inputsMap,
       items
@@ -2955,7 +2957,6 @@ export default function App() {
         acc[key] = '';
         return acc;
       }, {} as Record<string, string>);
-    const normalizedTrackLabels = sortRecordByTemplateKey(config.timeline?.trackLabels);
     const normalizedItems = [...(config.items ?? [])].map(item => {
       const nextItem: RenderConfigV2['items'][number] = { ...item };
       if (nextItem.timeline) {
@@ -2970,7 +2971,7 @@ export default function App() {
         }
       }
       if (nextItem.audioMix) {
-        const { levelControl: _levelControl, targetLufs: _targetLufs, ...audioMixRest } = nextItem.audioMix;
+        const { levelControl: _levelControl, ...audioMixRest } = nextItem.audioMix;
         if (Object.keys(audioMixRest).length > 0) {
           nextItem.audioMix = audioMixRest;
         } else {
@@ -2985,8 +2986,7 @@ export default function App() {
     return {
       ...config,
       timeline: {
-        ...timelineWithoutDuration,
-        ...(normalizedTrackLabels ? { trackLabels: normalizedTrackLabels } : {})
+        ...timelineWithoutDuration
       },
       inputsMap: normalizedInputsMap,
       items: normalizedItems
@@ -3002,13 +3002,19 @@ export default function App() {
       return acc;
     }, {} as Record<string, number>);
 
-    const items = (config.items ?? []).map(item => {
+    let items = (config.items ?? []).map(item => {
       const typeKey = String(item.type || '');
       if ((typeCounts[typeKey] ?? 0) <= 1 && item.layer !== undefined) {
         const { layer: _layer, ...rest } = item;
         return rest as RenderConfigV2['items'][number];
       }
       return item;
+    });
+
+    items = items.sort((a, b) => {
+      const refA = a.source?.ref || (a.type === 'text' ? 'text' : a.type);
+      const refB = b.source?.ref || (b.type === 'text' ? 'text' : b.type);
+      return compareTemplateKeys(refA, refB);
     });
 
     return {
@@ -3024,13 +3030,12 @@ export default function App() {
     const firstSubtitle = files.find(file => file.type === 'subtitle' && file.relativePath);
     const inputsMap: Record<string, string> = {};
     const items: RenderConfigV2['items'] = [];
-    const trackLabels: Record<string, string> = {};
 
     if (firstVideo?.relativePath) {
       inputsMap.video = firstVideo.relativePath;
-      trackLabels.video = firstVideo.name || 'video';
       items.push({
         id: 'video-1',
+        name: firstVideo.name || 'video',
         type: 'video',
         source: { ref: 'video' },
         timeline: { start: 0 },
@@ -3055,9 +3060,9 @@ export default function App() {
 
     if (firstAudio?.relativePath) {
       inputsMap.audio = firstAudio.relativePath;
-      trackLabels.audio = firstAudio.name || 'audio';
       items.push({
         id: 'audio-1',
+        name: firstAudio.name || 'audio',
         type: 'audio',
         source: { ref: 'audio' },
         timeline: { start: 0 },
@@ -3073,9 +3078,9 @@ export default function App() {
 
     if (firstSubtitle?.relativePath) {
       inputsMap.subtitle = firstSubtitle.relativePath;
-      trackLabels.subtitle = firstSubtitle.name || 'subtitle';
       items.push({
         id: 'subtitle-1',
+        name: firstSubtitle.name || 'subtitle',
         type: 'subtitle',
         source: { ref: 'subtitle' },
         timeline: { start: 0 },
@@ -3109,9 +3114,7 @@ export default function App() {
         levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
         targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.targetLufs, -14),
         resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
-        framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
-        trackLabels,
-        imageMatchDuration: {}
+        framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30
       },
       inputsMap,
       items
@@ -3177,21 +3180,27 @@ export default function App() {
       items: template.config.items
     };
     setRenderConfigV2Override(nextConfig);
-    setRenderTrackLabels(template.config.timeline?.trackLabels ?? {});
-    const imageMatchDurationRaw = template.config.timeline?.imageMatchDuration;
-    let imageMatchDuration: Record<string, boolean> = {};
-    if (typeof imageMatchDurationRaw === 'boolean') {
-      // Backward compatibility: old templates had global boolean, convert to per-image
-      const shouldMatch = imageMatchDurationRaw;
-      imageMatchDuration = Object.fromEntries(
-        Object.keys(template.config.inputsMap ?? {})
-          .filter(key => key.startsWith('image'))
-          .map(key => [key, shouldMatch])
-      );
-    } else if (imageMatchDurationRaw && typeof imageMatchDurationRaw === 'object') {
-      imageMatchDuration = imageMatchDurationRaw as Record<string, boolean>;
-    }
-    setRenderImageMatchDuration(imageMatchDuration);
+    
+    // Instead of setRenderTrackLabels, extract from items
+    const restoredLabels: Record<string, string> = {};
+    template.config.items.forEach((item: any) => {
+      const ref = item.source?.ref || (item.type === 'text' ? 'text' : null);
+      if (ref && item.name) {
+        restoredLabels[ref] = item.name;
+      }
+    });
+    setRenderTrackLabels(restoredLabels);
+
+    const extractedMatchDurations: Record<string, boolean> = {};
+    template.config.items.forEach((item: any) => {
+      if (item.type === 'image' && item.source?.ref && item.timeline?.matchDuration) {
+        const fileId = mapping[item.source.ref];
+        if (fileId) {
+          extractedMatchDurations[fileId] = true;
+        }
+      }
+    });
+    setRenderImageMatchDuration(extractedMatchDurations);
     const selectedIds = Object.values(mapping).filter(Boolean);
     setRenderInputFileIds(selectedIds);
     const imageIdsInOrder = Object.keys(template.config.inputsMap ?? {})
@@ -3250,6 +3259,7 @@ export default function App() {
           maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
           maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom,
           mirror: transform.mirror ?? prev.video.mirror,
+          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs),
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
           mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
         }
@@ -4394,9 +4404,13 @@ export default function App() {
     }
 
     // Restore render image order and transforms if available
-    if (renderMeta.configV2?.timeline?.imageMatchDuration) {
-      setRenderImageMatchDuration(renderMeta.configV2.timeline.imageMatchDuration);
-    }
+    const extractedMatchDurations: Record<string, boolean> = {};
+    (renderMeta.configV2?.items ?? []).forEach((item: any) => {
+      if (item.type === 'image' && item.source?.ref && item.timeline?.matchDuration) {
+        extractedMatchDurations[item.source.ref] = true;
+      }
+    });
+    setRenderImageMatchDuration(extractedMatchDurations);
     // Restore image order based on config items
     const imageOrder = (renderMeta.configV2?.items ?? []).filter((it: any) => it.type === 'image').map((it: any) => it.id);
     if (imageOrder.length > 0) setRenderImageOrderIds(imageOrder);
@@ -4833,9 +4847,15 @@ export default function App() {
     if (imageIdsByRef.length > 0) {
       setRenderImageOrderIds(imageIdsByRef);
     }
-    const trackLabels = renderConfigV2Override.timeline?.trackLabels;
-    if (trackLabels && typeof trackLabels === 'object') {
-      setRenderTrackLabels(trackLabels);
+    const extractedNames: Record<string, string> = {};
+    (renderConfigV2Override.items ?? []).forEach(item => {
+      const ref = item.source?.ref || (item.type === 'text' ? 'text' : null);
+      if (ref && item.name) {
+        extractedNames[ref] = item.name;
+      }
+    });
+    if (Object.keys(extractedNames).length > 0) {
+      setRenderTrackLabels(extractedNames);
     }
     const nextTransforms: Record<string, any> = {};
     const nextImageDurations: Record<string, string> = {};
@@ -4891,8 +4911,19 @@ export default function App() {
     if (Object.keys(nextImageDurations).length > 0) {
       setRenderImageDurations(prev => ({ ...prev, ...nextImageDurations }));
     }
-    if (renderConfigV2Override.timeline?.imageMatchDuration && typeof renderConfigV2Override.timeline.imageMatchDuration === 'object') {
-      setRenderImageMatchDuration(renderConfigV2Override.timeline.imageMatchDuration);
+    const extractedOverrideDurations: Record<string, boolean> = {};
+    (renderConfigV2Override.items ?? []).forEach(item => {
+      if (item.type === 'image' && item.source?.ref && item.timeline?.matchDuration) {
+        const refKey = item.source.ref;
+        const pathValue = refKey ? inputsMap[refKey] : undefined;
+        const fileId = pathValue ? (fileByPath.get(pathValue) as VaultFile | undefined)?.id : null;
+        if (fileId) {
+          extractedOverrideDurations[fileId] = true;
+        }
+      }
+    });
+    if (Object.keys(extractedOverrideDurations).length > 0) {
+      setRenderImageMatchDuration(extractedOverrideDurations);
     }
     if (firstVideoItem) {
       const transform = firstVideoItem.transform ?? {};
@@ -4931,13 +4962,9 @@ export default function App() {
           maskTop: maskTop !== undefined ? String(maskTop) : prev.video.maskTop,
           maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom,
           mirror: transform.mirror ?? prev.video.mirror,
+          targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs ?? '-14'),
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
           mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
-        },
-        audio: {
-          ...prev.audio,
-          gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.audio.gainDb),
-          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.audio.mute)
         }
       }));
       const videoBlurEffects = normalizeItemEffects(firstVideoItem.effects);
@@ -4963,6 +4990,7 @@ export default function App() {
         ...prev,
         audio: {
           ...prev.audio,
+          targetLufs: String(firstAudioItem.audioMix?.targetLufs ?? prev.audio.targetLufs ?? '-14'),
           gainDb: String(firstAudioItem.audioMix?.gainDb ?? prev.audio.gainDb),
           mute: Boolean(firstAudioItem.audioMix?.mute ?? prev.audio.mute)
         }

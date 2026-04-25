@@ -434,6 +434,23 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     const walk = (before: unknown, after: unknown, path: string) => {
       if (same(before, after)) return;
       if (Array.isArray(before) && Array.isArray(after)) {
+        if (path === 'items') {
+          const bItems = before as any[];
+          const aItems = after as any[];
+          const getRef = (i: any) => i?.source?.ref || (i?.type === 'text' ? 'text' : i?.type) || '';
+          const bRefs = bItems.map(getRef);
+          const aRefs = aItems.map(getRef);
+          const allRefs = Array.from(new Set([...bRefs, ...aRefs]));
+          
+          allRefs.forEach(ref => {
+            if (!ref) return;
+            const bItem = bItems.find(i => getRef(i) === ref);
+            const aItem = aItems.find(i => getRef(i) === ref);
+            walk(bItem, aItem, `${path}[${ref}]`);
+          });
+          return;
+        }
+
         const len = Math.max(before.length, after.length);
         for (let i = 0; i < len; i += 1) {
           walk(before[i], after[i], `${path}[${i}]`);
@@ -476,21 +493,29 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     }
   };
   const getTemplateDiffTrackLabel = React.useCallback((path: string) => {
-    const match = path.match(/^items\[(\d+)\](?:\.|$)/);
+    const match = path.match(/^items\[([^\]]+)\](?:\.|$)/);
     if (!match) return '--';
-    const index = Number(match[1]);
-    if (!Number.isFinite(index) || index < 0) return '--';
-    const currentItem = renderTemplateDiffCurrentConfig?.items?.[index];
-    const baselineItem = renderTemplateDiffBaselineConfig?.items?.[index];
-    const item = currentItem ?? baselineItem;
-    if (!item) return `items[${index}]`;
-    const ref = typeof item.source?.ref === 'string' ? item.source.ref.trim() : '';
-    const key = ref || (item.type === 'text' ? 'text' : item.type);
-    const label = key ? (renderTrackLabels?.[key] ?? '').trim() || key : `items[${index}]`;
+    const keyOrIndex = match[1];
+
+    if (/^\d+$/.test(keyOrIndex)) {
+      const index = Number(keyOrIndex);
+      const currentItem = renderTemplateDiffCurrentConfig?.items?.[index];
+      const baselineItem = renderTemplateDiffBaselineConfig?.items?.[index];
+      const item = currentItem ?? baselineItem;
+      if (!item) return `items[${index}]`;
+      const ref = typeof item.source?.ref === 'string' ? item.source.ref.trim() : '';
+      const key = ref || (item.type === 'text' ? 'text' : item.type);
+      const label = key ? (renderTrackLabels?.[key] ?? '').trim() || key : `items[${index}]`;
+      return label;
+    }
+
+    const key = keyOrIndex;
+    const label = key ? (renderTrackLabels?.[key] ?? '').trim() || key : `items[${key}]`;
     return label;
   }, [renderTemplateDiffCurrentConfig, renderTemplateDiffBaselineConfig, renderTrackLabels]);
   const activeInspectorSection = selectedTrackKey
     ? (selectedTrackKey.startsWith('image:') ? 'image'
+      : selectedTrackKey.startsWith('audio:') ? 'audio'
       : (selectedTrackKey as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text'))
     : 'timeline';
 
@@ -1560,9 +1585,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     slotType != null
                                       ? projectMediaFilesByKind[slotType]
                                       : projectMediaFilesByKind.all;
-                                  const saved =
-                                    (selectedTemplate.config.timeline?.trackLabels?.[refKey] ?? '').trim();
-                                  const displayName = saved || refKey;
+                                  const dirtyLabel = (renderTrackLabels?.[refKey] ?? '').trim();
+                                  const displayName = dirtyLabel || refKey;
                                   const selectedId = renderTemplateApplyMap?.[refKey] ?? '';
                                   const selectedFile = files.find(f => f.id === selectedId);
                                   const icon =
