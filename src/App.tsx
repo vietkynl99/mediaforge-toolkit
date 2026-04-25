@@ -1,11 +1,6 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  LayoutDashboard, 
-  Hammer, 
-  Database, 
-  Settings, 
-  Terminal, 
   Play, 
   Pause, 
   CheckCircle2, 
@@ -15,9 +10,6 @@ import {
   Download,
   Trash2,
   RefreshCw,
-  Cpu,
-  Activity,
-  HardDrive,
   Plus,
   FileVideo,
   FileAudio,
@@ -28,204 +20,88 @@ import {
   FolderOpen,
   Languages,
   Scissors,
-  Search,
   Filter,
   Upload,
   MousePointer2,
-  Menu,
   Save,
-  LogOut,
-  X
 } from 'lucide-react';
-import { TASK_ICONS, MediaJob, JobStatus } from './types';
+import { MediaJob } from './types';
+import { AppHeader } from './components/AppHeader';
+import { JobsFeature, type JobsHandle } from './features/jobs/JobsFeature';
+import { ConfirmModal } from './components/ConfirmModal';
+import {
+  RENDER_BLUR_FEATHER_MAX,
+  RENDER_PREVIEW_BLACK_DATA_URL,
+  RENDER_STUDIO_PATH,
+  RENDER_TIMELINE_VIEW_PAD,
+  TAB_PATH_MAP
+} from './constants';
+import { formatLocalDateTime } from './utils/format';
+import { coerceNumber, isCleanFontName, isRenderV2DebugEnabled, parseResolution } from './utils/helpers';
+import {
+  computePlaceholderKeyByFileId,
+  normalizeItemEffects,
+  normalizeLoadedRenderEffects,
+  RENDER_TEXT_PARAM_FIELDS
+} from './utils/vault';
+import { summarizeRenderConfigForDebug } from './features/render-studio/utils/config-builder';
+import { BASE_SUBTITLE_STYLE, DEFAULT_RENDER_SUBTITLE_ASS, SUBTITLE_STYLE_PRESETS, VIET_SUBTITLE_FONTS } from './types';
+import type {
+  AuthUser,
+  RenderBlurRegionEffect,
+  RenderConfigV2,
+  RenderSubtitleAssState,
+  RenderTemplate,
+  SubtitleStylePreset
+} from './types';
+import {
+  VAULT_FOLDERS,
+  PIPELINE_LIBRARY,
+  formatBytes,
+  truncateLabel,
+  formatRelativeTime,
+  formatDuration,
+  formatDurationFine,
+  sanitizeCueText,
+  parseSubtitleCues,
+  toEdgeTtsPitch,
+  fromEdgeTtsPitch,
+  fromEdgeTtsRate,
+  parseDurationToSeconds,
+  guessLanguage,
+  guessVersion,
+  computeFolderStatus,
+  formatOverlapDisplay,
+  canBrowserPlayVideo,
+  getVideoMimeType
+} from './features/app/appData';
+import type {
+  VaultFileType,
+  VaultStatus,
+  VaultFile,
+  VaultFolder,
+  PipelineSummary,
+  VaultFileDTO,
+  VaultFolderDTO
+} from './features/app/appData';
 
-// --- Components ---
-
-const SidebarItem = ({ icon: Icon, label, active, onClick, collapsed }: { icon: any, label: string, active?: boolean, onClick: () => void, collapsed?: boolean }) => (
-  <button 
-    onClick={onClick}
-    className={`flex items-center w-full ${collapsed ? 'justify-center px-2' : 'gap-3 px-4'} py-3 transition-colors rounded-lg group ${
-      active ? 'bg-lime-500/10 text-lime-400' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
-    }`}
-  >
-    <Icon size={20} className={active ? 'text-lime-400' : 'group-hover:text-zinc-100'} />
-    {!collapsed && <span className="text-sm font-medium">{label}</span>}
-  </button>
+const LazyPipelineForge = lazy(() =>
+  import('./features/pipeline/PipelineForge').then(module => ({ default: module.PipelineForge }))
+);
+const LazyVaultPanel = lazy(() =>
+  import('./features/vault/VaultPanel').then(module => ({ default: module.VaultPanel }))
+);
+const LazyAppSidebar = lazy(() =>
+  import('./components/AppSidebar').then(module => ({ default: module.AppSidebar }))
+);
+const LazyAuthScreen = lazy(() =>
+  import('./features/auth/AuthScreen').then(module => ({ default: module.AuthScreen }))
+);
+const LazyAppOverlays = lazy(() =>
+  import('./features/app/AppOverlays').then(module => ({ default: module.AppOverlays }))
 );
 
-const formatDurationMs = (ms: number) => {
-  if (!Number.isFinite(ms) || ms < 0) return '--';
-  const totalSeconds = Math.round(ms / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${hours}h ${String(minutes).padStart(2, '0')}m ${String(seconds).padStart(2, '0')}s`;
-  }
-  return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
-};
-
-  const formatLocalDateTime = (value?: string) => {
-    if (!value) return '--';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '--';
-  return new Intl.DateTimeFormat('vi-VN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false
-  }).format(date);
-};
-
-const coerceNumber = (value: string | number | null | undefined, fallback?: number) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) return numeric;
-  }
-  return fallback;
-};
-
-const parseResolution = (value: string | null | undefined, fallback = { w: 1920, h: 1080 }) => {
-  if (!value) return fallback;
-  const match = String(value).trim().match(/(\d+)\s*[x×]\s*(\d+)/i);
-  if (!match) return fallback;
-  const w = Number(match[1]);
-  const h = Number(match[2]);
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return fallback;
-  return { w: Math.round(w), h: Math.round(h) };
-};
-
-/** Render Studio / pipeline: blur region as inset % from each edge (like CSS top/right/bottom/left). */
-type RenderBlurRegionEffect = {
-  type: 'blur_region';
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-  sigma: number;
-  /** 0 = hard edge; 1–10 softer transition toward full blur at center. */
-  feather: number;
-};
-
-const num = (v: unknown, fb: number) => coerceNumber(v as string | number | null | undefined, fb) ?? fb;
-
-/** Same ref keys as `buildRenderConfigV2` inputsMap (video, audio, subtitle, image, image2, …). */
-const computePlaceholderKeyByFileId = (
-  files: Array<{ id: string; type: string }>,
-  renderInputFileIds: string[]
-): Record<string, string> => {
-  const selected = files.filter(file => renderInputFileIds.includes(file.id));
-  const counts: Record<'video' | 'audio' | 'subtitle' | 'image', number> = {
-    video: 0,
-    audio: 0,
-    subtitle: 0,
-    image: 0
-  };
-  const fileIdToKey: Record<string, string> = {};
-  selected.forEach(file => {
-    if (file.type !== 'video' && file.type !== 'audio' && file.type !== 'subtitle' && file.type !== 'image') return;
-    const t = file.type as 'video' | 'audio' | 'subtitle' | 'image';
-    counts[t] += 1;
-    const key = counts[t] === 1 ? file.type : `${file.type}${counts[t]}`;
-    fileIdToKey[file.id] = key;
-  });
-  return fileIdToKey;
-};
-
-type RenderSubtitleAssState = {
-  fontName: string;
-  fontSize: string;
-  primaryColor: string;
-  outlineColor: string;
-  opacity: string;
-  textOpacity: string;
-  bold: string;
-  italic: string;
-  spacing: string;
-  outline: string;
-  shadow: string;
-  alignment: string;
-  marginL: string;
-  marginR: string;
-  marginV: string;
-  wrapStyle: string;
-  positionMode: string;
-  positionX: string;
-  positionY: string;
-  textAutoMoveEnabled?: string;
-  textAutoMoveInterval?: string;
-  textAutoMovePositions?: string;
-  singleText?: string;
-  singleTextStart?: string;
-  singleTextEnd?: string;
-  singleTextMatchDuration?: string;
-};
-
-type RenderConfigV2 = {
-  version: '2';
-  timeline: {
-    levelControl?: 'gain' | 'lufs';
-    targetLufs?: number;
-    resolution: string;
-    framerate: number;
-    start?: number;
-    duration?: number;
-    backgroundColor?: string;
-    /** Display names keyed by placeholder ref (inputsMap keys) plus `text` for the text overlay track. */
-    trackLabels?: Record<string, string>;
-    imageMatchDuration?: boolean | Record<string, boolean>;
-  };
-  inputsMap: Record<string, string>;
-  items: Array<{
-    id: string;
-    type: 'video' | 'audio' | 'image' | 'subtitle' | 'text';
-    source: { ref?: string; path?: string };
-    timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number };
-    layer?: number;
-    mask?: { type: 'rect' | 'circle'; x: number; y: number; w: number; h: number };
-    text?: { value: string; start?: number; end?: number; matchDuration?: string };
-    transform?: {
-      x?: number;
-      y?: number;
-      scale?: number;
-      rotation?: number;
-      opacity?: number;
-      fit?: 'contain' | 'cover' | 'stretch';
-      crop?: { x: number; y: number; w: number; h: number };
-      mirror?: 'none' | 'horizontal' | 'vertical' | 'both';
-    };
-    audioMix?: {
-      levelControl?: 'gain' | 'lufs';
-      targetLufs?: number;
-      gainDb?: number;
-      mute?: boolean;
-      fadeIn?: number;
-      fadeOut?: number;
-      delay?: number;
-      group?: string;
-    };
-    subtitleStyle?: Record<string, unknown>;
-    effects?: Array<{ type: string; params?: Record<string, unknown> }>;
-  }>;
-  effects?: Array<{ type: string; params?: Record<string, unknown> }>;
-};
-
-type RenderTemplate = {
-  id: string;
-  name: string;
-  updatedAt: string;
-  config: RenderConfigV2;
-};
-
-type AuthUser = {
-  id: number | null;
-  username: string;
-  createdAt: string;
-};
+// --- Components ---
 
 type TaskTemplate = {
   id: string;
@@ -248,220 +124,8 @@ type NewJobPopupDraft = {
   renderTemplateApplyMapById?: Record<string, Record<string, string>>;
 };
 
-const isRenderV2DebugEnabled = () => {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem('renderV2Debug') === '1';
-  } catch {
-    return false;
-  }
-};
-
-const summarizeRenderConfigForDebug = (config: RenderConfigV2 | null | undefined) => {
-  if (!config) return null;
-  const summary: Record<string, unknown> = {
-    timeline: {
-      start: config.timeline?.start ?? 0,
-      duration: config.timeline?.duration ?? null,
-      framerate: config.timeline?.framerate ?? null,
-      resolution: config.timeline?.resolution ?? null
-    },
-    items: Array.isArray(config.items)
-      ? config.items.map(item => ({
-        id: item.id,
-        type: item.type,
-        timeline: item.timeline ?? null,
-        text: item.type === 'text'
-          ? {
-            start: item.text?.start ?? null,
-            end: item.text?.end ?? null,
-            matchDuration: item.text?.matchDuration ?? null
-          }
-          : undefined
-      }))
-      : []
-  };
-  return summary;
-};
-
-/** ASS / libass V4+ style fields used for temp .ass burn (see server/subtitleAss.ts). */
-const DEFAULT_RENDER_SUBTITLE_ASS: RenderSubtitleAssState = {
-  fontName: 'Arial',
-  fontSize: '48',
-  primaryColor: '#ffffff',
-  outlineColor: '#000000',
-  opacity: '100',
-  textOpacity: '100',
-  bold: '0',
-  italic: '0',
-  spacing: '0',
-  outline: '2',
-  shadow: '2',
-  alignment: '2',
-  marginL: '30',
-  marginR: '30',
-  marginV: '36',
-  wrapStyle: '0',
-  positionMode: 'anchor',
-  positionX: '50',
-  positionY: '50',
-  textAutoMoveEnabled: '0',
-  textAutoMoveInterval: '0',
-  textAutoMovePositions: '',
-  singleText: '',
-  singleTextStart: '0',
-  singleTextEnd: '',
-  singleTextMatchDuration: '0'
-};
-
-const BASE_SUBTITLE_STYLE: RenderSubtitleAssState = {
-  fontName: DEFAULT_RENDER_SUBTITLE_ASS.fontName,
-  fontSize: DEFAULT_RENDER_SUBTITLE_ASS.fontSize,
-  primaryColor: DEFAULT_RENDER_SUBTITLE_ASS.primaryColor,
-  outlineColor: DEFAULT_RENDER_SUBTITLE_ASS.outlineColor,
-  opacity: DEFAULT_RENDER_SUBTITLE_ASS.opacity,
-  textOpacity: DEFAULT_RENDER_SUBTITLE_ASS.textOpacity,
-  bold: DEFAULT_RENDER_SUBTITLE_ASS.bold,
-  italic: DEFAULT_RENDER_SUBTITLE_ASS.italic,
-  spacing: DEFAULT_RENDER_SUBTITLE_ASS.spacing,
-  outline: DEFAULT_RENDER_SUBTITLE_ASS.outline,
-  shadow: DEFAULT_RENDER_SUBTITLE_ASS.shadow,
-  alignment: DEFAULT_RENDER_SUBTITLE_ASS.alignment,
-  marginL: DEFAULT_RENDER_SUBTITLE_ASS.marginL,
-  marginR: DEFAULT_RENDER_SUBTITLE_ASS.marginR,
-  marginV: DEFAULT_RENDER_SUBTITLE_ASS.marginV,
-  wrapStyle: DEFAULT_RENDER_SUBTITLE_ASS.wrapStyle,
-  positionMode: DEFAULT_RENDER_SUBTITLE_ASS.positionMode,
-  positionX: DEFAULT_RENDER_SUBTITLE_ASS.positionX,
-  positionY: DEFAULT_RENDER_SUBTITLE_ASS.positionY,
-  textAutoMoveEnabled: DEFAULT_RENDER_SUBTITLE_ASS.textAutoMoveEnabled,
-  textAutoMoveInterval: DEFAULT_RENDER_SUBTITLE_ASS.textAutoMoveInterval,
-  textAutoMovePositions: DEFAULT_RENDER_SUBTITLE_ASS.textAutoMovePositions
-};
-
-const RENDER_TEXT_PARAM_FIELDS = new Set([
-  'singleText',
-  'singleTextStart',
-  'singleTextEnd',
-  'singleTextMatchDuration',
-  'textOpacity',
-  'textAutoMoveEnabled',
-  'textAutoMoveInterval',
-  'textAutoMovePositions'
-]);
-
-type SubtitleStylePreset = {
-  id: string;
-  label: string;
-  style: Partial<RenderSubtitleAssState>;
-};
-
-const SUBTITLE_STYLE_PRESETS: SubtitleStylePreset[] = [
-  {
-    id: 'default',
-    label: 'Default',
-    style: { ...BASE_SUBTITLE_STYLE }
-  },
-  {
-    id: 'bold-white',
-    label: 'Bold',
-    style: { ...BASE_SUBTITLE_STYLE, bold: '1', outline: '3', shadow: '3' }
-  },
-  {
-    id: 'yellow',
-    label: 'Yellow',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ffd400' }
-  },
-  {
-    id: 'cyan',
-    label: 'Cyan',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#56d7ff' }
-  },
-  {
-    id: 'pink',
-    label: 'Pink',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6ad5' }
-  },
-  {
-    id: 'green',
-    label: 'Green',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#9dff57' }
-  },
-  {
-    id: 'red',
-    label: 'Red',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff6b6b' }
-  },
-  {
-    id: 'orange',
-    label: 'Orange',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#ff9f1c' }
-  },
-  {
-    id: 'blue',
-    label: 'Blue',
-    style: { ...BASE_SUBTITLE_STYLE, primaryColor: '#4dabff' }
-  },
-  {
-    id: 'dark-box',
-    label: 'Dark Box',
-    style: {
-      ...BASE_SUBTITLE_STYLE,
-      outline: '0',
-      shadow: '0'
-    }
-  },
-  {
-    id: 'light-box',
-    label: 'Light Box',
-    style: {
-      ...BASE_SUBTITLE_STYLE,
-      primaryColor: '#111111',
-      outlineColor: '#ffffff',
-      outline: '0',
-      shadow: '0'
-    }
-  },
-  {
-    id: 'outline-only',
-    label: 'Outline',
-    style: {
-      ...BASE_SUBTITLE_STYLE,
-      outline: '4',
-      shadow: '0'
-    }
-  }
-];
-
 const SHOW_PARAM_PRESETS = false;
 const NEW_JOB_POPUP_DRAFT_STORAGE_KEY = 'mediaforge.newJobPopupDraft.v1';
-
-const VIET_SUBTITLE_FONTS = [
-  'Be Vietnam Pro',
-  'Noto Sans',
-  'Noto Sans Display',
-  'Roboto',
-  'Inter',
-  'Montserrat',
-  'Lato',
-  'Open Sans',
-  'Source Sans 3',
-  'Poppins',
-  'Merriweather',
-  'Playfair Display',
-  'Times New Roman',
-  'Arial',
-  'Tahoma',
-  'Verdana'
-];
-
-const isCleanFontName = (value: string) => {
-  if (!value) return false;
-  if (/\\u[0-9a-fA-F]{4}/.test(value)) return false;
-  if (value.includes('�')) return false;
-  if (/[\p{C}]/u.test(value)) return false;
-  return true;
-};
 
 const buildSubtitlePreviewStyle = (preset: SubtitleStylePreset) => {
   const merged = { ...BASE_SUBTITLE_STYLE, ...preset.style };
@@ -490,653 +154,11 @@ const buildSubtitlePreviewStyle = (preset: SubtitleStylePreset) => {
   } as React.CSSProperties;
 };
 
-const migrateLegacySubtitleFields = (r: Record<string, unknown>): Partial<RenderSubtitleAssState> => {
-  const out: Partial<Record<string, string>> = {};
-  if (r.fontName === undefined && r.fontFamily != null && String(r.fontFamily).trim() !== '') {
-    out.fontName = String(r.fontFamily);
-  }
-  if (r.primaryColor === undefined && r.color != null) out.primaryColor = String(r.color);
-  if (r.outline === undefined && r.outlineWidth != null) out.outline = String(r.outlineWidth);
-  if ((r.marginL === undefined || r.marginR === undefined) && r.maxWidth != null) {
-    const mw = coerceNumber(r.maxWidth as string | number, 90) ?? 90;
-    const side = Math.round(((100 - Math.min(100, Math.max(0, mw))) / 200) * 1920);
-    if (r.marginL === undefined) out.marginL = String(Math.max(0, side));
-    if (r.marginR === undefined) out.marginR = String(Math.max(0, side));
-  }
-  if (r.marginV === undefined && r.safeArea != null) {
-    const sa = coerceNumber(r.safeArea as string | number, 5) ?? 5;
-    out.marginV = String(Math.max(0, Math.round((Math.min(100, Math.max(0, sa)) / 100) * 1080)));
-  }
-  if (r.alignment === undefined && r.position != null) {
-    const p = String(r.position);
-    if (p === 'top') out.alignment = '8';
-    else if (p === 'custom') out.alignment = '5';
-    else out.alignment = '2';
-  }
-  return out as Partial<RenderSubtitleAssState>;
-};
-
-const normalizeLoadedSubtitleState = (raw: unknown): RenderSubtitleAssState => {
-  const base: RenderSubtitleAssState = { ...DEFAULT_RENDER_SUBTITLE_ASS };
-  if (!raw || typeof raw !== 'object') return base;
-  const r = raw as Record<string, unknown>;
-  const leg = migrateLegacySubtitleFields(r);
-  const next = { ...base, ...leg };
-  (Object.keys(base) as (keyof RenderSubtitleAssState)[]).forEach(k => {
-    if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== '') {
-      (next as Record<string, string>)[k] = String(r[k]);
-    }
-  });
-  return next;
-};
-
-const normalizeLoadedRenderEffects = (raw: unknown): RenderBlurRegionEffect[] | undefined => {
-  if (!Array.isArray(raw)) return undefined;
-  const out: RenderBlurRegionEffect[] = [];
-  raw.forEach(item => {
-    if (!item || typeof item !== 'object') return;
-    const o = item as Record<string, unknown>;
-    if (o.type !== 'blur_region') return;
-    const sigma = Math.min(80, Math.max(0.5, num(o.sigma, 15)));
-    const feather = Math.min(RENDER_BLUR_FEATHER_MAX, Math.max(0, num(o.feather, 0)));
-
-    let left: number;
-    let right: number;
-    let top: number;
-    let bottom: number;
-    if (
-      o.left !== undefined ||
-      o.right !== undefined ||
-      o.top !== undefined ||
-      o.bottom !== undefined
-    ) {
-      left = Math.min(100, Math.max(0, num(o.left, 0)));
-      right = Math.min(100, Math.max(0, num(o.right, 0)));
-      top = Math.min(100, Math.max(0, num(o.top, 0)));
-      bottom = Math.min(100, Math.max(0, num(o.bottom, 0)));
-    } else {
-      const x = Math.min(100, Math.max(0, num(o.x, 0)));
-      const y = Math.min(100, Math.max(0, num(o.y, 0)));
-      const w = Math.min(100, Math.max(0, num(o.w, 0)));
-      const h = Math.min(100, Math.max(0, num(o.h, 0)));
-      if (w <= 0 || h <= 0) return;
-      left = x;
-      top = y;
-      right = Math.min(100, Math.max(0, 100 - x - w));
-      bottom = Math.min(100, Math.max(0, 100 - y - h));
-    }
-
-    if (left + right >= 100 || top + bottom >= 100) return;
-    out.push({ type: 'blur_region', left, right, top, bottom, sigma, feather });
-  });
-  return out;
-};
-
-const normalizeItemEffects = (effects: Array<{ type: string; params?: Record<string, unknown> }> | undefined) => {
-  if (!Array.isArray(effects) || effects.length === 0) return undefined;
-  const flattened = effects.map(effect => ({
-    type: effect.type,
-    ...(effect.params ?? {})
-  }));
-  return normalizeLoadedRenderEffects(flattened);
-};
-
-const StatusBadge = ({ status }: { status: JobStatus }) => {
-  const configs = {
-    queued: { icon: Clock, color: 'text-zinc-400 bg-zinc-400/10', label: 'Queued' },
-    processing: { icon: RefreshCw, color: 'text-blue-400 bg-blue-400/10', label: 'Processing' },
-    awaiting_input: { icon: AlertCircle, color: 'text-amber-400 bg-amber-400/10', label: 'Awaiting Review' },
-    completed: { icon: CheckCircle2, color: 'text-lime-400 bg-lime-400/10', label: 'Completed' },
-    failed: { icon: AlertCircle, color: 'text-red-400 bg-red-400/10', label: 'Failed' },
-    cancelled: { icon: Pause, color: 'text-zinc-400 bg-zinc-400/10', label: 'Cancelled' },
-  };
-  const config = configs[status];
-  const Icon = config.icon;
-
-  return (
-    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
-      <Icon size={12} className={status === 'processing' ? 'animate-spin-soft' : ''} />
-      {config.label}
-    </div>
-  );
-};
-
-type JobRowProps = {
-  job: MediaJob;
-  index: number;
-  onContextMenu: (event: React.MouseEvent<HTMLDivElement>, job: MediaJob) => void;
-  nowMs: number;
-  hasServerNow: boolean;
-};
-
-function JobRow({ job, index, onContextMenu, nowMs, hasServerNow }: JobRowProps) {
-  const elapsedMs = (() => {
-    if (job.startedAt) {
-      const start = new Date(job.startedAt).getTime();
-      const end = job.finishedAt ? new Date(job.finishedAt).getTime() : nowMs;
-      if (!job.finishedAt && !hasServerNow) return null;
-      if (Number.isFinite(start) && Number.isFinite(end)) {
-        return Math.max(0, end - start);
-      }
-    }
-    return job.durationMs ?? null;
-  })();
-  return (
-  <motion.div 
-    initial={{ opacity: 0, y: 10 }}
-    animate={{ opacity: 1, y: 0 }}
-    className="grid grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] items-center gap-4 p-4 border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors group"
-    onContextMenu={(event) => onContextMenu(event, job)}
-  >
-    <div className="text-xs text-zinc-600 font-mono text-right pr-0.5">
-      {index}
-    </div>
-
-    <div className="text-xs text-zinc-500">
-      {formatLocalDateTime(job.createdAt)}
-    </div>
-
-    <div className="flex min-w-0 flex-col gap-1 overflow-hidden">
-      <div className="flex items-center gap-2">
-        <span className="font-semibold text-zinc-100 truncate">
-          {job.projectName || 'Unknown Project'}
-        </span>
-      </div>
-      <span className="text-xs text-zinc-500 truncate">
-        {job.fileName} • {job.fileSize}
-      </span>
-    </div>
-
-    <div className="flex w-[130px] flex-col gap-1 shrink-0">
-      <div className="text-[11px] text-zinc-300 font-semibold truncate">
-        {job.name}
-      </div>
-      <div className="flex items-center gap-0.5">
-        {job.tasks.map((task, i) => {
-          const Icon = TASK_ICONS[task.type] ?? File;
-          const statusLabel = {
-            pending: 'Pending',
-            active: 'Active',
-            done: 'Done',
-            error: 'Error'
-          }[task.status] ?? task.status;
-          return (
-            <React.Fragment key={task.id}>
-              <div 
-                title={`${task.name} • ${statusLabel} • ${task.status === 'error' ? 100 : Math.round(task.progress ?? 0)}%`}
-                className={`p-1.5 rounded-md relative ${
-                  task.status === 'done' ? 'bg-lime-500/20 text-lime-400' : 
-                  task.status === 'active' ? 'bg-blue-500/20 text-blue-400 animate-pulse' : 
-                  'bg-zinc-800 text-zinc-600'
-                }`}
-              >
-                <Icon size={14} />
-                {task.status === 'active' && typeof task.progress === 'number' && task.progress > 0 && (
-                  <span className="absolute -bottom-1 -right-1 text-[8px] font-bold text-blue-200">
-                    {Math.round(task.progress)}%
-                  </span>
-                )}
-                {task.status === 'error' && (
-                  <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-red-500 text-[9px] leading-3 text-white flex items-center justify-center">✕</span>
-                )}
-              </div>
-              {i < job.tasks.length - 1 && <ChevronRight size={12} className="text-zinc-700 -mx-0.5" />}
-            </React.Fragment>
-          );
-        })}
-      </div>
-    </div>
-
-    <div className="flex flex-col gap-1.5">
-      <div className="flex justify-between text-[10px] font-mono text-zinc-400">
-        <span>{job.progress}%</span>
-        <span>{job.eta || '--'}</span>
-      </div>
-      <div className="h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
-        <motion.div 
-          initial={{ width: 0 }}
-          animate={{ width: `${job.progress}%` }}
-          className={`h-full ${
-            job.status === 'failed' ? 'bg-red-500' : job.status === 'cancelled' ? 'bg-zinc-500' : 'bg-lime-500'
-          }`}
-        />
-      </div>
-    </div>
-
-    <div className="flex w-[100px] justify-start shrink-0">
-      <StatusBadge status={job.status} />
-    </div>
-
-    <div className="text-xs text-zinc-500 text-right -ml-2">
-      {elapsedMs !== null ? formatDurationMs(elapsedMs) : '--'}
-    </div>
-  </motion.div>
-  );
-}
-
-// --- Media Vault Mock Data ---
-
-type VaultFileType = 'video' | 'audio' | 'subtitle' | 'image' | 'output' | 'other';
-type VaultStatus = 'raw' | 'partial' | 'complete' | 'error' | 'processing';
-
-interface VaultFile {
-  id: string;
-  name: string;
-  type: VaultFileType;
-  size: string;
-  sizeBytes?: number;
-  relativePath?: string;
-  duration?: string;
-  durationSeconds?: number;
-  language?: string;
-  linkedTo?: string;
-  linkedToPath?: string;
-  status?: VaultStatus;
-  origin?: 'source' | 'vr' | 'tts';
-  progress?: number;
-  version?: string;
-  uvr?: {
-    processedAt: string;
-    backend?: string;
-    model?: string;
-    outputFormat?: string;
-    outputs?: string[];
-    role?: 'source' | 'output';
-    sourceRelativePath?: string;
-  };
-  tts?: {
-    processedAt: string;
-    voice?: string;
-    rate?: number;
-    pitch?: number;
-    volume?: number;
-    overlapSeconds?: number;
-    overlapMode?: 'overlap' | 'truncate';
-    removeLineBreaks?: boolean;
-    outputSignature?: string;
-    outputDetails?: Record<string, {
-      processedAt?: string;
-      voice?: string;
-      rate?: number;
-      pitch?: number;
-      volume?: number;
-      overlapSeconds?: number;
-      overlapMode?: 'overlap' | 'truncate';
-      removeLineBreaks?: boolean;
-      outputSignature?: string;
-    }>;
-    outputs?: string[];
-    role?: 'source' | 'output';
-    sourceRelativePath?: string;
-  };
-  createdAt: string;
-}
-
-interface VaultFolder {
-  id: string;
-  name: string;
-  status: VaultStatus;
-  lastActivity: string;
-  tags: string[];
-  files: VaultFile[];
-  suggestedAction?: string;
-}
-
-const VAULT_FOLDERS: VaultFolder[] = [];
-
-type PipelineSummary = {
-  id: string;
-  name: string;
-  steps: number;
-  updatedAt: string;
-  kind: 'saved' | 'task';
-  primaryType?: string | null;
-};
-
-const PIPELINE_LIBRARY: PipelineSummary[] = [];
-
-type VaultFileDTO = {
-  name: string;
-  relativePath: string;
-  sizeBytes: number;
-  modifiedAt: string;
-  type: VaultFileType;
-  extension: string;
-  durationSeconds?: number;
-  linkedTo?: string;
-  uvr?: {
-    processedAt: string;
-    backend?: string;
-    model?: string;
-    outputFormat?: string;
-    outputs?: string[];
-    role?: 'source' | 'output';
-    sourceRelativePath?: string;
-  };
-  tts?: {
-    processedAt: string;
-    voice?: string;
-    rate?: number;
-    pitch?: number;
-    volume?: number;
-    overlapSeconds?: number;
-    overlapMode?: 'overlap' | 'truncate';
-    removeLineBreaks?: boolean;
-    outputSignature?: string;
-    outputDetails?: Record<string, {
-      processedAt?: string;
-      voice?: string;
-      rate?: number;
-      pitch?: number;
-      volume?: number;
-      overlapSeconds?: number;
-      overlapMode?: 'overlap' | 'truncate';
-      removeLineBreaks?: boolean;
-      outputSignature?: string;
-    }>;
-    outputs?: string[];
-    role?: 'source' | 'output';
-    sourceRelativePath?: string;
-  };
-};
-
-type VaultFolderDTO = {
-  name: string;
-  path: string;
-  files: VaultFileDTO[];
-};
-
-const formatBytes = (bytes: number) => {
-  if (!bytes || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / Math.pow(1024, index);
-  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
-};
-
-const truncateLabel = (value: string, max = 48) => {
-  if (value.length <= max) return value;
-  return `${value.slice(0, Math.max(0, max - 3))}...`;
-};
-
-const formatRelativeTime = (iso: string) => {
-  const time = new Date(iso).getTime();
-  const diff = Date.now() - time;
-  if (Number.isNaN(diff)) return iso;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hours ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} days ago`;
-  return new Date(iso).toLocaleDateString();
-};
-
-const formatDuration = (seconds?: number) => {
-  if (!seconds || seconds <= 0) return undefined;
-  const total = Math.floor(seconds);
-  const hrs = Math.floor(total / 3600);
-  const mins = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  if (hrs > 0) return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  return `${mins}:${String(secs).padStart(2, '0')}`;
-};
-
-const formatDurationFine = (seconds?: number) => {
-  if (seconds === undefined || seconds === null || seconds < 0) return '00:00.00';
-  const total = Math.floor(seconds);
-  const hrs = Math.floor(total / 3600);
-  const mins = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  const hundredths = Math.floor(((seconds - Math.floor(seconds)) + 1e-6) * 100);
-  const base = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}`;
-  if (hrs > 0) return `${hrs}:${base}`;
-  return base;
-};
-
-const sanitizeCueText = (value: string, removeLineBreaks: boolean) => {
-  let cleaned = value
-    .replace(/\{[^}]*\}/g, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\\[Nn]/g, removeLineBreaks ? ' ' : '\n');
-  if (removeLineBreaks) {
-    cleaned = cleaned.replace(/\s+/g, ' ');
-  } else {
-    cleaned = cleaned
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\n{2,}/g, '\n');
-  }
-  return cleaned.trim();
-};
-
-const parseSrtTimestamp = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parts = trimmed.split(':');
-  if (parts.length < 2 || parts.length > 3) return null;
-  const secondsPart = parts[parts.length - 1];
-  const minutePart = parts[parts.length - 2];
-  const hourPart = parts.length === 3 ? parts[0] : '0';
-  const secMatch = secondsPart.match(/^(\d{1,2})(?:[.,](\d{1,3}))?$/);
-  if (!secMatch) return null;
-  const hours = Number(hourPart);
-  const minutes = Number(minutePart);
-  const seconds = Number(secMatch[1]);
-  const millis = secMatch[2] ? Number(secMatch[2].padEnd(3, '0')) : 0;
-  if ([hours, minutes, seconds, millis].some(part => Number.isNaN(part))) return null;
-  return hours * 3600 + minutes * 60 + seconds + millis / 1000;
-};
-
-const parseSrtVttCues = (content: string, removeLineBreaks: boolean) => {
-  const lines = content.split(/\r?\n/);
-  const cues: Array<{ start: number; end: number; text: string }> = [];
-  let currentStart: number | null = null;
-  let currentEnd: number | null = null;
-  let textLines: string[] = [];
-
-  const flush = () => {
-    if (currentStart === null || currentEnd === null) return;
-    const text = sanitizeCueText(textLines.join(removeLineBreaks ? ' ' : '\n'), removeLineBreaks);
-    if (text) {
-      cues.push({ start: currentStart, end: currentEnd, text });
-    }
-    currentStart = null;
-    currentEnd = null;
-    textLines = [];
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) {
-      continue;
-    }
-    if (line.startsWith('WEBVTT')) continue;
-    if (line.startsWith('NOTE')) continue;
-    if (/^\d+$/.test(line)) {
-      continue;
-    }
-    if (line.includes('-->')) {
-      flush();
-      const [rawStart, rawEnd] = line.split('-->').map(part => part.trim().split(/\s+/)[0]);
-      const start = parseSrtTimestamp(rawStart);
-      const end = parseSrtTimestamp(rawEnd);
-      if (start === null || end === null) {
-        currentStart = null;
-        currentEnd = null;
-        textLines = [];
-        continue;
-      }
-      if (end <= start) {
-        currentStart = end;
-        currentEnd = start;
-      } else {
-        currentStart = start;
-        currentEnd = end;
-      }
-      continue;
-    }
-    if (currentStart !== null && currentEnd !== null) {
-      textLines.push(line);
-    }
-  }
-
-  flush();
-  return cues;
-};
-
-const parseSubtitleCues = (content: string) => parseSrtVttCues(content, true);
-
-const formatDurationVerbose = (seconds?: number) => {
-  if (seconds === undefined || seconds === null || seconds <= 0) return '0s';
-  const hrs = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-  const parts: string[] = [];
-  if (hrs > 0) parts.push(`${hrs}h`);
-  if (mins > 0 || hrs > 0) parts.push(`${mins}m`);
-  parts.push(`${secs.toFixed(1)}s`);
-  return parts.join('');
-};
-
-const formatOverlapDisplay = (overlapSeconds?: number, totalSeconds?: number) => {
-  if (overlapSeconds === undefined || overlapSeconds === null) return undefined;
-  const timeText = formatDurationVerbose(overlapSeconds);
-  if (!totalSeconds || totalSeconds <= 0) return timeText;
-  const percent = Math.min(100, Math.max(0, (overlapSeconds / totalSeconds) * 100));
-  return `${timeText} (${percent.toFixed(1)}%)`;
-};
-
-const getVideoMimeType = (name?: string) => {
-  if (!name) return 'video/mp4';
-  const ext = name.toLowerCase().slice(name.lastIndexOf('.'));
-  const map: Record<string, string> = {
-    '.mp4': 'video/mp4',
-    '.mov': 'video/quicktime',
-    '.webm': 'video/webm',
-    '.mkv': 'video/x-matroska'
-  };
-  return map[ext] ?? 'video/mp4';
-};
-
-const canBrowserPlayVideo = (mimeType: string) => {
-  if (typeof document === 'undefined') return true;
-  const video = document.createElement('video');
-  return video.canPlayType(mimeType) !== '';
-};
-
-const toEdgeTtsRate = (value: string) => {
-  const trimmed = value.trim().replace(',', '.');
-  if (!trimmed) return '';
-  if (/^[+-]?\d+%$/.test(trimmed)) return trimmed;
-  const numeric = Number(trimmed);
-  if (!Number.isFinite(numeric) || numeric <= 0) return trimmed;
-  const percent = Math.round((numeric - 1) * 100);
-  return `${percent >= 0 ? '+' : ''}${percent}%`;
-};
-
-const PITCH_BASE_HZ = 200;
-
-const toEdgeTtsPitch = (value: string) => {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  const numeric = Number(trimmed);
-  if (!Number.isFinite(numeric)) return trimmed;
-  if (numeric === 0) return '+0Hz';
-  const ratio = Math.pow(2, numeric / 12);
-  const deltaHz = Math.round(PITCH_BASE_HZ * (ratio - 1));
-  const signed = deltaHz >= 0 ? `+${deltaHz}` : `${deltaHz}`;
-  return `${signed}Hz`;
-};
-
-const fromEdgeTtsPitch = (value?: string) => {
-  const trimmed = value?.trim();
-  if (!trimmed) return '';
-  const match = trimmed.match(/^([+-])(\d+)\s*Hz$/i);
-  if (!match) return trimmed;
-  const sign = match[1] === '-' ? -1 : 1;
-  const delta = Number(match[2]);
-  if (!Number.isFinite(delta)) return trimmed;
-  const ratio = 1 + sign * (delta / PITCH_BASE_HZ);
-  if (ratio <= 0) return trimmed;
-  const semitone = 12 * Math.log2(ratio);
-  return `${Math.round(semitone * 100) / 100}`;
-};
-
-const fromEdgeTtsRate = (value?: string) => {
-  const trimmed = value?.trim();
-  if (!trimmed) return '';
-  const match = trimmed.match(/^([+-])(\d+)%$/);
-  if (!match) return trimmed;
-  const sign = match[1] === '-' ? -1 : 1;
-  const percent = Number(match[2]);
-  if (!Number.isFinite(percent)) return trimmed;
-  const factor = 1 + sign * (percent / 100);
-  return `${Math.round(factor * 100) / 100}`;
-};
-
-const parseDurationToSeconds = (value?: string) => {
-  if (!value) return 0;
-  const parts = value.split(':').map(part => Number(part));
-  if (parts.some(part => Number.isNaN(part))) return 0;
-  if (parts.length === 3) {
-    const [h, m, s] = parts;
-    return h * 3600 + m * 60 + s;
-  }
-  if (parts.length === 2) {
-    const [m, s] = parts;
-    return m * 60 + s;
-  }
-  return 0;
-};
-
-const guessLanguage = (fileName: string) => {
-  const match = fileName.toLowerCase().match(/\.(en|vi|es|fr|de|ja|ko|zh|pt)\./);
-  if (!match) return undefined;
-  const mapping: Record<string, string> = {
-    en: 'English',
-    vi: 'Vietnamese',
-    es: 'Spanish',
-    fr: 'French',
-    de: 'German',
-    ja: 'Japanese',
-    ko: 'Korean',
-    zh: 'Chinese',
-    pt: 'Portuguese'
-  };
-  return mapping[match[1]];
-};
-
-const guessVersion = (fileName: string) => {
-  const match = fileName.toLowerCase().match(/v(\d+)/);
-  return match ? `v${match[1]}` : undefined;
-};
-
-const computeFolderStatus = (files: VaultFile[]) => {
-  if (files.some(file => file.status === 'error')) return 'error';
-  const hasVideo = files.some(file => file.type === 'video');
-  const hasSubtitle = files.some(file => file.type === 'subtitle');
-  const hasOutput = files.some(file => file.type === 'output');
-  if (hasVideo && hasSubtitle && hasOutput) return 'complete';
-  if (hasVideo && (hasSubtitle || hasOutput)) return 'partial';
-  return 'raw';
-};
+// --- Media Vault Data ---
 
 // --- Main App ---
 
-/** Render Studio: extra strip after content end (pixels only); logical duration = longest track. */
-const RENDER_TIMELINE_VIEW_PAD = 0.12;
-
-const RENDER_BLUR_FEATHER_MAX = 10;
-
-/** Solid black JPEG when preview cannot be loaded (matches server fallback). */
-const RENDER_PREVIEW_BLACK_DATA_URL =
-  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzU4LjU0LjEwMAD/2wBDAAg+Pkk+SVVVVVVVVWRdZGhoaGRkZGRoaGhwcHCDg4NwcHBoaHBwfHyDg4+Tj4eHg4eTk5ubm7q6srLZ2eD/////xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAPABQAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//9k=';
-
-const RenderStudioPage = lazy(() => import('./RenderStudioPage'));
-
 export default function App() {
-  const renderStudioPath = '/render-studio';
   const buildRenderStudioUrl = (
     projectId?: string | null,
     templateId?: string | null,
@@ -1149,17 +171,10 @@ export default function App() {
     if (templateId && templateId !== 'custom') params.set('template', templateId);
     if (pipelineId) params.set('pipeline', pipelineId);
     const query = params.toString();
-    return `${renderStudioPath}${query ? `?${query}` : ''}`;
-  };
-  const tabPathMap: Record<string, string> = {
-    dashboard: '/dashboard',
-    forge: '/pipeline-forge',
-    vault: '/media-vault',
-    settings: '/settings',
-    logs: '/logs'
+    return `${RENDER_STUDIO_PATH}${query ? `?${query}` : ''}`;
   };
   const getTabFromPath = (path: string) => {
-    const entry = Object.entries(tabPathMap).find(([, value]) => value === path);
+    const entry = Object.entries(TAB_PATH_MAP).find(([, value]) => value === path);
     return entry?.[0] ?? 'dashboard';
   };
   const [activeTab, setActiveTab] = useState(() => {
@@ -1179,20 +194,7 @@ export default function App() {
     return window.location.pathname === '/register' ? 'register' : 'login';
   };
   const [authView, setAuthView] = useState<'login' | 'register'>(getAuthViewFromPath);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [jobs, setJobs] = useState<MediaJob[]>([]);
-  const [jobNowMs, setJobNowMs] = useState(() => Date.now());
-  const jobNowBaseRef = useRef<{ serverMs: number; clientMs: number } | null>(null);
-  const [jobPage, setJobPage] = useState(1);
-  const [jobLogOpen, setJobLogOpen] = useState(false);
-  const [jobLogJobId, setJobLogJobId] = useState<string | null>(null);
-  const previousJobsRef = useRef<MediaJob[]>([]);
-  const [jobContextMenu, setJobContextMenu] = useState<{ open: boolean; x: number; y: number; jobId: string | null }>({
-    open: false,
-    x: 0,
-    y: 0,
-    jobId: null
-  });
+  const jobsHandleRef = useRef<JobsHandle | null>(null);
   const [paramPresetContextMenu, setParamPresetContextMenu] = useState<{
     open: boolean;
     x: number;
@@ -1332,7 +334,7 @@ export default function App() {
   const [showRunPipeline, setShowRunPipeline] = useState(false);
   const [showRenderStudio, setShowRenderStudio] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return window.location.pathname === renderStudioPath;
+    return window.location.pathname === RENDER_STUDIO_PATH;
   });
   const renderStudioReturnPathRef = useRef('/dashboard');
   const renderStudioQueryAppliedRef = useRef(false);
@@ -1499,12 +501,13 @@ export default function App() {
       targetLufs: '-14',
       gainDb: '0',
       mute: false
-    },
-    audio: {
-      targetLufs: '-14',
-      gainDb: '0',
-      mute: false,
-      fadeIn: '0',
+	    },
+	    audio: {
+	      levelControl: 'lufs',
+	      targetLufs: '-14',
+	      gainDb: '0',
+	      mute: false,
+	      fadeIn: '0',
       fadeOut: '0'
     },
     subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
@@ -1878,7 +881,6 @@ export default function App() {
   const renderTimelineWidth = Math.max(320, renderTimelineViewDuration * 24 * renderTimelineScale);
   const renderTimelineTickCount = Math.max(4, Math.round(renderTimelineWidth / 160));
   const downloadAnalyzeData = downloadAnalyzeResult?.data ?? null;
-  const downloadAnalyzeWarnings: string[] = Array.isArray(downloadAnalyzeResult?.warnings) ? downloadAnalyzeResult.warnings : [];
   const downloadAnalyzeFormats = Array.isArray(downloadAnalyzeData?.formats) ? downloadAnalyzeData.formats : [];
   const downloadAnalyzeListSubs = Array.isArray(downloadAnalyzeResult?.listSubs) ? downloadAnalyzeResult.listSubs : [];
   const downloadAnalyzeVideoFormats = downloadAnalyzeFormats.filter((item: any) => item?.vcodec && item.vcodec !== 'none');
@@ -2069,7 +1071,7 @@ export default function App() {
   };
 
   const navigateTab = (tab: string) => {
-    const nextPath = tabPathMap[tab] ?? '/dashboard';
+    const nextPath = TAB_PATH_MAP[tab] ?? '/dashboard';
     if (typeof window !== 'undefined' && window.location.pathname !== nextPath) {
       window.history.pushState({}, '', nextPath);
     }
@@ -2080,7 +1082,7 @@ export default function App() {
     if (typeof window !== 'undefined') {
       if (open) {
         const currentPath = window.location.pathname;
-        if (currentPath !== renderStudioPath) {
+        if (currentPath !== RENDER_STUDIO_PATH) {
           renderStudioReturnPathRef.current = currentPath;
           window.history.pushState(
             {},
@@ -2134,12 +1136,12 @@ export default function App() {
       setActiveTab('dashboard');
       return;
     }
-    if (path === renderStudioPath) {
+    if (path === RENDER_STUDIO_PATH) {
       setShowRenderStudio(true);
       renderStudioQueryAppliedRef.current = false;
       return;
     }
-    if (!Object.values(tabPathMap).includes(path)) {
+    if (!Object.values(TAB_PATH_MAP).includes(path)) {
       window.history.replaceState({}, '', '/dashboard');
       setActiveTab('dashboard');
       return;
@@ -2229,7 +1231,7 @@ export default function App() {
     const handlePopState = () => {
       if (typeof window === 'undefined') return;
       const path = window.location.pathname;
-      if (path === renderStudioPath) {
+      if (path === RENDER_STUDIO_PATH) {
         setShowRenderStudio(true);
         renderStudioQueryAppliedRef.current = false;
         return;
@@ -2307,14 +1309,6 @@ export default function App() {
     items: filteredFiles.filter(file => file.type === type)
   }));
 
-  const activeJobCount = jobs.filter(job => job.status === 'queued' || job.status === 'processing').length;
-  const completedJobCount = jobs.filter(job => job.status === 'completed').length;
-  const failedJobCount = jobs.filter(job => job.status === 'failed').length;
-  const settledJobCount = completedJobCount + failedJobCount;
-  const successRate = settledJobCount > 0 ? Math.round((completedJobCount / settledJobCount) * 1000) / 10 : null;
-  const activeJob = jobs.find(job => job.status === 'processing') ?? jobs.find(job => job.status === 'queued') ?? null;
-  const jobLogTarget = jobs.find(job => job.id === jobLogJobId) ?? activeJob;
-  const jobContextTarget = jobs.find(job => job.id === jobContextMenu.jobId) ?? null;
   const pipelineContextTarget = pipelineLibrary.find(item => item.id === pipelineContextMenu.pipelineId) ?? null;
 
   const previewGroups = (folder: VaultFolder) => ([
@@ -3361,7 +2355,12 @@ export default function App() {
         const response = await fetch(`/api/vault/text?path=${encodeURIComponent(renderSubtitleFile.relativePath)}`, {
           signal: controller.signal
         });
-        if (!response.ok) return;
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          console.error('Failed to load subtitle text', response.status, data?.error || response.statusText);
+          setRenderSubtitleCues([]);
+          return;
+        }
         const data = await response.json().catch(() => ({}));
         const content = typeof data.content === 'string' ? data.content : '';
         const cues = parseSubtitleCues(content);
@@ -4623,60 +3622,24 @@ export default function App() {
     });
   };
 
-  const confirmModal = confirmState.open && (
-    <div className="fixed inset-0 z-[65] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-      <div className="absolute inset-0" onClick={() => setConfirmState(prev => ({ ...prev, open: false }))} />
-      <div className="relative w-[min(520px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-4 shadow-2xl">
-        <div>
-          <div className="text-lg font-semibold text-zinc-100 mt-2">{confirmState.title}</div>
-          {confirmState.description && (
-            <div className="text-sm text-zinc-500 mt-2">{confirmState.description}</div>
-          )}
-        </div>
-        <div className="flex items-center justify-end gap-3">
-          <button
-            onClick={() => setConfirmState(prev => ({ ...prev, open: false }))}
-            className="px-4 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-          >
-            Cancel
-          </button>
-          {confirmState.secondaryLabel && (
-            <button
-              onClick={() => {
-                const action = secondaryActionRef.current;
-                secondaryActionRef.current = null;
-                setConfirmState(prev => ({ ...prev, open: false }));
-                action?.();
-              }}
-              className="px-4 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
-            >
-              {confirmState.secondaryLabel}
-            </button>
-          )}
-          <button
-            onClick={async () => {
-              const action = confirmActionRef.current;
-              confirmActionRef.current = null;
-              setConfirmState(prev => ({ ...prev, open: false }));
-              try {
-                await Promise.resolve(action?.());
-              } catch (error) {
-                const message = error instanceof Error ? error.message : 'Action failed';
-                showToast(message, 'error');
-              }
-            }}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
-              confirmState.variant === 'danger'
-                ? 'bg-red-500 text-zinc-950 hover:bg-red-400'
-                : 'bg-lime-500 text-zinc-950 hover:bg-lime-400'
-            }`}
-          >
-            {confirmState.confirmLabel ?? 'Confirm'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  const closeConfirmModal = () => setConfirmState(prev => ({ ...prev, open: false }));
+
+  const handleConfirmModalConfirm = async () => {
+    const action = confirmActionRef.current;
+    confirmActionRef.current = null;
+    try {
+      await Promise.resolve(action?.());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Action failed';
+      showToast(message, 'error');
+    }
+  };
+
+  const handleConfirmModalSecondary = () => {
+    const action = secondaryActionRef.current;
+    secondaryActionRef.current = null;
+    action?.();
+  };
 
   const openPipelinePreview = (pipeline: PipelineSummary) => {
     if (pipeline.kind !== 'task') return;
@@ -4765,7 +3728,7 @@ export default function App() {
 
   useEffect(() => {
     if (!runPipelineHasRender && showRenderStudio) {
-      if (typeof window !== 'undefined' && window.location.pathname === renderStudioPath) {
+      if (typeof window !== 'undefined' && window.location.pathname === RENDER_STUDIO_PATH) {
         return;
       }
       setRenderStudioOpen(false);
@@ -4972,62 +3935,6 @@ export default function App() {
     if (!authUser) return;
     loadParamPresets();
   }, [authUser]);
-
-  const loadJobs = async () => {
-    try {
-      const response = await fetch('/api/jobs');
-      if (!response.ok) return;
-      const data = await response.json() as { jobs: MediaJob[]; now?: string };
-      setJobs(data.jobs ?? []);
-      if (data.now) {
-        const serverMs = new Date(data.now).getTime();
-        if (Number.isFinite(serverMs)) {
-          jobNowBaseRef.current = { serverMs, clientMs: Date.now() };
-          setJobNowMs(serverMs);
-        }
-      }
-    } catch {
-      return;
-    }
-  };
-
-  const cancelJob = async (jobId: string) => {
-    try {
-      const response = await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'Unable to cancel job');
-      }
-      await loadJobs();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to cancel job';
-      showToast(message, 'error');
-    }
-  };
-
-  const deleteJob = async (jobId: string) => {
-    try {
-      openConfirm(
-        {
-          title: 'Delete job history?',
-          description: 'This action cannot be undone.',
-          confirmLabel: 'Delete',
-          variant: 'danger'
-        },
-        async () => {
-          const response = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
-          if (!response.ok) {
-            const data = await response.json().catch(() => ({}));
-            throw new Error(data.error || 'Unable to delete job');
-          }
-          await loadJobs();
-        }
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to delete job';
-      showToast(message, 'error');
-    }
-  };
 
   const openFileContextMenu = (event: React.MouseEvent, file: VaultFile) => {
     event.preventDefault();
@@ -5661,20 +4568,6 @@ export default function App() {
     renderTemplateApplyMap,
     renderTemplateApplyMapById
   ]);
-
-  useEffect(() => {
-    if (!authUser) return;
-    loadJobs();
-    const interval = window.setInterval(loadJobs, 3000);
-    return () => window.clearInterval(interval);
-  }, [authUser]);
-
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(jobs.length / 10));
-    if (jobPage > totalPages) {
-      setJobPage(totalPages);
-    }
-  }, [jobs.length, jobPage]);
 
   useEffect(() => {
     if (!pipelineLibrary.length) return;
@@ -6386,24 +5279,7 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const previousJobs = previousJobsRef.current;
-    if (previousJobs.length === 0) {
-      previousJobsRef.current = jobs;
-      return;
-    }
-    const previousStatus = new Map(previousJobs.map(job => [job.id, job.status]));
-    const outputCompleted = jobs.some(job => {
-      const was = previousStatus.get(job.id);
-      if (was === job.status) return false;
-      if (job.status !== 'completed') return false;
-      return job.tasks.some(task => task.type === 'uvr' || task.type === 'tts');
-    });
-    if (outputCompleted) {
-      loadVault();
-    }
-    previousJobsRef.current = jobs;
-  }, [jobs]);
+  // Job completion → vault refresh is handled in `JobsFeature`.
 
   const performDeleteVaultProject = async (folder: VaultFolder) => {
     try {
@@ -6765,7 +5641,7 @@ export default function App() {
         setShowRunPipeline(false);
         return { conflict: false, done: true };
       }
-      await loadJobs();
+      await jobsHandleRef.current?.reloadJobs();
       showToast('Pipeline queued', 'success');
       setShowRunPipeline(false);
       navigateTab('dashboard');
@@ -6858,18 +5734,12 @@ export default function App() {
     loadVault();
   }, [authUser]);
 
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      const base = jobNowBaseRef.current;
-      if (!base) {
-        setJobNowMs(Date.now());
-        return;
-      }
-      const delta = Date.now() - base.clientMs;
-      setJobNowMs(base.serverMs + Math.max(0, delta));
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, []);
+  const openNewJob = () => {
+    setRunPipelineProjectLocked(false);
+    setRunPipelineProjectId(null);
+    resetDownloadForm();
+    setShowRunPipeline(true);
+  };
 
   useEffect(() => {
     if (!vaultFolders.length) {
@@ -6891,135 +5761,163 @@ export default function App() {
   }, [selectedFolder, vaultFileId]);
 
   const renderStudioProps = {
-    runPipelineProject,
-    selectProjectDefaults,
-    renderReady,
-    setShowRenderStudio: setRenderStudioOpen,
-    setActiveTab,
-    runPipelineJob,
-    runPipelineSubmitting,
-    renderStudioLeftMenuOpen,
-    setRenderStudioLeftMenuOpen,
-    renderStudioMediaBinOpen,
-    setRenderStudioMediaBinOpen,
-    renderStudioProjectOpen,
-    setRenderStudioProjectOpen,
-    renderStudioFocus,
-    setRenderStudioFocus,
-    renderStudioItemType,
-    setRenderStudioItemType,
-    renderStudioPreviewFileId,
-    setRenderStudioPreviewFileId,
-    openRenderStudioMediaBinContextMenu,
-    openRenderStudioTimelineContextMenu,
-    renderInputFileIds,
-    setRenderInputFileIds,
-    renderTemplateApplyMap,
-    onRenderTemplatePlaceholderFile: (placeholderKey: string, fileId: string) => {
-      const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
-      if (!template || runPipelineRenderTemplateId === 'custom') return;
-      const next = { ...renderTemplateApplyMap, [placeholderKey]: fileId };
-      commitRenderTemplateApplyMap(template.id, next);
-      applyRenderTemplate(template, next);
+    project: {
+      runPipelineProject,
+      selectProjectDefaults,
+      renderReady
     },
-    renderVideoId,
-    setRenderVideoId,
-    renderAudioId,
-    setRenderAudioId,
-    renderSubtitleId,
-    setRenderSubtitleId,
-    renderTextTrackEnabled,
-    setRenderTextTrackEnabled,
-    renderVideoFile,
-    renderAudioFile,
-    renderSubtitleFile,
-    renderImageFiles,
-    renderImageDurationEntries,
-    renderImageDurations,
-    setRenderImageDurations,
-    renderImageMatchDuration,
-    setRenderImageMatchDuration,
-    renderImageOrderIds,
-    setRenderImageOrderIds,
-    renderImageTransforms,
-    setRenderImageTransforms,
-    formatDuration,
-    formatDurationFine,
-    renderTimelineDuration,
-    renderSubtitleTrackHeight,
-    renderSubtitleDuration,
-    renderSubtitleLanes,
-    renderSubtitleLaneHeight,
-    renderSubtitleCues,
-    renderTimelineViewDuration,
-    showRenderTimelineSubtitleTrack,
-    showRenderTimelineTextTrack,
-    showRenderTimelineImageTrack,
-    renderParams,
-    showRenderTimelineVideoTrack,
-    renderVideoDuration,
-    showRenderTimelineAudioTrack,
-    renderAudioDuration,
-    renderTimelineScrollRef,
-    onRenderTimelineMouseDown,
-    onRenderTimelineMouseMove,
-    onRenderTimelineMouseUp,
-    onRenderTimelineClick,
-    renderTimelineWidth,
-    renderTimelineTickCount,
-    renderPlayheadSeconds,
-    renderTimelineMinScale,
-    renderTimelineScale,
-    setRenderTimelineScale,
-    renderPreviewUrl,
-    renderPreviewLoading,
-    renderPreviewError,
-    setRenderPreviewHold,
-    canBrowserPlayVideo,
-    getVideoMimeType,
-    renderSelectedItem,
-    renderParamsDraft,
-    updateRenderParamDraft,
-    commitRenderParamDraftValue,
-    commitRenderParamDraftOnEnter,
-    updateRenderParam,
-    renderStudioInspectorOpen,
-    setRenderStudioInspectorOpen,
-    renderVideoTransforms,
-    addRenderVideoBlurEffect,
-    updateRenderVideoBlurEffect,
-    commitRenderVideoBlurEffectValue,
-    removeRenderVideoBlurEffect,
-    addRenderImageBlurEffect,
-    updateRenderImageBlurEffect,
-    commitRenderImageBlurEffectValue,
-    removeRenderImageBlurEffect,
-    renderTrackLabels,
-    placeholderKeyByFileId,
-    updateRenderTrackLabel,
-    coerceNumber,
-    RENDER_BLUR_FEATHER_MAX,
-    RENDER_PREVIEW_BLACK_DATA_URL,
-    renderTemplates,
-    runPipelineRenderTemplateId,
-    handleRenderTemplateChange,
-    saveRenderTemplateQuick,
-    saveRenderTemplateCurrent,
-    restoreRenderTemplateCurrent,
-    deleteRenderTemplateWithConfirm,
-    isRenderTemplateDirty,
-    renderConfigV2Override,
-    setRenderConfigV2Override,
-    renderTemplateDiffCurrentConfig,
-    renderTemplateDiffBaselineConfig,
-    renderTemplateDiffBaselineLabel,
-    setImportPopupOpen,
-    subtitleFontOptions,
-    subtitleFontLoading,
-    SUBTITLE_STYLE_PRESETS,
-    applySubtitleStylePreset,
-    isSubtitlePresetActive,
-    buildSubtitlePreviewStyle
+    app: {
+      setShowRenderStudio: setRenderStudioOpen,
+      setActiveTab,
+      setImportPopupOpen
+    },
+    job: {
+      runPipelineJob,
+      runPipelineSubmitting
+    },
+    ui: {
+      renderStudioLeftMenuOpen,
+      setRenderStudioLeftMenuOpen,
+      renderStudioMediaBinOpen,
+      setRenderStudioMediaBinOpen,
+      renderStudioProjectOpen,
+      setRenderStudioProjectOpen,
+      renderStudioFocus,
+      setRenderStudioFocus,
+      renderStudioItemType,
+      setRenderStudioItemType,
+      renderStudioPreviewFileId,
+      setRenderStudioPreviewFileId,
+      renderStudioInspectorOpen,
+      setRenderStudioInspectorOpen,
+      openRenderStudioMediaBinContextMenu,
+      openRenderStudioTimelineContextMenu
+    },
+    inputs: {
+      renderInputFileIds,
+      setRenderInputFileIds,
+      renderTemplateApplyMap,
+      placeholderKeyByFileId,
+      onRenderTemplatePlaceholderFile: (placeholderKey: string, fileId: string) => {
+        const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
+        if (!template || runPipelineRenderTemplateId === 'custom') return;
+        const next = { ...renderTemplateApplyMap, [placeholderKey]: fileId };
+        commitRenderTemplateApplyMap(template.id, next);
+        applyRenderTemplate(template, next);
+      }
+    },
+    tracks: {
+      renderVideoId,
+      setRenderVideoId,
+      renderAudioId,
+      setRenderAudioId,
+      renderSubtitleId,
+      setRenderSubtitleId,
+      renderTextTrackEnabled,
+      setRenderTextTrackEnabled,
+      renderVideoFile,
+      renderAudioFile,
+      renderSubtitleFile,
+      renderImageFiles,
+      renderImageDurationEntries,
+      renderImageDurations,
+      setRenderImageDurations,
+      renderImageMatchDuration,
+      setRenderImageMatchDuration,
+      renderImageOrderIds,
+      setRenderImageOrderIds,
+      renderImageTransforms,
+      setRenderImageTransforms
+    },
+    timeline: {
+      formatDuration,
+      formatDurationFine,
+      renderTimelineDuration,
+      renderSubtitleTrackHeight,
+      renderSubtitleDuration,
+      renderSubtitleLanes,
+      renderSubtitleLaneHeight,
+      renderSubtitleCues,
+      renderTimelineViewDuration,
+      showRenderTimelineSubtitleTrack,
+      showRenderTimelineTextTrack,
+      showRenderTimelineImageTrack,
+      showRenderTimelineVideoTrack,
+      renderVideoDuration,
+      showRenderTimelineAudioTrack,
+      renderAudioDuration,
+      renderTimelineScrollRef,
+      onRenderTimelineMouseDown,
+      onRenderTimelineMouseMove,
+      onRenderTimelineMouseUp,
+      onRenderTimelineClick,
+      renderTimelineWidth,
+      renderTimelineTickCount,
+      renderPlayheadSeconds,
+      renderTimelineMinScale,
+      renderTimelineScale,
+      setRenderTimelineScale
+    },
+    preview: {
+      renderPreviewUrl,
+      renderPreviewLoading,
+      renderPreviewError,
+      setRenderPreviewHold,
+      canBrowserPlayVideo,
+      getVideoMimeType
+    },
+    inspector: {
+      renderSelectedItem,
+      renderParams,
+      renderParamsDraft,
+      updateRenderParamDraft,
+      commitRenderParamDraftValue,
+      commitRenderParamDraftOnEnter,
+      updateRenderParam,
+      renderTrackLabels,
+      updateRenderTrackLabel
+    },
+    effects: {
+      renderVideoTransforms,
+      addRenderVideoBlurEffect,
+      updateRenderVideoBlurEffect,
+      commitRenderVideoBlurEffectValue,
+      removeRenderVideoBlurEffect,
+      addRenderImageBlurEffect,
+      updateRenderImageBlurEffect,
+      commitRenderImageBlurEffectValue,
+      removeRenderImageBlurEffect
+    },
+    templates: {
+      renderTemplates,
+      runPipelineRenderTemplateId,
+      handleRenderTemplateChange,
+      saveRenderTemplateQuick,
+      saveRenderTemplateCurrent,
+      restoreRenderTemplateCurrent,
+      deleteRenderTemplateWithConfirm,
+      isRenderTemplateDirty,
+      renderConfigV2Override,
+      setRenderConfigV2Override,
+      renderTemplateDiffCurrentConfig,
+      renderTemplateDiffBaselineConfig,
+      renderTemplateDiffBaselineLabel
+    },
+    subtitle: {
+      subtitleFontOptions,
+      subtitleFontLoading,
+      SUBTITLE_STYLE_PRESETS,
+      applySubtitleStylePreset,
+      isSubtitlePresetActive,
+      buildSubtitlePreviewStyle
+    },
+    utils: {
+      coerceNumber
+    },
+    constants: {
+      RENDER_BLUR_FEATHER_MAX,
+      RENDER_PREVIEW_BLACK_DATA_URL
+    }
   };
 
   const selectedRenderTemplate = renderTemplates.find(t => t.id === runPipelineRenderTemplateId) ?? null;
@@ -7097,6 +5995,7 @@ export default function App() {
       effectCounts
     };
   }, [selectedRenderTemplate, runPipelineRenderTemplateId]);
+
   const isNewJobProjectLoading = React.useMemo(() => {
     if (!showRunPipeline) return false;
     if (vaultLoading || runPipelineLoading) return true;
@@ -7110,6 +6009,202 @@ export default function App() {
     vaultFolders.length
   ]);
 
+  const runPipelineModalProps = {
+    open: showRunPipeline,
+    onClose: () => {
+      setShowRunPipeline(false);
+      setRenderStudioOpen(false);
+    },
+    isNewJobProjectLoading,
+    runPipelineHasRender,
+    runPipelineProject,
+    runPipelineSubmitting,
+    onOpenPreview: () => setRenderStudioOpen(true),
+    onRun: () => runPipelineJob(),
+    runPipelineHasDownload,
+    runPipelineHasUvr,
+    runPipelineHasTts,
+    downloadAnalyzeLoading,
+    downloadUrl,
+    analyzeYtDlp,
+    inputsSectionProps: {
+      runPipelineHasDownload,
+      runPipelineHasRender,
+      runPipelineHasTts,
+      downloadProjectName,
+      setDownloadProjectName,
+      downloadProjectPickerOpen,
+      setDownloadProjectPickerOpen,
+      vaultFolders,
+      setRunPipelineProjectId,
+      runPipelineProject,
+      runPipelineProjectLocked,
+      runPipelineId,
+      setRunPipelineId,
+      pipelineLibrary,
+      runPipelineLoading,
+      downloadUrl,
+      setDownloadUrl,
+      downloadAnalyzeError,
+      downloadAnalyzeResult,
+      downloadAnalyzeData,
+      downloadAnalyzeVideoFormats,
+      downloadAnalyzeAudioFormats,
+      downloadAnalyzeSubtitleCount,
+      bestSingleFormat,
+      downloadAnalyzeListSubs,
+      runPipelineRenderTemplateId,
+      selectedRenderTemplate,
+      renderInputFileIds,
+      setRenderInputFileIds,
+      setRenderVideoId,
+      setRenderAudioId,
+      setRenderSubtitleId,
+      truncateLabel,
+      renderTemplatePlaceholdersByType,
+      renderTemplateFilesByType,
+      renderTemplateApplyMap,
+      commitRenderTemplateApplyMap,
+      applyRenderTemplate,
+      runPipelineInputId,
+      setRunPipelineInputId,
+      runPipelineGraph
+    },
+    renderConfigProps: {
+      runPipelineHasRender,
+      renderTemplates,
+      runPipelineRenderTemplateId,
+      handleRenderTemplateChange,
+      selectedRenderTemplate,
+      deleteRenderTemplateWithConfirm,
+      isRenderTemplateDirty,
+      newJobRenderTemplateMenuCloseRef,
+      setNewJobRenderTemplateMenuOpen,
+      newJobRenderTemplateMenuOpen,
+      resetRenderToDefault,
+      isCustomRenderTemplate,
+      saveRenderTemplateCurrent,
+      saveRenderTemplateQuick,
+      restoreRenderTemplateCurrent,
+      renderTemplateSummary
+    },
+    downloadConfigProps: {
+      runPipelineTaskTemplate,
+      handleTaskTemplateChange,
+      selectedDownloadTemplate,
+      deleteTaskTemplateWithConfirm,
+      isDownloadTemplateDirty,
+      getTaskTemplatesForType,
+      downloadTemplateMenuCloseRef,
+      setDownloadTemplateMenuOpen,
+      downloadTemplateMenuOpen,
+      resetTaskTemplateToDefault,
+      saveTaskTemplateCurrent,
+      saveTaskTemplate,
+      restoreTaskTemplateCurrent,
+      SHOW_PARAM_PRESETS,
+      hasParamPresets,
+      runPipelineParamPreset,
+      handleParamPresetChange,
+      getParamPresetsForType,
+      switchPresetToManual,
+      getSelectedParamPresetParams,
+      formatDefaultValue,
+      downloadMode,
+      setDownloadMode,
+      downloadCookiesFile,
+      setDownloadCookiesFile,
+      downloadNoPlaylist,
+      setDownloadNoPlaylist,
+      downloadSubtitleLang,
+      setDownloadSubtitleLang,
+      downloadAnalyzeListSubs
+    },
+    uvrConfigProps: {
+      runPipelineTaskTemplate,
+      handleTaskTemplateChange,
+      selectedUvrTemplate,
+      deleteTaskTemplateWithConfirm,
+      isUvrTemplateDirty,
+      getTaskTemplatesForType,
+      uvrTemplateMenuCloseRef,
+      setUvrTemplateMenuOpen,
+      uvrTemplateMenuOpen,
+      resetTaskTemplateToDefault,
+      saveTaskTemplateCurrent,
+      saveTaskTemplate,
+      restoreTaskTemplateCurrent,
+      SHOW_PARAM_PRESETS,
+      hasParamPresets,
+      runPipelineParamPreset,
+      handleParamPresetChange,
+      getParamPresetsForType,
+      switchPresetToManual,
+      getSelectedParamPresetParams,
+      formatDefaultValue,
+      isParamOverridden,
+      runPipelineBackend,
+      setRunPipelineBackend,
+      vrModel,
+      setVrModel,
+      vrModels
+    },
+    ttsConfigProps: {
+      runPipelineTaskTemplate,
+      handleTaskTemplateChange,
+      selectedTtsTemplate,
+      deleteTaskTemplateWithConfirm,
+      isTtsTemplateDirty,
+      getTaskTemplatesForType,
+      ttsTemplateMenuCloseRef,
+      setTtsTemplateMenuOpen,
+      ttsTemplateMenuOpen,
+      resetTaskTemplateToDefault,
+      saveTaskTemplateCurrent,
+      saveTaskTemplate,
+      restoreTaskTemplateCurrent,
+      SHOW_PARAM_PRESETS,
+      hasParamPresets,
+      runPipelineParamPreset,
+      handleParamPresetChange,
+      getParamPresetsForType,
+      switchPresetToManual,
+      getSelectedParamPresetParams,
+      formatDefaultValue,
+      isParamOverridden,
+      runPipelineTtsVoice,
+      setRunPipelineTtsVoice,
+      runPipelineTtsOverlapMode,
+      setRunPipelineTtsOverlapMode,
+      runPipelineTtsRate,
+      setRunPipelineTtsRate,
+      runPipelineTtsPitch,
+      setRunPipelineTtsPitch,
+      runPipelineTtsRemoveLineBreaks,
+      setRunPipelineTtsRemoveLineBreaks,
+      PREFERRED_TTS_VOICES
+    }
+  };
+
+  const appContextMenusProps = {
+    showParamPresets: SHOW_PARAM_PRESETS,
+    pipelineContextMenu,
+    pipelineContextTarget,
+    setPipelineContextMenu,
+    openPipelinePreview,
+    openPipelineEditor,
+    deletePipeline,
+    paramPresetContextMenu,
+    paramPresetContextTarget,
+    setParamPresetContextMenu,
+    openParamPresetEditorForEdit,
+    openConfirm,
+    deleteParamPreset,
+    fileContextMenu,
+    closeFileContextMenu,
+    downloadVaultFile
+  };
+
   if (!authChecked) {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
@@ -7118,393 +6213,39 @@ export default function App() {
     );
   }
 
-  if (authUser && showRenderStudio) {
-    if (vaultLoading || runPipelineLoading || pipelineLibrary.length === 0 || (!hasLoadedOnce && vaultFolders.length === 0)) {
-      return (
-        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
-          <div className="text-sm text-zinc-400">Loading project...</div>
-        </div>
-      );
-    }
-
-    if (vaultFolders.length === 0) {
-      return (
-        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="text-sm text-zinc-400">No projects available.</div>
-            <button
-              type="button"
-              onClick={() => setRenderStudioOpen(false)}
-              className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    if (!runPipelineProject) {
-      return (
-        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="text-sm text-zinc-400">Select a project to continue.</div>
-            <button
-              type="button"
-              onClick={() => setRenderStudioOpen(false)}
-              className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    if (!runPipelineHasRender) {
-      return (
-        <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="text-sm text-zinc-400">Render Studio is not available.</div>
-            <button
-              type="button"
-              onClick={() => setRenderStudioOpen(false)}
-              className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-300 hover:text-zinc-100 hover:border-zinc-700"
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <>
-        <Suspense
-          fallback={(
-            <div className="fixed inset-0 z-[60] bg-zinc-950 flex items-center justify-center">
-              <div className="text-xs text-zinc-400">Loading Render Studio...</div>
-            </div>
-          )}
-        >
-          <RenderStudioPage {...renderStudioProps} />
-        </Suspense>
-        {renderStudioContextMenus}
-        {confirmModal}
-        {templateSaveOpen && (
-          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-            <div className="absolute inset-0" onClick={() => setTemplateSaveOpen(false)} />
-            <div className="relative w-[min(520px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-zinc-100">Save Template</div>
-                <button
-                  onClick={() => setTemplateSaveOpen(false)}
-                  className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="text-xs text-zinc-500">
-                {templateSaveTaskType === 'render' ? 'Save Render template (inputs will be placeholders).' : 'Save task template.'}
-              </div>
-              {templateSaveError && (
-                <div className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-lg px-2.5 py-2">
-                  {templateSaveError}
-                </div>
-              )}
-              <div className="flex flex-col gap-2">
-                <label className="text-xs text-zinc-500 uppercase tracking-widest">Template Name</label>
-                <input
-                  value={templateSaveName}
-                  onChange={e => setTemplateSaveName(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none"
-                  placeholder="My template"
-                />
-              </div>
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  onClick={() => setTemplateSaveOpen(false)}
-                  className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={confirmSaveTemplate}
-                  disabled={Boolean(templateSaveError)}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </>
-    );
-  }
-
   return authUser ? (
     <div className="flex h-screen bg-zinc-950 text-zinc-300 font-sans selection:bg-lime-500/30 selection:text-lime-200">
-      {/* Sidebar Navigation Rail */}
-      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} border-r border-zinc-800 flex flex-col p-4 gap-6 transition-all duration-300`}>
-        <button
-          type="button"
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          aria-expanded={!sidebarCollapsed}
-          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3 px-2'} mb-2 w-full text-left rounded-lg py-2 hover:bg-zinc-900/60 transition-colors`}
-        >
-          <div className="w-8 h-8 bg-lime-500 rounded-lg flex items-center justify-center text-zinc-950 font-black italic">MF</div>
-          {!sidebarCollapsed && <h1 className="text-lg font-bold text-zinc-100 tracking-tight">MediaForge</h1>}
-        </button>
-
-        <nav className="flex flex-col gap-1 flex-1">
-          <SidebarItem 
-            icon={LayoutDashboard} 
-            label="Dashboard" 
-            active={activeTab === 'dashboard'} 
-            onClick={() => navigateTab('dashboard')} 
-            collapsed={sidebarCollapsed}
-          />
-          <SidebarItem 
-            icon={Hammer} 
-            label="Pipeline Forge" 
-            active={activeTab === 'forge'} 
-            onClick={() => navigateTab('forge')} 
-            collapsed={sidebarCollapsed}
-          />
-          <SidebarItem 
-            icon={Database} 
-            label="Media Vault" 
-            active={activeTab === 'vault'} 
-            onClick={() => navigateTab('vault')} 
-            collapsed={sidebarCollapsed}
-          />
-          <div className="my-4 border-t border-zinc-800/50" />
-          <SidebarItem 
-            icon={Settings} 
-            label="Settings" 
-            active={activeTab === 'settings'} 
-            onClick={() => navigateTab('settings')} 
-            collapsed={sidebarCollapsed}
-          />
-          <SidebarItem 
-            icon={Terminal} 
-            label="System Logs" 
-            active={activeTab === 'logs'} 
-            onClick={() => navigateTab('logs')} 
-            collapsed={sidebarCollapsed}
-          />
-        </nav>
-
-        {/* System Health */}
-        {!sidebarCollapsed && (
-          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800 flex flex-col gap-3">
-            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-              <span>System Health</span>
-              <Activity size={12} className="text-lime-500" />
-            </div>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2 text-zinc-400"><Cpu size={12} /> CPU</div>
-                <span className="font-mono text-zinc-200">--</span>
-              </div>
-              <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-lime-500 w-[0%]" />
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2 text-zinc-400"><HardDrive size={12} /> Disk</div>
-                <span className="font-mono text-zinc-200">--</span>
-              </div>
-              <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 w-[0%]" />
-              </div>
-            </div>
-          </div>
-        )}
-      </aside>
+      <Suspense fallback={<aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} border-r border-zinc-800`} />}>
+        <LazyAppSidebar
+          collapsed={sidebarCollapsed}
+          setCollapsed={setSidebarCollapsed}
+          activeTab={activeTab}
+          onNavigateTab={navigateTab}
+        />
+      </Suspense>
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Header / Search */}
-        <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-8 bg-zinc-950/50 backdrop-blur-md z-10">
-          <div className="flex items-center gap-4 flex-1 max-w-xl relative">
-            <Search size={18} className="absolute left-3 text-zinc-500" />
-            <input 
-              type="text" 
-              placeholder="Search jobs, files, or pipelines..."
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-lime-500/50 transition-colors"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-          
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => {
-                setRunPipelineProjectLocked(false);
-                setRunPipelineProjectId(null);
-                resetDownloadForm();
-                setShowRunPipeline(true);
-              }}
-              title="+ New Job"
-              className="flex items-center gap-2 px-4 py-2 bg-lime-500 text-zinc-950 rounded-lg font-bold text-sm hover:bg-lime-400 transition-colors shadow-lg shadow-lime-500/10"
-            >
-              + New Job
-            </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              title="Logout"
-              className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
-              aria-label="Logout"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
-        </header>
+        <AppHeader onNewJob={openNewJob} onLogout={handleLogout} />
 
         {/* Content View */}
         <div className="flex-1 overflow-y-auto">
           <AnimatePresence mode="sync">
-            {activeTab === 'dashboard' && (
-              <motion.div 
-                key="dashboard"
-                initial={false}
-                animate={false as any}
-                exit={false as any}
-                className="p-8"
-              >
-                {/* Quick Stats Grid */}
-                <div className="grid grid-cols-3 gap-4 mb-2">
-                  <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg"><RefreshCw size={16} /></div>
-                      <h3 className="font-semibold text-zinc-200">Throughput</h3>
-                    </div>
-                    <div className="text-2xl font-bold text-zinc-100 mb-1">--</div>
-                    <p className="text-[11px] text-zinc-500">No telemetry yet</p>
-                  </div>
-                  <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="p-1.5 bg-lime-500/10 text-lime-400 rounded-lg"><CheckCircle2 size={16} /></div>
-                      <h3 className="font-semibold text-zinc-200">Success Rate</h3>
-                    </div>
-                    <div className="text-2xl font-bold text-zinc-100 mb-1">{successRate !== null ? `${successRate}%` : '--'}</div>
-                    <p className="text-[11px] text-zinc-500">{completedJobCount} jobs completed, {failedJobCount} failed</p>
-                  </div>
-                  <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="p-1.5 bg-amber-500/10 text-amber-400 rounded-lg"><Clock size={16} /></div>
-                      <h3 className="font-semibold text-zinc-200">Queue Time</h3>
-                    </div>
-                    <div className="text-2xl font-bold text-zinc-100 mb-1">--</div>
-                    <p className="text-[11px] text-zinc-500">No telemetry yet</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-3 text-xs text-zinc-500 mb-2">
-                  <span>
-                    Page {jobPage} of {Math.max(1, Math.ceil(jobs.length / 10))}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setJobPage(prev => Math.max(1, prev - 1))}
-                      disabled={jobPage === 1}
-                      className="px-2 py-1 border border-zinc-800 rounded-md text-zinc-400 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Prev
-                    </button>
-                    <button
-                      onClick={() => setJobPage(prev => prev + 1)}
-                      disabled={jobPage >= Math.max(1, Math.ceil(jobs.length / 10))}
-                      className="px-2 py-1 border border-zinc-800 rounded-md text-zinc-400 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-
-                {/* Job List Table */}
-                <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
-                  <div className="grid grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] gap-4 px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-                    <span className="text-right pr-0.5">#</span>
-                    <span>Created</span>
-                    <span>Job Details</span>
-                    <span>Pipeline</span>
-                    <span>Progress</span>
-                    <span>Status</span>
-                    <span className="text-right -ml-2">Elapsed Time</span>
-                  </div>
-                  
-                  <div className="flex flex-col">
-                    {jobs.length === 0 ? (
-                      <div className="p-6 text-sm text-zinc-500">No jobs yet. Run a pipeline to start processing.</div>
-                    ) : (
-                      jobs
-                        .slice((jobPage - 1) * 10, jobPage * 10)
-                        .map((job, index) => (
-                          <React.Fragment key={job.id}>
-                            <JobRow
-                              job={job}
-                              index={(jobPage - 1) * 10 + index + 1}
-                              nowMs={jobNowMs}
-                              hasServerNow={Boolean(jobNowBaseRef.current)}
-                              onContextMenu={(event, targetJob) => {
-                                event.preventDefault();
-                                setJobContextMenu({
-                                  open: true,
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                  jobId: targetJob.id
-                                });
-                              }}
-                            />
-                          </React.Fragment>
-                        ))
-                    )}
-                  </div>
-                </div>
-
-              </motion.div>
-            )}
-
-            {activeTab === 'logs' && (
-              <motion.div
-                key="logs"
-                initial={false}
-                animate={false as any}
-                exit={false as any}
-                className="p-8"
-              >
-                {jobs.length === 0 ? (
-                  <div className="text-sm text-zinc-500">No logs yet.</div>
-                ) : (
-                  <div className="flex flex-col gap-4">
-                    {jobs.map(job => (
-                      <div key={job.id} className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-5">
-                        <div className="flex items-start justify-between gap-4 mb-3">
-                          <div className="min-w-0">
-                            <div className="text-xs text-zinc-500 uppercase tracking-widest">System Log</div>
-                            <div className="text-sm font-semibold text-zinc-100 truncate">
-                              {job.projectName || 'Unknown Project'}
-                            </div>
-                            <div className="text-xs text-zinc-500 mt-1 truncate">
-                              {job.fileName} • {job.fileSize} • {formatLocalDateTime(job.createdAt)}
-                            </div>
-                          </div>
-                          <div className="shrink-0">
-                            <StatusBadge status={job.status} />
-                          </div>
-                        </div>
-                        <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap">
-                          {job.log || job.error || 'No log output yet.'}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
+            {(activeTab === 'dashboard' || activeTab === 'logs') && (
+              <JobsFeature
+                ref={(handle) => {
+                  jobsHandleRef.current = handle;
+                }}
+                activeTab={activeTab}
+                formatLocalDateTime={formatLocalDateTime}
+                showToast={showToast}
+                vaultFolders={vaultFolders}
+                setVaultFolderId={setVaultFolderId}
+                setVaultFileId={setVaultFileId}
+                setShowFolderPanel={setShowFolderPanel}
+                openRunPipelineFromJob={openRunPipelineFromJob}
+                onJobOutputsCompleted={() => loadVault()}
+              />
             )}
 
             {activeTab === 'forge' && (
@@ -7515,148 +6256,39 @@ export default function App() {
                 exit={false as any}
                 className="p-8 h-full flex flex-col"
               >
-                <div className="mb-8">
-                  <h2 className="text-2xl font-bold text-zinc-100">Pipeline Forge</h2>
-                  <p className="text-sm text-zinc-500">Construct a multi-step processing sequence</p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-6 mb-6">
-                  <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Pipelines</h3>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-zinc-500">{pipelineLibrary.length} pipelines</span>
-                        <button
-                          onClick={() => setShowPipelineEditor(true)}
-                          className="px-3 py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded-md hover:bg-lime-400 transition-colors"
-                        >
-                          + New
-                        </button>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-4">
-                      {pipelineLibrary.map(pipeline => {
-                        const PipelineIcon = resolvePipelineIcon(pipeline);
-                        return (
-                        <div
-                          key={pipeline.id}
-                          onClick={() => {
-                            if (pipeline.kind === 'task') {
-                              openPipelinePreview(pipeline);
-                            } else {
-                              openPipelineEditor(pipeline);
-                            }
-                          }}
-                          onContextMenu={event => {
-                            event.preventDefault();
-                            setPipelineContextMenu({
-                              open: true,
-                              x: event.clientX,
-                              y: event.clientY,
-                              pipelineId: pipeline.id
-                            });
-                          }}
-                          onKeyDown={event => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              if (pipeline.kind === 'task') {
-                                openPipelinePreview(pipeline);
-                              } else {
-                                openPipelineEditor(pipeline);
-                              }
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                          className="group text-left p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="h-9 w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
-                              <PipelineIcon size={18} className="text-zinc-200" />
-                            </div>
-                            <div>
-                            <div className="text-sm font-semibold text-zinc-100">{pipeline.name}</div>
-                            <div className="mt-2 text-xs text-zinc-500">
-                              {pipeline.updatedAt === 'Built-in'
-                                ? 'Built-in'
-                                : `${pipeline.steps} steps • Updated ${pipeline.updatedAt}`}
-                            </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                      })}
-                    </div>
-                  </div>
-
-                  {SHOW_PARAM_PRESETS && (
-                    <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Param Presets</h3>
-                        <div className="flex items-center gap-2">
-                          <div className="text-[10px] text-zinc-500">{paramPresetCards.length} presets</div>
-                          <button
-                            onClick={resetParamPresetsDb}
-                            className="px-3 py-1 text-[10px] font-semibold border border-red-500/40 text-red-300 rounded-md hover:border-red-500/70"
-                          >
-                            Reset DB
-                          </button>
-                          <button
-                            onClick={() => openParamPresetEditor(undefined, 'create')}
-                            className="px-3 py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded-md hover:bg-lime-400 transition-colors"
-                          >
-                            + New
-                          </button>
-                        </div>
-                      </div>
-                      {paramPresetCards.length === 0 ? (
-                        <div className="text-sm text-zinc-500">No param presets yet. Click Add to create one.</div>
-                      ) : (
-                        <div className="grid grid-cols-3 gap-4">
-                          {paramPresetCards.map(node => {
-                          const NodeIcon = node.icon ?? Settings;
-                          return (
-                            <div
-                              key={node.id}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => openParamPresetEditorForEdit(node.id)}
-                              onContextMenu={event => {
-                                event.preventDefault();
-                                setParamPresetContextMenu({
-                                  open: true,
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                  presetId: node.id
-                                });
-                              }}
-                              onKeyDown={event => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault();
-                                  openParamPresetEditorForEdit(node.id);
-                                }
-                              }}
-                              className="group text-left p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="h-9 w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
-                                  <NodeIcon size={18} className="text-zinc-200" />
-                                </div>
-                                <div>
-                                  <div className="text-sm font-semibold text-zinc-100">{node.label}</div>
-                                  <div className="mt-2 text-xs text-zinc-500">
-                                    {node.taskLabel} • {node.params.length} params
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                <Suspense fallback={<div className="text-sm text-zinc-500">Loading pipeline forge...</div>}>
+                  <LazyPipelineForge
+                    pipelineLibrary={pipelineLibrary}
+                    availableTasks={availableTasks}
+                    onOpenPipelinePreview={openPipelinePreview}
+                    onOpenPipelineEditor={openPipelineEditor}
+                    onCreateNewPipeline={() => setShowPipelineEditor(true)}
+                    onOpenContextMenu={(event, pipeline) => {
+                      event.preventDefault();
+                      setPipelineContextMenu({
+                        open: true,
+                        x: event.clientX,
+                        y: event.clientY,
+                        pipelineId: pipeline.id
+                      });
+                    }}
+                    resolvePipelineIcon={resolvePipelineIcon}
+                    showParamPresets={SHOW_PARAM_PRESETS}
+                    paramPresetCards={paramPresetCards}
+                    onResetParamPresets={resetParamPresetsDb}
+                    onCreateParamPreset={() => openParamPresetEditor(undefined, 'create')}
+                    onOpenParamPresetEditor={openParamPresetEditorForEdit}
+                    onParamPresetContextMenu={(event, presetId) => {
+                      event.preventDefault();
+                      setParamPresetContextMenu({
+                        open: true,
+                        x: event.clientX,
+                        y: event.clientY,
+                        presetId
+                      });
+                    }}
+                  />
+                </Suspense>
 
                 {showPipelineEditor && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
@@ -8352,2401 +6984,134 @@ export default function App() {
               </motion.div>
             )}
 
-            {toastVisible && toastMessage && (
-              <div className={`fixed bottom-6 right-6 z-[70] px-4 py-2 rounded-lg border text-sm shadow-lg ${toastStyles[toastType]}`}>
-                {toastMessage}
-              </div>
-            )}
-
-            {vaultContextMenu.open && vaultContextMenu.folder && (
-              <div className="fixed inset-0 z-[80]" onClick={closeVaultContextMenu}>
-                <div
-                  className="absolute bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl p-2 w-48 text-xs text-zinc-200"
-                  style={{ left: vaultContextMenu.x, top: vaultContextMenu.y }}
-                  onClick={event => event.stopPropagation()}
-                >
-                  <button
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-zinc-800 transition-colors"
-                    onClick={() => {
-                      const folder = vaultContextMenu.folder;
-                      if (!folder) return;
-                      setVaultFolderId(folder.id);
-                      setVaultFileId(folder.files[0]?.id ?? null);
-                      setShowFolderPanel(true);
-                      closeVaultContextMenu();
-                    }}
-                  >
-                    Open Project
-                  </button>
-                  <button
-                    className="w-full text-left px-3 py-2 rounded-lg text-red-300 hover:bg-red-500/10 transition-colors"
-                    onClick={() => {
-                      const folder = vaultContextMenu.folder;
-                      if (!folder) return;
-                      closeVaultContextMenu();
-                      deleteVaultProject(folder);
-                    }}
-                  >
-                    Delete Project
-                  </button>
-                </div>
-              </div>
-            )}
-
             {activeTab === 'vault' && (
-              <motion.div
-                key="vault"
-                initial={false}
-                animate={false as any}
-                exit={false as any}
-                className="p-8 h-full flex flex-col gap-4"
-              >
-                {vaultError && (
-                  <div className="bg-red-500/10 border border-red-500/30 text-red-200 px-4 py-3 rounded-xl text-sm">
-                    {vaultError}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-[minmax(0,7fr)_minmax(0,3fr)] gap-6 flex-1 min-h-0">
-                  {/* Folder Navigation */}
-                  <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 min-h-0 min-w-0">
-                    <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-400">
-                      <Search size={14} />
-                      <input
-                        value={vaultFolderQuery}
-                        onChange={e => setVaultFolderQuery(e.target.value)}
-                        placeholder="Search"
-                        className="bg-transparent focus:outline-none"
-                      />
-                      <div className="ml-auto flex items-center gap-2">
-                        <button
-                          onClick={() => setImportPopupOpen(true)}
-                          className="px-2 py-1 rounded-md border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-lime-500/40"
-                          title="Import files"
-                        >
-                          <Upload size={14} />
-                        </button>
-                        <button
-                          onClick={loadVault}
-                          className="text-zinc-400 hover:text-zinc-100 transition-colors"
-                          title="Rescan folders"
-                        >
-                          <RefreshCw size={14} className={vaultLoading ? 'animate-spin-soft' : ''} />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto pr-1">
-                      <div className="flex flex-col gap-2">
-                        {filteredFolders.map(folder => {
-                          const isActive = folder.id === selectedFolder?.id;
-                          const firstVideo = folder.files.find(file => file.type === 'video');
-                          const videoCount = folder.files.filter(file => file.type === 'video').length;
-                          const audioCount = folder.files.filter(file => file.type === 'audio').length;
-                          const subtitleCount = folder.files.filter(file => file.type === 'subtitle').length;
-                          const otherCount = folder.files.filter(file => file.type === 'other').length;
-                          const totalVideoSeconds = folder.files
-                            .filter(file => file.type === 'video')
-                            .reduce((sum, file) => sum + parseDurationToSeconds(file.duration), 0);
-                          const totalVideoDuration = formatDuration(totalVideoSeconds);
-                          return (
-                            <button
-                              key={folder.id}
-                              onClick={() => {
-                                setVaultFolderId(folder.id);
-                                setVaultFileId(folder.files[0]?.id ?? null);
-                              }}
-                              onContextMenu={event => openVaultContextMenu(event, folder)}
-                              className={`text-left p-3 rounded-xl border transition-colors ${
-                                isActive ? 'border-lime-500/40 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700'
-                              }`}
-                            >
-                              <div className="flex items-start gap-4">
-                                <div className="w-28 shrink-0">
-                                  <div className="w-full aspect-video rounded-lg bg-zinc-800/80 border border-zinc-700 flex items-center justify-center text-zinc-500 text-xs font-semibold overflow-hidden">
-                                    {firstVideo?.relativePath ? (
-                                      <img
-                                        src={`/api/vault/thumb?path=${encodeURIComponent(firstVideo.relativePath)}`}
-                                        alt={firstVideo.name}
-                                        className="w-full h-full object-cover"
-                                      />
-                                    ) : firstVideo ? (
-                                      <FileVideo size={22} />
-                                    ) : (
-                                      <File size={18} />
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-sm font-semibold text-zinc-100 truncate">{folder.name}</span>
-                                    </div>
-                                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-500/15 text-zinc-400">
-                                      Project
-                                    </span>
-                                  </div>
-                                  <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500">
-                                    <div className="flex items-center gap-3">
-                                      {videoCount > 0 && (
-                                        <span
-                                          className="flex items-center gap-1"
-                                          title={buildTooltip(folder.files.filter(file => file.type === 'video'))}
-                                        >
-                                          <FileVideo size={12} />
-                                          {videoCount}
-                                        </span>
-                                      )}
-                                      {audioCount > 0 && (
-                                        <span
-                                          className="flex items-center gap-1"
-                                          title={buildTooltip(folder.files.filter(file => file.type === 'audio'))}
-                                        >
-                                          <FileAudio size={12} />
-                                          {audioCount}
-                                        </span>
-                                      )}
-                                      {subtitleCount > 0 && (
-                                        <span
-                                          className="flex items-center gap-1"
-                                          title={buildTooltip(folder.files.filter(file => file.type === 'subtitle'))}
-                                        >
-                                          <Type size={12} />
-                                          {subtitleCount}
-                                        </span>
-                                      )}
-                                      {otherCount > 0 && (
-                                        <span
-                                          className="flex items-center gap-1"
-                                          title={buildTooltip(folder.files.filter(file => file.type === 'other'))}
-                                        >
-                                          <File size={12} />
-                                          {otherCount}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span>
-                                      {totalVideoDuration ? `Total ${totalVideoDuration}` : `Updated ${folder.lastActivity}`}
-                                    </span>
-                                  </div>
-                                  <div className="mt-2 flex flex-wrap gap-1">
-                                    {folder.tags.map(tag => (
-                                      <span key={tag} className="px-2 py-0.5 rounded-full text-[10px] bg-zinc-800 text-zinc-400">
-                                        {tag}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Preview Panel */}
-                  <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 min-h-0 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-xs text-zinc-500 uppercase tracking-widest">Preview</div>
-                        <div className="text-sm font-semibold text-zinc-100">{selectedFolder?.name ?? 'Select a project'}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {selectedFile && (
-                          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                            selectedFile.origin === 'tts'
-                              ? 'bg-amber-500/15 text-amber-300'
-                              : selectedFile.origin === 'vr'
-                                ? 'bg-lime-500/15 text-lime-400'
-                                : 'bg-zinc-500/15 text-zinc-400'
-                          }`}>
-                            {selectedFile.origin === 'tts' ? 'TTS' : selectedFile.origin === 'vr' ? 'VR' : 'Source'}
-                          </span>
-                        )}
-                        <button
-                          onClick={() => setShowFolderPanel(true)}
-                          disabled={!selectedFolder}
-                          className="px-2 py-1 text-[10px] border border-zinc-800 rounded-md text-zinc-400 hover:text-zinc-100 hover:border-lime-500/40 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Open Project
-                        </button>
-                      </div>
-                    </div>
-
-                    {selectedFolder && (
-                      <button
-                        onClick={() => {
-                          setRunPipelineProjectLocked(true);
-                          setRunPipelineProjectId(selectedFolder.id);
-                          resetDownloadForm();
-                          setShowRunPipeline(true);
-                        }}
-                        className="w-full px-3 py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors"
-                      >
-                        Run Pipeline
-                      </button>
-                    )}
-
-                    {selectedFolder ? (
-                      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
-                        {previewGroups(selectedFolder)
-                          .filter(group => group.items.length > 0)
-                          .map(group => (
-                          <div key={group.type} className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/80">
-                            <div className="flex items-center justify-between text-xs text-zinc-500 uppercase tracking-widest">
-                              <span>{group.label}</span>
-                              <span>{group.items.length}</span>
-                            </div>
-                            {group.items.length === 0 ? (
-                              <div className="mt-3 text-xs text-zinc-500">No files</div>
-                            ) : (
-                              <div className="mt-3 flex flex-col gap-2">
-                                {group.items.map(item => (
-                                  <div
-                                    key={item.id}
-                                    className="flex items-center justify-between text-xs text-zinc-300"
-                                    onContextMenu={event => openFileContextMenu(event, item)}
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="truncate text-zinc-200">{item.name}</div>
-                                      <div className="text-[10px] text-zinc-500 mt-1">
-                                        {item.size}
-                                        {item.duration ? ` • ${item.duration}` : ''}
-                                        {item.language ? ` • ${item.language}` : ''}
-                                      </div>
-                                      {item.linkedTo && (
-                                        <div className="text-[10px] text-zinc-500 mt-1">
-                                          Generated from {selectedFolder.files.find(file => file.id === item.linkedTo)?.name ?? 'source file'}
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                                        item.origin === 'tts'
-                                          ? 'bg-amber-500/15 text-amber-300'
-                                          : item.origin === 'vr'
-                                            ? 'bg-lime-500/15 text-lime-400'
-                                            : 'bg-zinc-500/15 text-zinc-400'
-                                      }`}>
-                                        {item.origin === 'tts' ? 'TTS' : item.origin === 'vr' ? 'VR' : 'Source'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center text-sm text-zinc-500 border border-dashed border-zinc-800 rounded-2xl">
-                        No projects loaded
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </motion.div>
-            )}
-
-            {showFolderPanel && selectedFolder && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-                <div className="absolute inset-0" onClick={() => setShowFolderPanel(false)} />
-                <div className="relative w-[min(960px,92vw)] h-[min(720px,86vh)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 shadow-2xl min-h-0 overflow-y-auto">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="text-xl font-bold text-zinc-100">{selectedFolder.name}</h3>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-500/15 text-zinc-400">
-                          Project
-                        </span>
-                        <span className="text-xs text-zinc-500">Last activity {selectedFolder.lastActivity}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button className="px-2.5 py-1.5 text-xs font-semibold bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/40 transition-colors">
-                        Quick Actions
-                      </button>
-                      <button className="px-2.5 py-1.5 text-xs font-semibold bg-lime-500 text-zinc-950 rounded-lg hover:bg-lime-400 transition-colors">
-                        New Job
-                      </button>
-                      <button
-                        onClick={() => setShowFolderPanel(false)}
-                        className="px-2.5 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                      >
-                        Close
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3">
-                    {selectedFolder.suggestedAction && (
-                      <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 text-blue-200 px-3 py-2 rounded-xl text-sm">
-                        <span>{selectedFolder.suggestedAction}</span>
-                        <button className="px-2.5 py-1 text-xs font-semibold bg-blue-500/20 text-blue-100 rounded-lg border border-blue-500/40">
-                          Do It
-                        </button>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-5 gap-2">
-                      {(['video', 'audio', 'subtitle', 'image', 'output'] as VaultFileType[]).map(type => {
-                        const count = selectedFolder.files.filter(file => file.type === type).length;
-                        const Icon = fileTypeIcons[type];
-                        return (
-                          <div key={type} className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-2.5">
-                            <div className="flex items-center gap-2 text-xs text-zinc-500">
-                              <Icon size={14} />
-                              {fileTypeLabels[type]}
-                            </div>
-                            <div className="text-lg font-bold text-zinc-100 mt-2">{count}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <div className="text-xs text-zinc-500 uppercase tracking-widest">Files</div>
-                        <div className="text-xs text-zinc-500">({filteredFiles.length})</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-400">
-                          <Search size={14} />
-                          <input
-                            value={vaultQuery}
-                            onChange={e => setVaultQuery(e.target.value)}
-                            placeholder="Search inside folder"
-                            className="bg-transparent focus:outline-none"
-                          />
-                        </div>
-                        <select
-                          value={vaultTypeFilter}
-                          onChange={e => setVaultTypeFilter(e.target.value as VaultFileType | 'all')}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:outline-none"
-                        >
-                          <option value="all">All Types</option>
-                          <option value="video">Video</option>
-                          <option value="audio">Audio</option>
-                          <option value="subtitle">Subtitle</option>
-                          <option value="image">Image</option>
-                          <option value="output">Output</option>
-                          <option value="other">Other</option>
-                        </select>
-                        <select
-                          value={vaultSort}
-                          onChange={e => setVaultSort(e.target.value as 'recent' | 'name' | 'size')}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:outline-none"
-                        >
-                          <option value="recent">Recent</option>
-                          <option value="name">Name</option>
-                          <option value="size">Size</option>
-                        </select>
-                        <button
-                          onClick={() => setVaultView(vaultView === 'grouped' ? 'flat' : 'grouped')}
-                          className="px-2.5 py-1.5 text-xs border border-zinc-800 rounded-lg text-zinc-300 hover:border-lime-500/40"
-                        >
-                          {vaultView === 'grouped' ? 'Flat View' : 'Grouped View'}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="pr-1">
-                      <div className="flex flex-col gap-4">
-                        {vaultView === 'grouped' ? (
-                          groupedFiles.map(group => {
-                            if (group.items.length === 0) return null;
-                            return (
-                              <div key={group.type} className="flex flex-col gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setVaultGroupCollapsed(prev => ({ ...prev, [group.type]: !prev[group.type] }))}
-                                  className="flex items-center justify-between text-[10px] font-semibold text-zinc-400 uppercase tracking-widest hover:text-zinc-300"
-                                >
-                                  <span className="flex items-center gap-2">
-                                    <ChevronRight
-                                      size={12}
-                                      className={`transition-transform ${vaultGroupCollapsed[group.type] ? '' : 'rotate-90'}`}
-                                    />
-                                    {fileTypeLabels[group.type]}
-                                  </span>
-                                  <span>{group.items.length}</span>
-                                </button>
-                                {!vaultGroupCollapsed[group.type] && (
-                                  <div className="flex flex-col gap-1.5">
-                                    {group.items.map(file => {
-                                      const isSelected = file.id === selectedFile?.id;
-                                      const Icon = fileTypeIcons[file.type];
-                                      return (
-                                        <button
-                                          key={file.id}
-                                          onClick={() => setVaultFileId(file.id)}
-                                          onContextMenu={event => openFileContextMenu(event, file)}
-                                          className={`group text-left border rounded-xl p-2.5 transition-colors ${
-                                            isSelected ? 'border-lime-500/50 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700'
-                                          }`}
-                                        >
-                                          <div className="flex items-start justify-between gap-4">
-                                            <div className="flex items-start gap-3">
-                                              <div className="p-1.5 bg-zinc-800 rounded-lg text-zinc-400">
-                                                <Icon size={14} />
-                                              </div>
-                                              <div>
-                                                <div className="text-xs font-semibold text-zinc-100">{file.name}</div>
-                                                <div className="text-[11px] text-zinc-500 mt-0.5">
-                                                  {fileTypeLabels[file.type]} • {file.size}{file.duration ? ` • ${file.duration}` : ''}{file.language ? ` • ${file.language}` : ''}
-                                                </div>
-                                                  {file.linkedTo && (
-                                                    <div className="text-[11px] text-zinc-500 mt-0.5">
-                                                      Generated from {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}
-                                                    </div>
-                                                  )}
-                                                  {file.origin === 'tts' && file.tts?.overlapSeconds !== undefined && file.tts?.overlapMode !== 'truncate' && (
-                                                    <div className="text-[11px] text-zinc-500 mt-0.5">
-                                                      Overlap total {formatOverlapDisplay(file.tts.overlapSeconds, file.durationSeconds)}
-                                                    </div>
-                                                  )}
-                                              </div>
-                                            </div>
-                                            <div className="flex flex-col items-end gap-1.5">
-                                              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                                                file.origin === 'tts'
-                                                  ? 'bg-amber-500/15 text-amber-300'
-                                                  : file.origin === 'vr'
-                                                    ? 'bg-lime-500/15 text-lime-400'
-                                                    : 'bg-zinc-500/15 text-zinc-400'
-                                              }`}>
-                                                {file.origin === 'tts' ? 'TTS' : file.origin === 'vr' ? 'VR' : 'Source'}
-                                              </span>
-                                              <span className="text-[10px] text-zinc-500">{file.createdAt}</span>
-                                            </div>
-                                          </div>
-                                          {file.status === 'processing' && typeof file.progress === 'number' && (
-                                            <div className="mt-3">
-                                              <div className="flex justify-between text-[10px] text-zinc-500">
-                                                <span>Processing</span>
-                                                <span>{file.progress}%</span>
-                                              </div>
-                                              <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1">
-                                                <div className="h-full bg-blue-500" style={{ width: `${file.progress}%` }} />
-                                              </div>
-                                            </div>
-                                          )}
-                                          {isSelected && file.type === 'audio' && file.relativePath && (
-                                            <div className="mt-2 border border-zinc-800 rounded-lg p-2 bg-zinc-900/80">
-                                              <audio
-                                                className="w-full mt-1.5 h-8 rounded-md bg-zinc-900"
-                                                style={{ colorScheme: 'dark' }}
-                                                controls
-                                              >
-                                                <source src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}&preview=1`} />
-                                              </audio>
-                                              {file.sizeBytes > 20 * 1024 * 1024 && (
-                                                <div className="text-[11px] text-zinc-500 mt-1.5">
-                                                  Preview limited to the first 60 seconds for files over 20MB.
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-                                          <div className="mt-2" />
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <div className="flex flex-col gap-1.5">
-                            {filteredFiles.map(file => {
-                              const isSelected = file.id === selectedFile?.id;
-                              const Icon = fileTypeIcons[file.type];
-                              return (
-                                <button
-                                  key={file.id}
-                                  onClick={() => setVaultFileId(file.id)}
-                                  onContextMenu={event => openFileContextMenu(event, file)}
-                                  className={`group text-left border rounded-xl p-2.5 transition-colors ${
-                                    isSelected ? 'border-lime-500/50 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/70 hover:border-zinc-700'
-                                  }`}
-                                >
-                                  <div className="flex items-start justify-between gap-4">
-                                    <div className="flex items-start gap-3">
-                                      <div className="p-1.5 bg-zinc-800 rounded-lg text-zinc-400">
-                                        <Icon size={14} />
-                                      </div>
-                                      <div>
-                                        <div className="text-xs font-semibold text-zinc-100">{file.name}</div>
-                                        <div className="text-[11px] text-zinc-500 mt-0.5">
-                                          {fileTypeLabels[file.type]} • {file.size}{file.duration ? ` • ${file.duration}` : ''}{file.language ? ` • ${file.language}` : ''}
-                                        </div>
-                                        {file.linkedTo && (
-                                          <div className="text-[11px] text-zinc-500 mt-0.5">
-                                            Generated from {selectedFolder.files.find(item => item.id === file.linkedTo)?.name ?? 'source file'}
-                                          </div>
-                                        )}
-                                        {file.origin === 'tts' && file.tts?.overlapSeconds !== undefined && file.tts?.overlapMode !== 'truncate' && (
-                                          <div className="text-[11px] text-zinc-500 mt-0.5">
-                                            Overlap total {formatOverlapDisplay(file.tts.overlapSeconds, file.durationSeconds)}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="flex flex-col items-end gap-1.5">
-                                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                                        file.origin === 'tts'
-                                          ? 'bg-amber-500/15 text-amber-300'
-                                          : file.origin === 'vr'
-                                            ? 'bg-lime-500/15 text-lime-400'
-                                            : 'bg-zinc-500/15 text-zinc-400'
-                                      }`}>
-                                        {file.origin === 'tts' ? 'TTS' : file.origin === 'vr' ? 'VR' : 'Source'}
-                                      </span>
-                                      <span className="text-[10px] text-zinc-500">{file.createdAt}</span>
-                                    </div>
-                                  </div>
-                                  {file.status === 'processing' && typeof file.progress === 'number' && (
-                                    <div className="mt-3">
-                                      <div className="flex justify-between text-[10px] text-zinc-500">
-                                        <span>Processing</span>
-                                        <span>{file.progress}%</span>
-                                      </div>
-                                      <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1">
-                                        <div className="h-full bg-blue-500" style={{ width: `${file.progress}%` }} />
-                                      </div>
-                                    </div>
-                                  )}
-                                  {isSelected && file.type === 'audio' && file.relativePath && (
-                                    <div className="mt-2 border border-zinc-800 rounded-lg p-2 bg-zinc-900/80">
-                                      <audio
-                                        className="w-full mt-1.5 h-8 rounded-md bg-zinc-900"
-                                        style={{ colorScheme: 'dark' }}
-                                        controls
-                                      >
-                                        <source src={`/api/vault/stream?path=${encodeURIComponent(file.relativePath)}&preview=1`} />
-                                      </audio>
-                                      {file.sizeBytes > 20 * 1024 * 1024 && (
-                                        <div className="text-[11px] text-zinc-500 mt-1.5">
-                                          Preview limited to the first 60 seconds for files over 20MB.
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  <div className="mt-2" />
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {importPopupOpen && (
-              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-                <div className="absolute inset-0" onClick={() => setImportPopupOpen(false)} />
-                <div className="relative w-[min(560px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-xs text-zinc-500 uppercase tracking-widest">Import Files</div>
-                      <div className="text-sm font-semibold text-zinc-100">Add files to project</div>
-                    </div>
-                    <button
-                      onClick={() => setImportPopupOpen(false)}
-                      className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                    >
-                      Close
-                    </button>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs text-zinc-500 uppercase tracking-widest">Project</label>
-                    <div className="relative">
-                      <input
-                        value={importProjectName}
-                        onChange={e => {
-                          const nextValue = e.target.value;
-                          setImportProjectName(nextValue);
-                          setImportProjectPickerOpen(true);
-                        }}
-                        onFocus={() => setImportProjectPickerOpen(true)}
-                        onBlur={() => setTimeout(() => setImportProjectPickerOpen(false), 120)}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none"
-                        placeholder="Project name (new or existing)"
-                        autoComplete="off"
-                      />
-                      {importProjectPickerOpen && vaultFolders.length > 0 && (
-                        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl">
-                          {vaultFolders
-                            .filter(folder => folder.name.toLowerCase().includes(importProjectName.trim().toLowerCase()))
-                            .map(folder => (
-                              <button
-                                type="button"
-                                key={folder.id}
-                                onMouseDown={() => {
-                                  setImportProjectName(folder.name);
-                                  setImportProjectPickerOpen(false);
-                                }}
-                                className="w-full px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-900"
-                              >
-                                {folder.name}
-                              </button>
-                            ))}
-                          {vaultFolders.filter(folder => folder.name.toLowerCase().includes(importProjectName.trim().toLowerCase())).length === 0 && (
-                            <div className="px-3 py-2 text-xs text-zinc-500">No matches</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs text-zinc-500 uppercase tracking-widest">Files</label>
-                    <label className="flex items-center justify-between gap-3 px-3 py-2 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
-                      <span>{importFiles.length ? `${importFiles.length} file(s) selected` : 'Choose files'}</span>
-                      <input
-                        type="file"
-                        multiple
-                        onChange={e => setImportFiles(Array.from(e.target.files ?? []))}
-                        className="hidden"
-                      />
-                    </label>
-                    {importFiles.length > 0 && (
-                      <div className="text-[11px] text-zinc-500">
-                        {importFiles.slice(0, 3).map(file => file.name).join(', ')}
-                        {importFiles.length > 3 ? ` +${importFiles.length - 3} more` : ''}
-                      </div>
-                    )}
-                  </div>
-
-                  {importError && <div className="text-xs text-red-400">{importError}</div>}
-
-                  <button
-                    onClick={performImport}
-                    disabled={importSubmitting}
-                    className="w-full px-4 py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {importSubmitting ? 'Importing...' : 'Import'}
-                  </button>
-                </div>
-              </div>
+              <Suspense key="tab-vault" fallback={<div className="p-8 text-sm text-zinc-500">Loading media vault...</div>}>
+                <LazyVaultPanel
+                  folders={vaultFolders}
+                  loading={vaultLoading}
+                  error={vaultError}
+                  onRefresh={loadVault}
+                  onImport={() => setImportPopupOpen(true)}
+                  onSelectProject={(folderId) => {
+                    const folder = vaultFolders.find(item => item.id === folderId);
+                    setVaultFolderId(folderId);
+                    setVaultFileId(folder?.files[0]?.id ?? null);
+                  }}
+                  onSelectFile={setVaultFileId}
+                  selectedFolderId={selectedFolder?.id ?? null}
+                  selectedFileId={selectedFile?.id ?? null}
+                  onOpenContextMenu={openVaultContextMenu}
+                  onOpenFileContextMenu={openFileContextMenu}
+                  onRunPipeline={(folder) => {
+                    setRunPipelineProjectLocked(true);
+                    setRunPipelineProjectId(folder.id);
+                    resetDownloadForm();
+                    setShowRunPipeline(true);
+                  }}
+                  onOpenProjectPanel={(folder) => {
+                    setVaultFolderId(folder.id);
+                    setVaultFileId(folder.files[0]?.id ?? null);
+                    setShowFolderPanel(true);
+                  }}
+                />
+              </Suspense>
             )}
           </AnimatePresence>
 
-          {confirmModal}
-
-          {templateSaveOpen && (
-            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-              <div className="absolute inset-0" onClick={() => setTemplateSaveOpen(false)} />
-              <div className="relative w-[min(520px,92vw)] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-zinc-100">Save Template</div>
-                  <button
-                    onClick={() => setTemplateSaveOpen(false)}
-                    className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="text-xs text-zinc-500">
-                  {templateSaveTaskType === 'render' ? 'Save Render template (inputs will be placeholders).' : 'Save task template.'}
-                </div>
-                {templateSaveError && (
-                  <div className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-lg px-2.5 py-2">
-                    {templateSaveError}
-                  </div>
-                )}
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs text-zinc-500 uppercase tracking-widest">Template Name</label>
-                  <input
-                    value={templateSaveName}
-                    onChange={e => setTemplateSaveName(e.target.value)}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none"
-                    placeholder="My template"
-                  />
-                </div>
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    onClick={() => setTemplateSaveOpen(false)}
-                    className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmSaveTemplate}
-                    disabled={Boolean(templateSaveError)}
-                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-            {showRunPipeline && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-                <div className="absolute inset-0" onClick={() => {
-                  setShowRunPipeline(false);
-                  setRenderStudioOpen(false);
-                }} />
-              <div className="relative w-[min(700px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 shadow-2xl overflow-y-auto">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-zinc-500 uppercase tracking-widest">New Job</div>
-                  <div className="flex items-center gap-2">
-                    {!isNewJobProjectLoading && runPipelineHasRender && (
-                      <button
-                        onClick={() => setRenderStudioOpen(true)}
-                        disabled={!runPipelineProject}
-                        className="px-3 py-1.5 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        Preview
-                      </button>
-                    )}
-                    {!isNewJobProjectLoading && (
-                      <button
-                        onClick={() => runPipelineJob()}
-                        disabled={runPipelineSubmitting}
-                        className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        {runPipelineSubmitting ? 'Queuing...' : 'Run'}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        setShowRunPipeline(false);
-                        setRenderStudioOpen(false);
-                      }}
-                      className="p-2 text-zinc-400 hover:text-zinc-100 border border-zinc-800 rounded-lg hover:border-zinc-700"
-                      aria-label="Close"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-                {isNewJobProjectLoading && (
-                  <div className="absolute inset-x-0 top-14 bottom-0 z-20 bg-zinc-900/95 rounded-b-2xl flex items-center justify-center">
-                    <div className="text-sm text-zinc-400">Loading project...</div>
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-zinc-500 uppercase tracking-widest">
-                    {runPipelineHasDownload ? 'Project' : 'Project'}
-                  </label>
-                  {runPipelineHasDownload ? (
-                    <div className="flex flex-col gap-2">
-                      <div className="relative">
-                        <input
-                          value={downloadProjectName}
-                          onChange={e => {
-                            const nextValue = e.target.value;
-                            setDownloadProjectName(nextValue);
-                            setDownloadProjectPickerOpen(true);
-                            const match = vaultFolders.find(folder => folder.name.toLowerCase() === nextValue.trim().toLowerCase());
-                            if (match) {
-                              setRunPipelineProjectId(match.id);
-                            }
-                          }}
-                          onFocus={() => setDownloadProjectPickerOpen(true)}
-                          onBlur={() => setTimeout(() => setDownloadProjectPickerOpen(false), 120)}
-                          className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                          placeholder="Project name (new or existing)"
-                          autoComplete="off"
-                        />
-                        {downloadProjectPickerOpen && vaultFolders.length > 0 && (
-                          <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl">
-                            {vaultFolders
-                              .filter(folder => folder.name.toLowerCase().includes(downloadProjectName.trim().toLowerCase()))
-                              .map(folder => (
-                                <button
-                                  type="button"
-                                  key={folder.id}
-                                  onMouseDown={() => {
-                                    setDownloadProjectName(folder.name);
-                                    setRunPipelineProjectId(folder.id);
-                                    setDownloadProjectPickerOpen(false);
-                                  }}
-                                  className="w-full px-2.5 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-900"
-                                >
-                                  {folder.name}
-                                </button>
-                              ))}
-                            {vaultFolders.filter(folder => folder.name.toLowerCase().includes(downloadProjectName.trim().toLowerCase())).length === 0 && (
-                              <div className="px-2.5 py-1.5 text-xs text-zinc-500">No matches</div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <select
-                      value={runPipelineProject?.id ?? ''}
-                      onChange={e => setRunPipelineProjectId(e.target.value || null)}
-                      disabled={runPipelineProjectLocked}
-                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none disabled:opacity-60"
-                    >
-                      <option value="" disabled>Select a project</option>
-                      {vaultFolders.map(folder => (
-                        <option key={folder.id} value={folder.id}>{folder.name}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-zinc-500 uppercase tracking-widest">Pipeline</label>
-                  <select
-                    value={runPipelineId ?? ''}
-                    onChange={e => setRunPipelineId(e.target.value || null)}
-                    disabled={pipelineLibrary.length === 0}
-                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                  >
-                    {pipelineLibrary.length === 0 && (
-                      <option value="">No pipelines saved</option>
-                    )}
-                    {pipelineLibrary.map(pipe => (
-                      <option key={pipe.id} value={pipe.id}>{pipe.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">
-                      {runPipelineHasDownload
-                        ? 'Inputs (URL)'
-                        : runPipelineHasRender
-                          ? 'Inputs (Files)'
-                          : runPipelineHasTts
-                            ? 'Inputs (Subtitle)'
-                            : 'Inputs (Video/Audio)'}
-                    </div>
-                    {runPipelineLoading ? (
-                      <div className="text-xs text-zinc-500">Loading...</div>
-                    ) : (
-                      <div className="flex flex-col gap-2">
-                        {runPipelineHasDownload ? (
-                          <div className="flex flex-col gap-2">
-                            <div className="grid grid-cols-2 gap-2">
-                              <input
-                                value={downloadUrl}
-                                onChange={e => setDownloadUrl(e.target.value)}
-                                className="col-span-2 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                                placeholder="https://..."
-                              />
-                            </div>
-                            {downloadAnalyzeError && (
-                              <div className="text-[11px] text-red-400">{downloadAnalyzeError}</div>
-                            )}
-                            {downloadAnalyzeResult && (
-                              <div className="mt-1 border border-zinc-800 rounded-lg p-2.5 bg-zinc-900/70">
-                                <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Analyze Result</div>
-                                <div className="text-xs text-zinc-200 mt-2">
-                                  {downloadAnalyzeData?.title ? (
-                                    <div className="font-semibold text-zinc-100">{downloadAnalyzeData.title}</div>
-                                  ) : (
-                                    <div className="text-zinc-500">No title</div>
-                                  )}
-                                  {downloadAnalyzeData?.webpage_url && (
-                                    <div className="text-[11px] text-zinc-500 mt-1">{downloadAnalyzeData.webpage_url}</div>
-                                  )}
-                                </div>
-                                <div className="grid gap-1.5 mt-2 text-[11px] text-zinc-400">
-                                  <div>Video formats: {downloadAnalyzeVideoFormats.length}</div>
-                                  <div>Audio formats: {downloadAnalyzeAudioFormats.length}</div>
-                                  <div>Subtitle languages: {downloadAnalyzeSubtitleCount}</div>
-                                </div>
-                                {bestSingleFormat && (
-                                  <div className="mt-2 text-[11px] text-zinc-300">
-                                    <div className="font-semibold text-zinc-200 mb-1">Best Format</div>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="font-mono text-zinc-400">{bestSingleFormat.format_id}</span>
-                                      <span>{bestSingleFormat.ext ?? 'unknown'}</span>
-                                      <span>
-                                        {bestSingleFormat.resolution ?? (bestSingleFormat.height ? `${bestSingleFormat.height}p` : bestSingleFormat.vcodec === 'none' ? 'audio' : 'video')}
-                                      </span>
-                                      <span>
-                                        {bestSingleFormat.vcodec !== 'none' ? (bestSingleFormat.vcodec ?? 'vcodec') : (bestSingleFormat.acodec ?? 'acodec')}
-                                      </span>
-                                    </div>
-                                  </div>
-                                )}
-                                {downloadAnalyzeListSubs.length > 0 && (
-                                  <div className="mt-2 text-[11px] text-zinc-300">
-                                    <div className="font-semibold text-zinc-200 mb-1">Subtitles</div>
-                                    <div className="max-h-32 overflow-y-auto space-y-1">
-                                      {downloadAnalyzeListSubs.map((entry: any) => (
-                                        <div key={entry.lang} className="flex items-center justify-between gap-2">
-                                          <span className="font-mono text-zinc-400">{entry.lang}</span>
-                                          <span className="text-zinc-500">
-                                            {Array.isArray(entry.formats) ? entry.formats.join(', ') : '--'}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {downloadAnalyzeWarnings.length > 0 ? null : null}
-                              </div>
-                            )}
-                          </div>
-                        ) : runPipelineHasRender ? (
-                          <div className="flex flex-col gap-2">
-                            {!runPipelineProject ? (
-                              <div className="text-[11px] text-zinc-500">Select a project first.</div>
-                            ) : runPipelineRenderTemplateId === 'custom' || !selectedRenderTemplate ? (
-                              <>
-                                <select
-                                  multiple
-                                  value={renderInputFileIds}
-                                  onChange={e => {
-                                    const selectedOptions = Array.from(e.currentTarget.selectedOptions) as HTMLOptionElement[];
-                                    const selected = selectedOptions.map(option => option.value);
-                                    setRenderInputFileIds(selected);
-                                    const selectedFiles = runPipelineProject?.files.filter(file => selected.includes(file.id)) ?? [];
-                                    const firstVideo = selectedFiles.find(file => file.type === 'video');
-                                    const firstAudio = selectedFiles.find(file => file.type === 'audio');
-                                    const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
-                                    setRenderVideoId(firstVideo?.id ?? null);
-                                    setRenderAudioId(firstAudio?.id ?? null);
-                                    setRenderSubtitleId(firstSubtitle?.id ?? null);
-                                  }}
-                                  className="min-h-[140px] bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                                >
-                                  {runPipelineProject?.files
-                                    .filter(file => file.type === 'video' || file.type === 'audio' || file.type === 'subtitle' || file.type === 'image')
-                                    .map(file => (
-                                      <option
-                                        key={file.id}
-                                        value={file.id}
-                                        title={file.name}
-                                      >
-                                        [{file.type}] {truncateLabel(file.name, 52)}
-                                      </option>
-                                    ))}
-                                </select>
-                                <div className="text-[10px] text-zinc-500">
-                                  Select multiple files (Ctrl/Cmd + click).
-                                </div>
-                              </>
-                            ) : (
-                              <div className="grid grid-cols-2 gap-2">
-                                {(['video', 'audio', 'subtitle', 'image', 'other'] as const).map(group => {
-                                  const placeholders = renderTemplatePlaceholdersByType[group];
-                                  if (!placeholders.length) return null;
-                                  const files = renderTemplateFilesByType[group as keyof typeof renderTemplateFilesByType] ?? [];
-                                  const needsWarning = group !== 'other' && (files.length === 0 || files.length !== placeholders.length);
-                                  let warningText = '';
-                                  if (files.length === 0) {
-                                    warningText = `No ${group} files available`;
-                                  } else if (files.length < placeholders.length) {
-                                    warningText = `Missing ${placeholders.length - files.length} ${group} file(s)`;
-                                  } else if (files.length > placeholders.length) {
-                                    warningText = `Extra ${files.length - placeholders.length} ${group} file(s)`;
-                                  }
-                                  return (
-                                    <div key={group} className="border border-zinc-800 rounded-lg bg-zinc-950/50">
-                                      <div className="flex items-center justify-between px-2.5 py-2 border-b border-zinc-800">
-                                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest">{group}</span>
-                                        {needsWarning && (
-                                          <span className="text-[10px] text-amber-300">{warningText}</span>
-                                        )}
-                                      </div>
-                                      <div className="p-2 grid gap-2">
-                                        {placeholders.map((placeholder, index) => {
-                                          const fallbackKey = placeholders.length === 1 && placeholder.key === placeholder.type
-                                            ? ''
-                                            : (placeholder.key === placeholder.type ? `${placeholder.type}1` : placeholder.key);
-                                          const savedName = (selectedRenderTemplate?.config?.timeline?.trackLabels?.[placeholder.key] ?? '').trim();
-                                          const displayName = savedName || fallbackKey;
-                                          return (
-                                            <div key={placeholder.key} className="flex flex-col gap-1 min-w-0">
-                                              {displayName ? (
-                                                <label
-                                                  className="text-[10px] text-zinc-500 uppercase tracking-widest truncate"
-                                                  title={`${placeholder.key}${savedName ? ` · ${savedName}` : ''}`}
-                                                >
-                                                  {displayName}
-                                                </label>
-                                              ) : null}
-                                              <select
-                                                value={renderTemplateApplyMap[placeholder.key] ?? ''}
-                                                onChange={e => {
-                                                  const next = { ...renderTemplateApplyMap, [placeholder.key]: e.target.value };
-                                                  commitRenderTemplateApplyMap(selectedRenderTemplate?.id ?? null, next);
-                                                  if (selectedRenderTemplate) {
-                                                    applyRenderTemplate(selectedRenderTemplate, next);
-                                                  }
-                                                }}
-                                                title={(() => {
-                                                  const selectedId = renderTemplateApplyMap[placeholder.key];
-                                                  const selectedFile = files.find(file => file.id === selectedId);
-                                                  return selectedFile?.name ?? '';
-                                                })()}
-                                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-                                              >
-                                                <option value="">Select file</option>
-                                                {files.map(file => (
-                                                  <option key={file.id} value={file.id} title={file.name}>
-                                                    {truncateLabel(file.name, 52)}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <>
-                            <div className="flex flex-col gap-1.5">
-                              <select
-                                value={runPipelineInputId ?? ''}
-                                onChange={e => setRunPipelineInputId(e.target.value || null)}
-                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                              >
-                                <option value="">Select input file</option>
-                                {runPipelineProject?.files
-                                  .filter(file => (runPipelineHasTts ? file.type === 'subtitle' : file.type === 'video' || file.type === 'audio'))
-                                  .map(file => (
-                                    <option
-                                      key={file.id}
-                                      value={file.id}
-                                      title={`${file.origin === 'tts' ? '(TTS)' : file.origin === 'vr' ? '(VR)' : '(Source)'} ${file.name}`}
-                                    >
-                                      {file.origin === 'tts' ? '(TTS)' : file.origin === 'vr' ? '(VR)' : '(Source)'} {truncateLabel(file.name, 52)}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            {!runPipelineGraph?.nodes && pipelineLibrary.length === 0 && (
-                              <div className="text-[11px] text-zinc-500">No saved pipeline yet.</div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                {runPipelineHasRender && renderTemplates.length > 0 && (
-                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Render</div>
-                    <div className="flex items-center justify-between">
-                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <select
-                          value={runPipelineRenderTemplateId}
-                          onChange={e => handleRenderTemplateChange(e.target.value)}
-                          onContextMenu={event => {
-                            if (runPipelineRenderTemplateId === 'custom' || !selectedRenderTemplate) return;
-                            event.preventDefault();
-                            deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
-                        >
-                          <option value="custom">Custom</option>
-                          {renderTemplates.map(template => {
-                            const isSelected = runPipelineRenderTemplateId === template.id;
-                            const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
-                        </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (newJobRenderTemplateMenuCloseRef.current) {
-                              window.clearTimeout(newJobRenderTemplateMenuCloseRef.current);
-                              newJobRenderTemplateMenuCloseRef.current = null;
-                            }
-                            setNewJobRenderTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (newJobRenderTemplateMenuCloseRef.current) {
-                              window.clearTimeout(newJobRenderTemplateMenuCloseRef.current);
-                            }
-                            newJobRenderTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setNewJobRenderTemplateMenuOpen(false);
-                              newJobRenderTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setNewJobRenderTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setNewJobRenderTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setNewJobRenderTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {newJobRenderTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setNewJobRenderTemplateMenuOpen(false);
-                                  resetRenderToDefault();
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  isCustomRenderTemplate ? 'rounded-lg' : 'rounded-t-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {!isCustomRenderTemplate && isRenderTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (!selectedRenderTemplate) return;
-                                    setNewJobRenderTemplateMenuOpen(false);
-                                    saveRenderTemplateCurrent(selectedRenderTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {!isCustomRenderTemplate && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setNewJobRenderTemplateMenuOpen(false);
-                                      saveRenderTemplateQuick();
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                  >
-                                    Save As
-                                  </button>
-                                  {isRenderTemplateDirty && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (!selectedRenderTemplate) return;
-                                        setNewJobRenderTemplateMenuOpen(false);
-                                        restoreRenderTemplateCurrent(selectedRenderTemplate);
-                                      }}
-                                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                    >
-                                      Restore
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (!selectedRenderTemplate) return;
-                                      setNewJobRenderTemplateMenuOpen(false);
-                                      deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                  >
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {renderTemplateSummary && (
-                      <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5 text-[11px] text-zinc-400">
-                        <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Template Summary</div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="flex items-center justify-between">
-                            <span>Resolution</span>
-                            <span className="text-zinc-200">{renderTemplateSummary.resolution}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>Framerate</span>
-                            <span className="text-zinc-200">{renderTemplateSummary.framerate}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>Target LUFS</span>
-                            <span className="text-zinc-200">{renderTemplateSummary.targetLufs ?? '--'}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>Placeholders</span>
-                            <span className="text-zinc-200">
-                              {`${renderTemplateSummary.placeholderCounts.video} video, ${renderTemplateSummary.placeholderCounts.audio} audio, ${renderTemplateSummary.placeholderCounts.subtitle} subtitle, ${renderTemplateSummary.placeholderCounts.image} images`}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="mt-2">
-                          <div className="text-[10px] text-zinc-500 uppercase tracking-widest mb-1">Effects</div>
-                          {Object.keys(renderTemplateSummary.effectCounts).length === 0 ? (
-                            <div className="text-zinc-500">None</div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {Object.entries(renderTemplateSummary.effectCounts).map(([type, count]) => (
-                                <div key={type} className="px-2 py-1 rounded-md border border-zinc-800 bg-zinc-900 text-zinc-200">
-                                  {type} × {count}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {runPipelineHasDownload && (
-                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: Download</div>
-                    <div className="flex items-center justify-between mb-3">
-                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <select
-                          value={runPipelineTaskTemplate.download ?? 'custom'}
-                          onChange={e => handleTaskTemplateChange('download', e.target.value)}
-                          onContextMenu={event => {
-                            if (!selectedDownloadTemplate) return;
-                            event.preventDefault();
-                            deleteTaskTemplateWithConfirm('download', selectedDownloadTemplate.id, selectedDownloadTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
-                        >
-                          <option value="custom">{isDownloadTemplateDirty ? '*Custom' : 'Custom'}</option>
-                          {getTaskTemplatesForType('download').map(template => {
-                            const isSelected = runPipelineTaskTemplate.download === template.id;
-                            const label = isSelected && isDownloadTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
-                        </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (downloadTemplateMenuCloseRef.current) {
-                              window.clearTimeout(downloadTemplateMenuCloseRef.current);
-                              downloadTemplateMenuCloseRef.current = null;
-                            }
-                            setDownloadTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (downloadTemplateMenuCloseRef.current) {
-                              window.clearTimeout(downloadTemplateMenuCloseRef.current);
-                            }
-                            downloadTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setDownloadTemplateMenuOpen(false);
-                              downloadTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setDownloadTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setDownloadTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setDownloadTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {downloadTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDownloadTemplateMenuOpen(false);
-                                  resetTaskTemplateToDefault('download');
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  selectedDownloadTemplate || isDownloadTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {selectedDownloadTemplate && isDownloadTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    saveTaskTemplateCurrent('download', selectedDownloadTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {(selectedDownloadTemplate || isDownloadTemplateDirty) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    saveTaskTemplate('download');
-                                  }}
-                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    selectedDownloadTemplate ? '' : 'rounded-b-lg'
-                                  }`}
-                                >
-                                  Save As
-                                </button>
-                              )}
-                              {selectedDownloadTemplate && isDownloadTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    restoreTaskTemplateCurrent('download', selectedDownloadTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Restore
-                                </button>
-                              )}
-                              {selectedDownloadTemplate && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDownloadTemplateMenuOpen(false);
-                                    deleteTaskTemplateWithConfirm('download', selectedDownloadTemplate.id, selectedDownloadTemplate.name);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <>
-                      {SHOW_PARAM_PRESETS && (
-                        hasParamPresets('download') ? (
-                          <div className="flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                              {runPipelineParamPreset.download !== 'custom' && null}
-                            </div>
-                            <select
-                              value={runPipelineParamPreset.download ?? 'custom'}
-                              onChange={e => handleParamPresetChange('download', e.target.value)}
-                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                            >
-                              <option value="custom">Manual</option>
-                              {getParamPresetsForType('download').map(preset => (
-                                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                              ))}
-                            </select>
-                            {runPipelineParamPreset.download !== 'custom' && (
-                              <div
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => switchPresetToManual('download')}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    switchPresetToManual('download');
-                                  }
-                                }}
-                                title="Switch to manual and load these params"
-                                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                              >
-                                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                                  {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
-                                    <div key={key} className="flex items-center justify-between gap-2">
-                                      <span className="font-mono text-zinc-500">{key}</span>
-                                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
-                        )
-                      )}
-                      {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <select
-                            value={downloadMode}
-                            onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                          >
-                            <option value="all">Download: All (subs + audio + video)</option>
-                            <option value="subs">Download: Subtitles only</option>
-                            <option value="media">Download: Audio + Video only</option>
-                          </select>
-                          <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
-                            <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
-                            <input
-                              type="file"
-                              accept=".txt"
-                              onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
-                              className="hidden"
-                            />
-                          </label>
-                          <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
-                            <input
-                              type="checkbox"
-                              checked={downloadNoPlaylist}
-                              onChange={e => setDownloadNoPlaylist(e.target.checked)}
-                              className="accent-lime-400"
-                            />
-                            No playlist
-                          </label>
-                          {downloadMode !== 'media' ? (
-                            <>
-                              <input
-                                value={downloadSubtitleLang}
-                                onChange={e => setDownloadSubtitleLang(e.target.value)}
-                                list="ytdlp-sub-langs"
-                                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                                placeholder="Subtitle language (e.g. ai-zh)"
-                                title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
-                              />
-                              {downloadAnalyzeListSubs.length > 0 && (
-                                <datalist id="ytdlp-sub-langs">
-                                  {downloadAnalyzeListSubs.map((entry: any) => (
-                                    <option key={entry.lang} value={entry.lang} />
-                                  ))}
-                                </datalist>
-                              )}
-                            </>
-                          ) : (
-                            <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
-                              Subtitles disabled for media-only.
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  </div>
-                )}
-
-                {runPipelineHasUvr && (
-                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: VR (UVR)</div>
-                    <div className="flex items-center justify-between mb-3">
-                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <select
-                          value={runPipelineTaskTemplate.uvr ?? 'custom'}
-                          onChange={e => handleTaskTemplateChange('uvr', e.target.value)}
-                          onContextMenu={event => {
-                            if (!selectedUvrTemplate) return;
-                            event.preventDefault();
-                            deleteTaskTemplateWithConfirm('uvr', selectedUvrTemplate.id, selectedUvrTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
-                        >
-                          <option value="custom">{isUvrTemplateDirty ? '*Custom' : 'Custom'}</option>
-                          {getTaskTemplatesForType('uvr').map(template => {
-                            const isSelected = runPipelineTaskTemplate.uvr === template.id;
-                            const label = isSelected && isUvrTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
-                        </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (uvrTemplateMenuCloseRef.current) {
-                              window.clearTimeout(uvrTemplateMenuCloseRef.current);
-                              uvrTemplateMenuCloseRef.current = null;
-                            }
-                            setUvrTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (uvrTemplateMenuCloseRef.current) {
-                              window.clearTimeout(uvrTemplateMenuCloseRef.current);
-                            }
-                            uvrTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setUvrTemplateMenuOpen(false);
-                              uvrTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setUvrTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setUvrTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setUvrTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {uvrTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setUvrTemplateMenuOpen(false);
-                                  resetTaskTemplateToDefault('uvr');
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  selectedUvrTemplate || isUvrTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {selectedUvrTemplate && isUvrTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    saveTaskTemplateCurrent('uvr', selectedUvrTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {(selectedUvrTemplate || isUvrTemplateDirty) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    saveTaskTemplate('uvr');
-                                  }}
-                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    selectedUvrTemplate ? '' : 'rounded-b-lg'
-                                  }`}
-                                >
-                                  Save As
-                                </button>
-                              )}
-                              {selectedUvrTemplate && isUvrTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    restoreTaskTemplateCurrent('uvr', selectedUvrTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Restore
-                                </button>
-                              )}
-                              {selectedUvrTemplate && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUvrTemplateMenuOpen(false);
-                                    deleteTaskTemplateWithConfirm('uvr', selectedUvrTemplate.id, selectedUvrTemplate.name);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <>
-                        {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
-                          <div className="mb-3 flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                              {runPipelineParamPreset.uvr !== 'custom' && null}
-                            </div>
-                            <select
-                              value={runPipelineParamPreset.uvr ?? 'custom'}
-                              onChange={e => handleParamPresetChange('uvr', e.target.value)}
-                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                            >
-                              <option value="custom">Manual</option>
-                              {getParamPresetsForType('uvr').map(preset => (
-                                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                              ))}
-                            </select>
-                            {runPipelineParamPreset.uvr !== 'custom' && (
-                              <div
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => switchPresetToManual('uvr')}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    switchPresetToManual('uvr');
-                                  }
-                                }}
-                                title="Switch to manual and load these params"
-                                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                              >
-                                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                                  {Object.entries(getSelectedParamPresetParams('uvr')).map(([key, value]) => (
-                                    <div key={key} className="flex items-center justify-between gap-2">
-                                      <span className="font-mono text-zinc-500">{key}</span>
-                                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.uvr === 'custom') && (
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="flex flex-col gap-2">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                Backend
-                                {isParamOverridden('uvr', 'backend', runPipelineBackend) && (
-                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                                    Overridden
-                                  </span>
-                                )}
-                              </label>
-                              <input
-                                list="uvr-backends"
-                                value={runPipelineBackend}
-                                onChange={e => setRunPipelineBackend(e.target.value)}
-                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                                  isParamOverridden('uvr', 'backend', runPipelineBackend) ? 'border-amber-500/60' : 'border-zinc-800'
-                                }`}
-                                placeholder="vr"
-                              />
-                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').backend !== undefined && (
-                                <div className="text-[10px] text-zinc-500">
-                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').backend)}
-                                </div>
-                              )}
-                              <datalist id="uvr-backends">
-                                <option value="vr" />
-                                <option value="mdx" />
-                                <option value="demucs" />
-                              </datalist>
-                            </div>
-                            <div className="flex flex-col gap-2">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                Model
-                                {isParamOverridden('uvr', 'model', vrModel) && (
-                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                                    Overridden
-                                  </span>
-                                )}
-                              </label>
-                              {vrModels.length ? (
-                                <select
-                                  value={vrModel}
-                                  onChange={e => setVrModel(e.target.value)}
-                                  className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                                    isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
-                                  }`}
-                                >
-                                  {vrModels.map(model => (
-                                    <option key={model} value={model}>{model}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <input
-                                  value={vrModel}
-                                  onChange={e => setVrModel(e.target.value)}
-                                  className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                                    isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
-                                  }`}
-                                  placeholder="MGM_MAIN_v4.pth"
-                                />
-                              )}
-                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').model !== undefined && (
-                                <div className="text-[10px] text-zinc-500">
-                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').model)}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                    </>
-                  </div>
-                )}
-
-                {runPipelineHasTts && (
-                  <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/70">
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-widest mb-2">Block Config: TTS</div>
-                    <div className="flex items-center justify-between mb-3">
-                      <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Template</label>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <select
-                          value={runPipelineTaskTemplate.tts ?? 'custom'}
-                          onChange={e => handleTaskTemplateChange('tts', e.target.value)}
-                          onContextMenu={event => {
-                            if (!selectedTtsTemplate) return;
-                            event.preventDefault();
-                            deleteTaskTemplateWithConfirm('tts', selectedTtsTemplate.id, selectedTtsTemplate.name);
-                          }}
-                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
-                        >
-                          <option value="custom">{isTtsTemplateDirty ? '*Custom' : 'Custom'}</option>
-                          {getTaskTemplatesForType('tts').map(template => {
-                            const isSelected = runPipelineTaskTemplate.tts === template.id;
-                            const label = isSelected && isTtsTemplateDirty ? `*${template.name}` : template.name;
-                            return (
-                              <option key={template.id} value={template.id}>{label}</option>
-                            );
-                          })}
-                        </select>
-                        <div
-                          className="relative shrink-0"
-                          onMouseEnter={() => {
-                            if (ttsTemplateMenuCloseRef.current) {
-                              window.clearTimeout(ttsTemplateMenuCloseRef.current);
-                              ttsTemplateMenuCloseRef.current = null;
-                            }
-                            setTtsTemplateMenuOpen(true);
-                          }}
-                          onMouseLeave={() => {
-                            if (ttsTemplateMenuCloseRef.current) {
-                              window.clearTimeout(ttsTemplateMenuCloseRef.current);
-                            }
-                            ttsTemplateMenuCloseRef.current = window.setTimeout(() => {
-                              setTtsTemplateMenuOpen(false);
-                              ttsTemplateMenuCloseRef.current = null;
-                            }, 120);
-                          }}
-                          onFocusCapture={() => setTtsTemplateMenuOpen(true)}
-                          onBlurCapture={event => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setTtsTemplateMenuOpen(false);
-                            }
-                          }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Template options"
-                            title="Template options"
-                            onClick={() => setTtsTemplateMenuOpen(prev => !prev)}
-                            className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-medium text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 shrink-0"
-                          >
-                            <Menu size={14} />
-                          </button>
-                          {ttsTemplateMenuOpen && (
-                            <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTtsTemplateMenuOpen(false);
-                                  resetTaskTemplateToDefault('tts');
-                                }}
-                                className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                  selectedTtsTemplate || isTtsTemplateDirty ? 'rounded-t-lg' : 'rounded-lg'
-                                }`}
-                              >
-                                Reset to default
-                              </button>
-                              {selectedTtsTemplate && isTtsTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    saveTaskTemplateCurrent('tts', selectedTtsTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Save
-                                </button>
-                              )}
-                              {(selectedTtsTemplate || isTtsTemplateDirty) && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    saveTaskTemplate('tts');
-                                  }}
-                                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                                    selectedTtsTemplate ? '' : 'rounded-b-lg'
-                                  }`}
-                                >
-                                  Save As
-                                </button>
-                              )}
-                              {selectedTtsTemplate && isTtsTemplateDirty && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    restoreTaskTemplateCurrent('tts', selectedTtsTemplate);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                                >
-                                  Restore
-                                </button>
-                              )}
-                              {selectedTtsTemplate && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTtsTemplateMenuOpen(false);
-                                    deleteTaskTemplateWithConfirm('tts', selectedTtsTemplate.id, selectedTtsTemplate.name);
-                                  }}
-                                  className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <>
-                        {SHOW_PARAM_PRESETS && hasParamPresets('tts') && (
-                          <div className="mb-3 flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                              {runPipelineParamPreset.tts !== 'custom' && null}
-                            </div>
-                            <select
-                              value={runPipelineParamPreset.tts ?? 'custom'}
-                              onChange={e => handleParamPresetChange('tts', e.target.value)}
-                              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                            >
-                              <option value="custom">Manual</option>
-                              {getParamPresetsForType('tts').map(preset => (
-                                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                              ))}
-                            </select>
-                            {runPipelineParamPreset.tts !== 'custom' && (
-                              <div
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => switchPresetToManual('tts')}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    switchPresetToManual('tts');
-                                  }
-                                }}
-                                title="Switch to manual and load these params"
-                                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                              >
-                                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                                  {Object.entries(getSelectedParamPresetParams('tts')).map(([key, value]) => (
-                                    <div key={key} className="flex items-center justify-between gap-2">
-                                      <span className="font-mono text-zinc-500">{key}</span>
-                                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.tts === 'custom') && (
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="flex flex-col gap-2">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                Voice
-                                {isParamOverridden('tts', 'voice', runPipelineTtsVoice) && (
-                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                                    Overridden
-                                  </span>
-                                )}
-                              </label>
-                              <select
-                                value={runPipelineTtsVoice}
-                                onChange={e => setRunPipelineTtsVoice(e.target.value)}
-                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                                  isParamOverridden('tts', 'voice', runPipelineTtsVoice) ? 'border-amber-500/60' : 'border-zinc-800'
-                                }`}
-                              >
-                                {PREFERRED_TTS_VOICES.map(name => (
-                                  <option key={name} value={name}>
-                                    {name}
-                                  </option>
-                                ))}
-                              </select>
-                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').voice !== undefined && (
-                                <div className="text-[10px] text-zinc-500">
-                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').voice)}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex flex-col gap-2">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                Long Cue
-                                {isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) && (
-                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                                    Overridden
-                                  </span>
-                                )}
-                              </label>
-                              <select
-                                value={runPipelineTtsOverlapMode}
-                                onChange={e => setRunPipelineTtsOverlapMode(e.target.value as 'truncate' | 'overlap')}
-                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                                  isParamOverridden('tts', 'overlapMode', runPipelineTtsOverlapMode) ? 'border-amber-500/60' : 'border-zinc-800'
-                                }`}
-                              >
-                                <option value="overlap">Overlap voices</option>
-                                <option value="truncate">Cut previous voice (truncate)</option>
-                              </select>
-                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').overlapMode !== undefined && (
-                                <div className="text-[10px] text-zinc-500">
-                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').overlapMode)}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex flex-col gap-2">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                Rate
-                                {isParamOverridden('tts', 'rate', runPipelineTtsRate) && (
-                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                                    Overridden
-                                  </span>
-                                )}
-                              </label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                value={runPipelineTtsRate}
-                                onChange={e => setRunPipelineTtsRate(e.target.value)}
-                                placeholder="1.0"
-                                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                                  isParamOverridden('tts', 'rate', runPipelineTtsRate) ? 'border-amber-500/60' : 'border-zinc-800'
-                                }`}
-                              />
-                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').rate !== undefined && (
-                                <div className="text-[10px] text-zinc-500">
-                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').rate)}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex flex-col gap-2">
-                              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                Pitch
-                                {isParamOverridden('tts', 'pitch', runPipelineTtsPitch) && (
-                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                                    Overridden
-                                  </span>
-                                )}
-                              </label>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={runPipelineTtsPitch}
-                                  onChange={e => setRunPipelineTtsPitch(e.target.value)}
-                                  placeholder="0"
-                                  className={`flex-1 bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                                    isParamOverridden('tts', 'pitch', runPipelineTtsPitch) ? 'border-amber-500/60' : 'border-zinc-800'
-                                  }`}
-                                />
-                                <span className="text-xs text-zinc-500">st</span>
-                              </div>
-                              {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').pitch !== undefined && (
-                                <div className="text-[10px] text-zinc-500">
-                                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').pitch)}
-                                </div>
-                              )}
-                            </div>
-                            <label className="flex items-center gap-2 text-xs text-zinc-300">
-                              <input
-                                type="checkbox"
-                                checked={runPipelineTtsRemoveLineBreaks}
-                                onChange={e => setRunPipelineTtsRemoveLineBreaks(e.target.checked)}
-                                className="accent-lime-400"
-                              />
-                              <span className="flex items-center gap-2">
-                                Remove line breaks
-                                {isParamOverridden('tts', 'removeLineBreaks', runPipelineTtsRemoveLineBreaks) && (
-                                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                                    Overridden
-                                  </span>
-                                )}
-                              </span>
-                            </label>
-                            {SHOW_PARAM_PRESETS && runPipelineParamPreset.tts !== 'custom' && getSelectedParamPresetParams('tts').removeLineBreaks !== undefined && (
-                              <div className="text-[10px] text-zinc-500">
-                                Loaded: {formatDefaultValue(getSelectedParamPresetParams('tts').removeLineBreaks)}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                    </>
-                  </div>
-                )}
-
-                {runPipelineHasDownload && (
-                  <button
-                    onClick={analyzeYtDlp}
-                    disabled={downloadAnalyzeLoading || !downloadUrl.trim()}
-                    className="w-full px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-200 hover:border-lime-500/50 hover:text-lime-300 disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {downloadAnalyzeLoading ? 'Analyzing...' : 'Analyze URL'}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {showRenderStudio && runPipelineHasRender && (
-            <Suspense
-              fallback={(
-                <div className="fixed inset-0 z-[60] bg-zinc-950 flex items-center justify-center">
-                  <div className="text-xs text-zinc-400">Loading Render Studio...</div>
-                </div>
-              )}
-            >
-              <RenderStudioPage {...renderStudioProps} />
-            </Suspense>
-          )}
-
-          {jobLogOpen && jobLogTarget && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-              <div className="absolute inset-0" onClick={() => setJobLogOpen(false)} />
-              <div className="relative w-[min(820px,92vw)] max-h-[80vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-6 flex flex-col gap-4 shadow-2xl">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs text-zinc-500 uppercase tracking-widest">System Log</div>
-                    <div className="text-sm font-semibold text-zinc-100">{jobLogTarget.name}</div>
-                    <div className="text-xs text-zinc-500 mt-1">{jobLogTarget.fileName}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        const content = jobLogTarget.log || jobLogTarget.error || '';
-                        const fallbackCopy = () => {
-                          try {
-                            const textarea = document.createElement('textarea');
-                            textarea.value = content;
-                            textarea.setAttribute('readonly', 'true');
-                            textarea.style.position = 'fixed';
-                            textarea.style.opacity = '0';
-                            document.body.appendChild(textarea);
-                            textarea.select();
-                            const ok = document.execCommand('copy');
-                            document.body.removeChild(textarea);
-                            return ok;
-                          } catch {
-                            return false;
-                          }
-                        };
-                        try {
-                          if (navigator.clipboard?.writeText) {
-                            await navigator.clipboard.writeText(content);
-                            showToast('Log copied', 'success');
-                            return;
-                          }
-                          const ok = fallbackCopy();
-                          showToast(ok ? 'Log copied' : 'Unable to copy log', ok ? 'success' : 'error');
-                        } catch {
-                          const ok = fallbackCopy();
-                          showToast(ok ? 'Log copied' : 'Unable to copy log', ok ? 'success' : 'error');
-                        }
-                      }}
-                      className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                    >
-                      Copy
-                    </button>
-                    <button
-                      onClick={() => setJobLogOpen(false)}
-                      className="px-3 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-                <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap overflow-y-auto">
-                  {jobLogTarget.log || jobLogTarget.error || 'No log output yet.'}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {jobContextMenu.open && jobContextTarget && (
-            <div className="fixed inset-0 z-[55]" onClick={() => setJobContextMenu(prev => ({ ...prev, open: false }))}>
-              <div
-                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
-                style={{ top: jobContextMenu.y, left: jobContextMenu.x }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                {jobContextTarget.projectName?.trim() && (
-                  <button
-                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                    onClick={() => {
-                      const projectName = jobContextTarget.projectName?.trim();
-                      const match = projectName
-                        ? vaultFolders.find(folder => folder.name.toLowerCase() === projectName.toLowerCase())
-                        : undefined;
-                      if (!projectName || !match) {
-                        showToast('Project not found in Media Vault', 'warning');
-                        setJobContextMenu(prev => ({ ...prev, open: false }));
-                        return;
-                      }
-                      setVaultFolderId(match.id);
-                      setVaultFileId(match.files[0]?.id ?? null);
-                      setShowFolderPanel(true);
-                      setJobContextMenu(prev => ({ ...prev, open: false }));
-                    }}
-                  >
-                    Open project
-                  </button>
-                )}
-                <button
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                  onClick={() => {
-                    setJobContextMenu(prev => ({ ...prev, open: false }));
-                    openRunPipelineFromJob(jobContextTarget);
-                  }}
-                >
-                  Run again
-                </button>
-                <button
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                  onClick={() => {
-                    setJobLogJobId(jobContextTarget.id);
-                    setJobLogOpen(true);
-                    setJobContextMenu(prev => ({ ...prev, open: false }));
-                  }}
-                >
-                  View log
-                </button>
-                {(jobContextTarget.status === 'queued' || jobContextTarget.status === 'processing') ? (
-                  <button
-                    className="w-full px-3 py-2 text-left text-xs text-amber-300 hover:bg-amber-500/10 rounded-md"
-                    onClick={() => {
-                      setJobContextMenu(prev => ({ ...prev, open: false }));
-                      cancelJob(jobContextTarget.id);
-                    }}
-                  >
-                    Cancel job
-                  </button>
-                ) : (
-                  <button
-                    className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 rounded-md"
-                    onClick={() => {
-                      setJobContextMenu(prev => ({ ...prev, open: false }));
-                      deleteJob(jobContextTarget.id);
-                    }}
-                  >
-                    Delete job
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {pipelineContextMenu.open && pipelineContextTarget && (
-            <div className="fixed inset-0 z-[55]" onClick={() => setPipelineContextMenu(prev => ({ ...prev, open: false }))}>
-              <div
-                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
-                style={{ top: pipelineContextMenu.y, left: pipelineContextMenu.x }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                  onClick={() => {
-                    setPipelineContextMenu(prev => ({ ...prev, open: false }));
-                    if (pipelineContextTarget.kind === 'task') {
-                      openPipelinePreview(pipelineContextTarget);
-                    } else {
-                      openPipelineEditor(pipelineContextTarget);
-                    }
-                  }}
-                >
-                  Open
-                </button>
-                {pipelineContextTarget.kind === 'saved' && (
-                  <button
-                    className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 rounded-md"
-                    onClick={() => {
-                      setPipelineContextMenu(prev => ({ ...prev, open: false }));
-                      deletePipeline(pipelineContextTarget.id);
-                    }}
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {SHOW_PARAM_PRESETS && paramPresetContextMenu.open && paramPresetContextTarget && (
-            <div className="fixed inset-0 z-[55]" onClick={() => setParamPresetContextMenu(prev => ({ ...prev, open: false }))}>
-              <div
-                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
-                style={{ top: paramPresetContextMenu.y, left: paramPresetContextMenu.x }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                  onClick={() => {
-                    setParamPresetContextMenu(prev => ({ ...prev, open: false }));
-                    openParamPresetEditorForEdit(paramPresetContextTarget.id);
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-red-500/10 rounded-md"
-                  onClick={() => {
-                    setParamPresetContextMenu(prev => ({ ...prev, open: false }));
-                    openConfirm({
-                      title: `Delete ${paramPresetContextTarget.label}?`,
-                      description: 'This will remove saved preset params for this preset.',
-                      confirmLabel: 'Delete',
-                      variant: 'danger'
-                    }, () => {
-                      deleteParamPreset(paramPresetContextTarget.id, paramPresetContextTarget.type);
-                    });
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          )}
-
-          {fileContextMenu.open && fileContextMenu.file && (
-            <div className="fixed inset-0 z-[55]" onClick={closeFileContextMenu}>
-              <div
-                className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
-                style={{ top: fileContextMenu.y, left: fileContextMenu.x }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <button
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
-                  onClick={() => {
-                    if (fileContextMenu.file) {
-                      downloadVaultFile(fileContextMenu.file);
-                    }
-                    closeFileContextMenu();
-                  }}
-                >
-                  <span className="flex items-center gap-2">
-                    <Download size={12} />
-                    Download
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
-          {showRenderStudio && renderStudioContextMenus}
+          <Suspense fallback={null}>
+            <LazyAppOverlays
+              toastVisible={toastVisible}
+              toastMessage={toastMessage}
+              toastType={toastType}
+              toastStyles={toastStyles}
+              vaultContextMenu={vaultContextMenu}
+              closeVaultContextMenu={closeVaultContextMenu}
+              setVaultFolderId={setVaultFolderId}
+              setVaultFileId={setVaultFileId}
+              setShowFolderPanel={setShowFolderPanel}
+              deleteVaultProject={deleteVaultProject}
+              showFolderPanel={showFolderPanel}
+              selectedFolder={selectedFolder}
+              filteredFiles={filteredFiles}
+              fileTypeIcons={fileTypeIcons}
+              fileTypeLabels={fileTypeLabels}
+              vaultQuery={vaultQuery}
+              setVaultQuery={setVaultQuery}
+              vaultTypeFilter={vaultTypeFilter}
+              setVaultTypeFilter={setVaultTypeFilter}
+              vaultSort={vaultSort}
+              setVaultSort={setVaultSort}
+              vaultView={vaultView}
+              setVaultView={setVaultView}
+              groupedFiles={groupedFiles}
+              vaultGroupCollapsed={vaultGroupCollapsed}
+              setVaultGroupCollapsed={setVaultGroupCollapsed}
+              openFileContextMenu={openFileContextMenu}
+              selectedFile={selectedFile}
+              formatOverlapDisplay={formatOverlapDisplay}
+              importPopupOpen={importPopupOpen}
+              setImportPopupOpen={setImportPopupOpen}
+              importProjectName={importProjectName}
+              setImportProjectName={setImportProjectName}
+              importProjectPickerOpen={importProjectPickerOpen}
+              setImportProjectPickerOpen={setImportProjectPickerOpen}
+              vaultFolders={vaultFolders}
+              importFiles={importFiles}
+              setImportFiles={setImportFiles}
+              importError={importError}
+              importSubmitting={importSubmitting}
+              performImport={performImport}
+              templateSaveOpen={templateSaveOpen}
+              setTemplateSaveOpen={setTemplateSaveOpen}
+              templateSaveTaskType={templateSaveTaskType}
+              templateSaveError={templateSaveError}
+              templateSaveName={templateSaveName}
+              setTemplateSaveName={setTemplateSaveName}
+              confirmSaveTemplate={confirmSaveTemplate}
+              runPipelineModalProps={runPipelineModalProps}
+              showRenderStudio={showRenderStudio}
+              runPipelineHasRender={runPipelineHasRender}
+              renderStudioProps={renderStudioProps}
+              appContextMenusProps={appContextMenusProps}
+              renderStudioContextMenus={renderStudioContextMenus}
+            />
+          </Suspense>
+          <ConfirmModal
+            open={confirmState.open}
+            title={confirmState.title}
+            description={confirmState.description}
+            confirmLabel={confirmState.confirmLabel}
+            secondaryLabel={confirmState.secondaryLabel}
+            variant={confirmState.variant}
+            onClose={closeConfirmModal}
+            onConfirm={handleConfirmModalConfirm}
+            onSecondary={handleConfirmModalSecondary}
+          />
         </div>
       </main>
     </div>
   ) : (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(700px_circle_at_15%_20%,rgba(132,204,22,0.12),transparent_60%),radial-gradient(600px_circle_at_85%_0%,rgba(16,185,129,0.16),transparent_55%)]" />
-      <div className="relative min-h-screen flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-md rounded-2xl border border-zinc-800/80 bg-zinc-950/80 backdrop-blur p-8 shadow-[0_0_60px_rgba(16,185,129,0.12)]">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-12 h-12 bg-lime-500 rounded-xl flex items-center justify-center text-zinc-950 font-black italic">MF</div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-lime-300/70">MediaForge Toolkit</p>
-              <h1 className="text-2xl font-semibold text-zinc-100">
-                {authView === 'login' ? 'Sign in' : 'Create account'}
-              </h1>
-            </div>
-          </div>
-          <p className="text-sm text-zinc-400 mb-6">
-            {authView === 'login'
-              ? 'Sign in to access MediaForge'
-              : 'Create a new account'}
-          </p>
-          <form className="space-y-4" onSubmit={authView === 'login' ? handleLogin : handleRegister}>
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Username</label>
-              <input
-                value={authUsername}
-                onChange={(event) => setAuthUsername(event.target.value)}
-                placeholder="Enter username"
-                className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-lime-400/60"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Password</label>
-              <input
-                value={authPassword}
-                onChange={(event) => setAuthPassword(event.target.value)}
-                type="password"
-                placeholder="Enter password"
-                className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-lime-400/60"
-              />
-            </div>
-            {authView === 'register' && (
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-zinc-400">Confirm password</label>
-                <input
-                  value={authConfirmPassword}
-                  onChange={(event) => setAuthConfirmPassword(event.target.value)}
-                  type="password"
-                  placeholder="Re-enter password"
-                  className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-lime-400/60"
-                />
-              </div>
-            )}
-            {authError && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                {authError}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={authSubmitting}
-              className="w-full rounded-xl bg-lime-500 px-4 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-lime-400 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {authSubmitting
-                ? authView === 'login'
-                  ? 'Signing in...'
-                  : 'Creating account...'
-                : authView === 'login'
-                  ? 'Sign in'
-                  : 'Create account'}
-            </button>
-          </form>
-          <div className="mt-4 flex items-center justify-between text-xs text-zinc-400">
-            {authView !== 'login' || registerEnabled !== false ? (
-              <span>
-                {authView === 'login' ? "Don't have an account?" : 'Already have an account?'}
-              </span>
-            ) : (
-              <span />
-            )}
-            {authView !== 'login' || registerEnabled !== false ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (authView === 'login' && registerEnabled === false) {
-                    return;
-                  }
-                  navigateAuth(authView === 'login' ? 'register' : 'login');
-                }}
-                className="text-lime-300 hover:text-lime-200 font-semibold"
-              >
-                {authView === 'login' ? 'Create account' : 'Sign in'}
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </div>
+    <Suspense fallback={<div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center"><div className="text-sm text-zinc-400">Loading auth...</div></div>}>
+      <LazyAuthScreen
+        authView={authView}
+        authUsername={authUsername}
+        setAuthUsername={setAuthUsername}
+        authPassword={authPassword}
+        setAuthPassword={setAuthPassword}
+        authConfirmPassword={authConfirmPassword}
+        setAuthConfirmPassword={setAuthConfirmPassword}
+        authError={authError}
+        authSubmitting={authSubmitting}
+        registerEnabled={registerEnabled}
+        onLoginSubmit={handleLogin}
+        onRegisterSubmit={handleRegister}
+        onToggleView={() => {
+          if (authView === 'login' && registerEnabled === false) {
+            return;
+          }
+          navigateAuth(authView === 'login' ? 'register' : 'login');
+        }}
+      />
+    </Suspense>
   );
 }
