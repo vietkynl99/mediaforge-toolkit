@@ -651,35 +651,15 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 ? 'bg-sky-500/15 text-sky-300'
                                 : 'bg-blue-500/15 text-blue-300';
                         const selectedClass = 'border-lime-500/50 bg-lime-500/10 text-zinc-100';
-                        const onClick = isVideo
-                          ? () => {
-                            setRenderVideoId(file.id);
-                          }
-                          : isAudio
-                            ? () => {
-                              setRenderAudioId(file.id);
-                            }
-                            : isSubtitle
-                              ? () => {
-                                setRenderSubtitleId(file.id);
-                              }
-                              : isImage
-                                ? () => {
-                                  setSelectedTrackKey(`image:${file.id}`);
-                                }
-                                : undefined;
-                        const onContextMenu = onClick
-                          ? (event: React.MouseEvent) => openRenderStudioMediaBinContextMenu(event, file)
-                          : undefined;
+                        const onContextMenu = (event: React.MouseEvent) => openRenderStudioMediaBinContextMenu(event, file);
                           return (
                             <button
                               key={file.id}
-                              onClick={onClick}
+                              title={file.name}
                               onContextMenu={onContextMenu}
-                              disabled={!onClick}
                               className={`rounded-lg border p-2 text-left flex flex-col gap-1 ${
                                 isSelected ? selectedClass : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700'
-                              } ${!onClick ? 'opacity-60 cursor-not-allowed' : ''}`}
+                              }`}
                             >
                               <div className="w-full h-14 rounded-md border border-zinc-800 bg-zinc-900/60 overflow-hidden flex items-center justify-center">
                                 {isImage && file.relativePath ? (

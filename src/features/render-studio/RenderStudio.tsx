@@ -116,7 +116,7 @@ export const RenderStudio: React.FC<RenderStudioProps> = ({
           renderSubtitleId={rs.renderSubtitleId}
           isOpen={ui.renderStudioMediaBinOpen}
           setIsOpen={ui.setRenderStudioMediaBinOpen}
-          onFileClick={rs.addRenderStudioFileToTimeline}
+          onFileClick={() => {}}
           onFileContextMenu={ui.setRenderStudioMediaBinContextMenu as any}
         />
 

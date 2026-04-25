@@ -81,6 +81,7 @@ export const MediaBin: React.FC<MediaBinProps> = ({
             return (
               <button
                 key={file.id}
+                title={file.name}
                 onClick={() => onFileClick(file)}
                 onContextMenu={(e) => onFileContextMenu(e, file)}
                 className={`flex items-center gap-3 p-2 rounded-lg transition-all text-left group
