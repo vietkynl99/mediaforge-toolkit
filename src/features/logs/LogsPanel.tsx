@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { RefreshCw, Pause, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { RefreshCw, Pause, CheckCircle2, Clock, AlertCircle, ExternalLink } from 'lucide-react';
 import { MediaJob, JobStatus } from '../../types';
 
 interface LogsPanelProps {
@@ -30,39 +30,54 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
 };
 
 export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime }) => {
+  const lastJob = [...jobs].reverse().find(job => job.status !== 'queued') ?? null;
+
+  const handleViewFullLog = () => {
+    if (lastJob) {
+      window.open(`/api/jobs/${lastJob.id}/log`, '_blank');
+    }
+  };
+
   return (
     <motion.div
       key="logs"
       initial={false}
       animate={false as any}
       exit={false as any}
-      className="p-8"
+      className="p-8 h-full flex flex-col"
     >
-      {jobs.length === 0 ? (
+      {!lastJob ? (
         <div className="text-sm text-zinc-500">No logs yet.</div>
       ) : (
-        <div className="flex flex-col gap-4">
-          {jobs.map(job => (
-            <div key={job.id} className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-5">
-              <div className="flex items-start justify-between gap-4 mb-3">
-                <div className="min-w-0">
+        <div className="flex flex-col gap-4 flex-1 min-h-0">
+          <div className="bg-zinc-900/40 border border-zinc-800 rounded-xl p-5 flex flex-col min-h-0">
+            <div className="flex items-start justify-between gap-4 mb-3 shrink-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-3">
                   <div className="text-xs text-zinc-500 uppercase tracking-widest">System Log</div>
-                  <div className="text-sm font-semibold text-zinc-100 truncate">
-                    {job.projectName || 'Unknown Project'}
-                  </div>
-                  <div className="text-xs text-zinc-500 mt-1 truncate">
-                    {job.fileName} • {job.fileSize} • {formatLocalDateTime(job.createdAt)}
-                  </div>
+                  <button
+                    onClick={handleViewFullLog}
+                    className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-blue-400 hover:text-blue-300 transition-colors"
+                  >
+                    <ExternalLink size={10} />
+                    Full Log
+                  </button>
                 </div>
-                <div className="shrink-0">
-                  <StatusBadge status={job.status} />
+                <div className="text-sm font-semibold text-zinc-100 truncate">
+                  {lastJob.projectName || 'Unknown Project'}
+                </div>
+                <div className="text-xs text-zinc-500 mt-1 truncate">
+                  {lastJob.fileName} • {lastJob.fileSize} • {formatLocalDateTime(lastJob.createdAt)}
                 </div>
               </div>
-              <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap">
-                {job.log || job.error || 'No log output yet.'}
+              <div className="shrink-0">
+                <StatusBadge status={lastJob.status} />
               </div>
             </div>
-          ))}
+            <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap overflow-y-auto flex-1 min-h-0 font-mono leading-relaxed">
+              {lastJob.log || lastJob.error || 'No log output yet.'}
+            </div>
+          </div>
         </div>
       )}
     </motion.div>

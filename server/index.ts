@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import fs from 'fs/promises';
-import { createReadStream, readFileSync } from 'fs';
+import { appendFile } from 'fs/promises';
+import { createReadStream, readFileSync, existsSync } from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import os from 'os';
@@ -603,6 +604,7 @@ let activeDownloadCount = 0;
 const MAX_ACTIVE_DOWNLOADS = 4;
 const CANCELLED_ERROR_MESSAGE = 'Job cancelled';
 const MAX_JOB_LOG_CHARS = 20000;
+const JOB_LOGS_DIR = path.join(process.cwd(), 'server', 'data', 'logs');
 const jobPersistTimers = new Map<string, NodeJS.Timeout>();
 let persistDbTimer: NodeJS.Timeout | null = null;
 
@@ -618,6 +620,17 @@ const formatLocalTimestamp = () =>
   }).format(new Date());
 
 const stripAnsiCodes = (text: string) => text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
+
+const getJobLogPath = (job: JobRecord) => {
+  const date = new Date(job.createdAt);
+  const monthDir = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  const dayPrefix = date.toISOString().split('T')[0];
+  const sanitizedJobName = (job.name || 'job').replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
+  
+  const dir = path.join(JOB_LOGS_DIR, monthDir);
+  const filename = `${dayPrefix}_${sanitizedJobName}_${job.id}.log`;
+  return { dir, filename, fullPath: path.join(dir, filename) };
+};
 
 const isFfmpegProgressLogLine = (line: string) => {
   const withoutTimestamp = line.replace(/^\[\d{2}:\d{2}:\d{2} \d{2}\/\d{2}\/\d{4}\]\s*/, '');
@@ -661,10 +674,23 @@ const appendJobLog = (job: JobRecord, message: string) => {
     .split(/\r?\n|\r/)
     .map(line => (line ? `[${timestamp}] ${line}` : line))
     .join('\n');
-  job.log = compactJobLogProgressLines(`${job.log ?? ''}${prefixed}`);
-  if (job.log.length > MAX_JOB_LOG_CHARS) {
-    job.log = job.log.slice(-MAX_JOB_LOG_CHARS);
-  }
+  
+  // Also keep a small buffer in memory for quick UI updates if needed, 
+  // but the source of truth is the file.
+  job.log = compactJobLogProgressLines(`${job.log ?? ''}${prefixed}\n`);
+
+  // Write to file with structured path
+  const { dir, fullPath } = getJobLogPath(job);
+  
+  (async () => {
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      await appendFile(fullPath, prefixed + '\n');
+    } catch (err) {
+      console.error(`Failed to write log for job ${job.id}:`, err);
+    }
+  })();
+
   scheduleJobPersist(job);
 };
 
@@ -4206,6 +4232,36 @@ app.post('/api/pipelines', async (req, res) => {
 
 app.get('/api/jobs', async (_req, res) => {
   res.json({ jobs, now: new Date().toISOString() });
+});
+
+app.get('/api/jobs/:id/log', async (req, res) => {
+  const { id } = req.params;
+  const job = getJobById(id);
+  
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  const { fullPath } = getJobLogPath(job);
+  
+  if (!existsSync(fullPath)) {
+    // If structured file doesn't exist, try legacy flat path as fallback
+    const legacyPath = path.join(JOB_LOGS_DIR, `${id}.log`);
+    if (existsSync(legacyPath)) {
+      res.type('text/plain');
+      return createReadStream(legacyPath).pipe(res);
+    }
+
+    // If still no file, try memory/DB
+    if (job.log) {
+      return res.type('text/plain').send(job.log);
+    }
+    return res.status(404).json({ error: 'Log file not found' });
+  }
+
+  res.type('text/plain');
+  const stream = createReadStream(fullPath);
+  stream.pipe(res);
 });
 
 app.get('/api/param-presets', async (_req, res) => {
