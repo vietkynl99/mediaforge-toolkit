@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { VaultFile } from '../../../types/index';
+import { VaultFile, VaultFileType } from '../../../types/index';
+import { MediaBinTypeFilter } from '../components/MediaBin';
 
 export function useRenderStudioUI() {
   const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
@@ -60,6 +61,7 @@ export function useRenderStudioUI() {
   const [templateDiffOpen, setTemplateDiffOpen] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
   const [addTrackMenuOpen, setAddTrackMenuOpen] = useState(false);
+  const [renderStudioMediaBinTypeFilter, setRenderStudioMediaBinTypeFilter] = useState<MediaBinTypeFilter>('all');
 
   return {
     renderStudioLeftMenuOpen,
@@ -88,6 +90,8 @@ export function useRenderStudioUI() {
     templateMenuOpen,
     setTemplateMenuOpen,
     addTrackMenuOpen,
-    setAddTrackMenuOpen
+    setAddTrackMenuOpen,
+    renderStudioMediaBinTypeFilter,
+    setRenderStudioMediaBinTypeFilter
   };
 }

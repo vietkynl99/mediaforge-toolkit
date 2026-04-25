@@ -7,10 +7,14 @@ import {
   Plus,
   Trash2,
   Settings,
-  X
+  X,
+  File,
+  ChevronDown
 } from 'lucide-react';
-import { VaultFile } from '../../../types/index';
+import { VaultFile, VaultFileType } from '../../../types/index';
 import { formatDuration } from '../../../utils/helpers';
+
+export type MediaBinTypeFilter = 'all' | VaultFileType;
 
 interface MediaBinProps {
   files: VaultFile[];
@@ -24,6 +28,8 @@ interface MediaBinProps {
   onFileContextMenu: (event: React.MouseEvent, file: VaultFile) => void;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
+  typeFilter: MediaBinTypeFilter;
+  setTypeFilter: (filter: MediaBinTypeFilter) => void;
 }
 
 export const MediaBin: React.FC<MediaBinProps> = ({
@@ -37,15 +43,34 @@ export const MediaBin: React.FC<MediaBinProps> = ({
   onFileClick,
   onFileContextMenu,
   isOpen,
-  setIsOpen
+  setIsOpen,
+  typeFilter,
+  setTypeFilter
 }) => {
-  const sortedFiles = [...files].sort((a, b) => {
+  const [dropdownOpen, setDropdownOpen] = React.useState(false);
+
+  const filteredFiles = typeFilter === 'all' 
+    ? files 
+    : files.filter(f => f.type === typeFilter);
+
+  const sortedFiles = [...filteredFiles].sort((a, b) => {
     const aAdded = renderInputFileIds.includes(a.id);
     const bAdded = renderInputFileIds.includes(b.id);
     if (aAdded && !bAdded) return -1;
     if (!aAdded && bAdded) return 1;
     return 0;
   });
+
+  const typeOptions: { value: MediaBinTypeFilter; label: string; icon: React.ReactNode }[] = [
+    { value: 'all', label: 'All', icon: null },
+    { value: 'video', label: 'Video', icon: <FileVideo size={14} /> },
+    { value: 'audio', label: 'Audio', icon: <FileAudio size={14} /> },
+    { value: 'subtitle', label: 'Subtitle', icon: <Type size={14} /> },
+    { value: 'image', label: 'Image', icon: <ImageIcon size={14} /> },
+    { value: 'other', label: 'Other', icon: <File size={14} /> },
+  ];
+
+  const selectedOption = typeOptions.find(o => o.value === typeFilter) || typeOptions[0];
 
   return (
     <div className={`flex flex-col border-r border-zinc-800 bg-zinc-900/30 transition-all duration-300 ${isOpen ? 'w-64' : 'w-12'}`}>
@@ -63,6 +88,47 @@ export const MediaBin: React.FC<MediaBinProps> = ({
           </button>
         )}
       </div>
+
+      {/* Type Filter Dropdown */}
+      {isOpen && (
+        <div className="px-2 py-2 border-b border-zinc-800">
+          <div className="relative">
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs text-zinc-300 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                {selectedOption.icon && <span className="text-zinc-400">{selectedOption.icon}</span>}
+                <span>{selectedOption.label}</span>
+              </div>
+              <ChevronDown size={14} className={`text-zinc-500 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {dropdownOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setDropdownOpen(false)} />
+                <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-800 border border-zinc-700 rounded shadow-lg z-50 overflow-hidden">
+                  {typeOptions.map(option => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setTypeFilter(option.value);
+                        setDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs transition-colors
+                        ${typeFilter === option.value ? 'bg-lime-500/20 text-lime-400' : 'text-zinc-300 hover:bg-zinc-700'}
+                      `}
+                    >
+                      {option.icon && <span>{option.icon}</span>}
+                      <span>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-2">
         <div className={`grid gap-2 ${isOpen ? 'grid-cols-1' : 'grid-cols-1'}`}>

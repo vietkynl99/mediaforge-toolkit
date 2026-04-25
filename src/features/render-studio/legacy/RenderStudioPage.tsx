@@ -201,6 +201,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const [addTrackMenuOpen, setAddTrackMenuOpen] = React.useState(false);
   const addTrackMenuCloseRef = React.useRef<number | null>(null);
   const [renderConfirmOpen, setRenderConfirmOpen] = React.useState(false);
+  const [mediaBinTypeFilter, setMediaBinTypeFilter] = React.useState<'all' | 'video' | 'audio' | 'subtitle' | 'image' | 'other'>('all');
+  const [mediaBinTypeDropdownOpen, setMediaBinTypeDropdownOpen] = React.useState(false);
   const formatSecondsToTime = (seconds: number): string => {
     if (!Number.isFinite(seconds) || seconds < 0) return '00:00:00.0';
     const totalMs = Math.max(0, Math.round(seconds * 1000));
@@ -615,17 +617,65 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                       )}
                     </div>
                     {renderStudioMediaBinOpen && (
-                      <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1">
-                        {(runPipelineProject?.files ?? [])
-                          .slice()
-                          .sort((a, b) => {
-                            const aAdded = renderInputFileIds.includes(a.id);
-                            const bAdded = renderInputFileIds.includes(b.id);
-                            if (aAdded && !bAdded) return -1;
-                            if (!aAdded && bAdded) return 1;
-                            return 0;
-                          })
-                          .map(file => {
+                      <>
+                        {/* Type Filter Dropdown */}
+                        <div className="relative mb-2">
+                          <button
+                            onClick={() => setMediaBinTypeDropdownOpen(prev => !prev)}
+                            className="w-full flex items-center justify-between gap-2 px-2 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs text-zinc-300 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              {mediaBinTypeFilter === 'video' && <FileVideo size={14} className="text-lime-400" />}
+                              {mediaBinTypeFilter === 'audio' && <FileAudio size={14} className="text-amber-400" />}
+                              {mediaBinTypeFilter === 'subtitle' && <Type size={14} className="text-blue-400" />}
+                              {mediaBinTypeFilter === 'image' && <Image size={14} className="text-sky-400" />}
+                              {mediaBinTypeFilter === 'other' && <File size={14} className="text-zinc-400" />}
+                              <span className="capitalize">{mediaBinTypeFilter === 'all' ? 'All Files' : mediaBinTypeFilter}</span>
+                            </div>
+                            <span className="text-zinc-500">▼</span>
+                          </button>
+                          {mediaBinTypeDropdownOpen && (
+                            <>
+                              <div className="fixed inset-0 z-40" onClick={() => setMediaBinTypeDropdownOpen(false)} />
+                              <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-800 border border-zinc-700 rounded shadow-lg z-50 overflow-hidden">
+                                {[
+                                  { value: 'all', label: 'All Files', icon: null },
+                                  { value: 'video', label: 'Video', icon: FileVideo, iconClass: 'text-lime-400' },
+                                  { value: 'audio', label: 'Audio', icon: FileAudio, iconClass: 'text-amber-400' },
+                                  { value: 'subtitle', label: 'Subtitle', icon: Type, iconClass: 'text-blue-400' },
+                                  { value: 'image', label: 'Image', icon: Image, iconClass: 'text-sky-400' },
+                                  { value: 'other', label: 'Other', icon: File, iconClass: 'text-zinc-400' },
+                                ].map(option => (
+                                  <button
+                                    key={option.value}
+                                    onClick={() => {
+                                      setMediaBinTypeFilter(option.value as any);
+                                      setMediaBinTypeDropdownOpen(false);
+                                    }}
+                                    className={`w-full flex items-center gap-2 px-2 py-1.5 text-xs transition-colors
+                                      ${mediaBinTypeFilter === option.value ? 'bg-lime-500/20 text-lime-400' : 'text-zinc-300 hover:bg-zinc-700'}
+                                    `}
+                                  >
+                                    {option.icon && React.createElement(option.icon, { size: 14, className: option.iconClass })}
+                                    <span>{option.label}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 overflow-y-auto pr-1">
+                          {(runPipelineProject?.files ?? [])
+                            .filter(file => mediaBinTypeFilter === 'all' || file.type === mediaBinTypeFilter)
+                            .slice()
+                            .sort((a, b) => {
+                              const aAdded = renderInputFileIds.includes(a.id);
+                              const bAdded = renderInputFileIds.includes(b.id);
+                              if (aAdded && !bAdded) return -1;
+                              if (!aAdded && bAdded) return 1;
+                              return 0;
+                            })
+                            .map(file => {
                             const isVideo = file.type === 'video';
                           const isAudio = file.type === 'audio';
                           const isSubtitle = file.type === 'subtitle';
@@ -703,6 +753,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                           <div className="text-[11px] text-zinc-500">No files</div>
                         )}
                       </div>
+                      </>
                     )}
                   </div>
 
