@@ -2452,6 +2452,8 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
       job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
       scheduleJobPersist(job);
+      const ttsAbortController = new AbortController();
+      (job as any).__abortController = ttsAbortController;
       const outputDir = (job as any).__outputDir as string;
       const ttsResult = await runTtsTask(inputPath, outputDir, {
         voice: (job as any).__ttsVoice as string | undefined,
@@ -2461,6 +2463,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
         overlapMode: (job as any).__ttsOverlapMode as 'overlap' | 'truncate' | undefined,
         removeLineBreaks: (job as any).__ttsRemoveLineBreaks as boolean | undefined,
         onLog: chunk => appendJobLog(job, chunk),
+        signal: ttsAbortController.signal,
         onProgress: (completed, total) => {
           const percent = Math.min(99, Math.round((completed / Math.max(1, total)) * 100));
           if (percent <= (ttsTask.progress ?? 0)) return;
@@ -3234,18 +3237,30 @@ const runEdgeTtsWithRetry = async (
   command: string,
   args: string[],
   onLog?: (chunk: string) => void,
-  contextLabel?: string
+  contextLabel?: string,
+  signal?: AbortSignal
 ) => {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= EDGE_TTS_MAX_RETRIES; attempt += 1) {
+    if (signal?.aborted) {
+      throw new Error(CANCELLED_ERROR_MESSAGE);
+    }
     const attemptLabel = contextLabel ? `${contextLabel} attempt ${attempt}/${EDGE_TTS_MAX_RETRIES}` : `attempt ${attempt}/${EDGE_TTS_MAX_RETRIES}`;
     onLog?.(`EDGE-TTS ${attemptLabel}: ${[command, ...args].join(' ')}
 `);
     try {
       await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new Error(CANCELLED_ERROR_MESSAGE));
+          return;
+        }
         const proc = spawn(command, args);
         let errorOutput = '';
         let stdOutput = '';
+        const handleAbort = () => {
+          proc.kill('SIGTERM');
+        };
+        signal?.addEventListener('abort', handleAbort);
         proc.stdout.on('data', data => {
           stdOutput += data.toString();
         });
@@ -3254,6 +3269,11 @@ const runEdgeTtsWithRetry = async (
         });
         proc.on('error', reject);
         proc.on('close', code => {
+          signal?.removeEventListener('abort', handleAbort);
+          if (signal?.aborted) {
+            reject(new Error(CANCELLED_ERROR_MESSAGE));
+            return;
+          }
           if (code !== 0) {
             const details = [errorOutput, stdOutput].filter(Boolean).join('\n');
             reject(new Error(details || `edge-tts exited with code ${code}`));
@@ -3267,6 +3287,9 @@ const runEdgeTtsWithRetry = async (
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = error instanceof Error ? error : new Error(message);
+      if (message === CANCELLED_ERROR_MESSAGE) {
+        throw lastError;
+      }
       const retryable = shouldRetryEdgeTtsError(message);
       onLog?.(`EDGE-TTS ${attemptLabel} failed: ${message}\n`);
       if (!retryable || attempt >= EDGE_TTS_MAX_RETRIES) {
@@ -3289,6 +3312,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   removeLineBreaks?: boolean;
   onProgress?: (completed: number, total: number) => void;
   onLog?: (chunk: string) => void;
+  signal?: AbortSignal;
 }): Promise<TtsTaskResult> => {
   const ext = path.extname(inputFullPath).toLowerCase();
   if (!SUB_EXT.has(ext)) {
@@ -3379,7 +3403,8 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       ];
       const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
       options?.onLog?.(`COMMAND (tts cue raw ${i + 1}/${cues.length}): ${commandLine}\n`);
-      await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`);
+      if (options?.signal?.aborted) throw new Error(CANCELLED_ERROR_MESSAGE);
+      await runEdgeTtsWithRetry(EDGE_TTS_CMD, args, options?.onLog, `tts cue ${i + 1}/${cues.length}`, options?.signal);
       const normalizedPath = `${audioPath}.norm.wav`;
       try {
         const normalizeArgs = [
@@ -3397,14 +3422,20 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
         ];
         const normalizeCommand = [ffmpegPath, ...normalizeArgs].map(formatArg).join(' ');
         options?.onLog?.(`COMMAND (ffmpeg cue normalize ${i + 1}/${cues.length}): ${normalizeCommand}\n`);
+        if (options?.signal?.aborted) throw new Error(CANCELLED_ERROR_MESSAGE);
         await new Promise<void>((resolve, reject) => {
+          if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
           const proc = spawn(ffmpegPath, normalizeArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
           let stderr = '';
+          const handleAbort = () => { proc.kill('SIGTERM'); };
+          options?.signal?.addEventListener('abort', handleAbort);
           proc.stderr.on('data', data => {
             stderr += data.toString();
           });
           proc.on('error', reject);
           proc.on('close', code => {
+            options?.signal?.removeEventListener('abort', handleAbort);
+            if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
             if (code === 0) resolve();
             else reject(new Error(stderr.trim() || `ffmpeg (cue normalize) exited with code ${code}`));
           });
@@ -3487,14 +3518,20 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     ];
     const fxCommand = [ffmpegPath, ...fxArgs].map(formatArg).join(' ');
     options?.onLog?.(`COMMAND (ffmpeg cue fx ${i + 1}/${cues.length}): ${fxCommand}\n`);
+    if (options?.signal?.aborted) throw new Error(CANCELLED_ERROR_MESSAGE);
     await new Promise<void>((resolve, reject) => {
+      if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
       const proc = spawn(ffmpegPath, fxArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
+      const handleAbort = () => { proc.kill('SIGTERM'); };
+      options?.signal?.addEventListener('abort', handleAbort);
       proc.stderr.on('data', data => {
         stderr += data.toString();
       });
       proc.on('error', reject);
       proc.on('close', code => {
+        options?.signal?.removeEventListener('abort', handleAbort);
+        if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
         if (code === 0) resolve();
         else reject(new Error(stderr.trim() || `ffmpeg (cue fx) exited with code ${code}`));
       });
@@ -3656,15 +3693,21 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       ];
       const ffmpegCommand = [ffmpegPath, ...ffmpegArgs].map(formatArg).join(' ');
       options?.onLog?.(`COMMAND (ffmpeg mix segment ${segmentIndex + 1}/${segmentCount}): ${ffmpegCommand}\n`);
+      if (options?.signal?.aborted) throw new Error(CANCELLED_ERROR_MESSAGE);
       try {
         await new Promise<void>((resolve, reject) => {
+          if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
           const proc = spawn(ffmpegPath, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
           let stderr = '';
+          const handleAbort = () => { proc.kill('SIGTERM'); };
+          options?.signal?.addEventListener('abort', handleAbort);
           proc.stderr.on('data', data => {
             stderr += data.toString();
           });
           proc.on('error', reject);
           proc.on('close', code => {
+            options?.signal?.removeEventListener('abort', handleAbort);
+            if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
             if (code === 0) resolve();
             else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
           });
@@ -3711,14 +3754,20 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     ];
     const concatCommand = [ffmpegPath, ...concatArgs].map(formatArg).join(' ');
     options?.onLog?.(`COMMAND (ffmpeg concat tts segments): ${concatCommand}\n`);
+    if (options?.signal?.aborted) throw new Error(CANCELLED_ERROR_MESSAGE);
     await new Promise<void>((resolve, reject) => {
+      if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
       const proc = spawn(ffmpegPath, concatArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
+      const handleAbort = () => { proc.kill('SIGTERM'); };
+      options?.signal?.addEventListener('abort', handleAbort);
       proc.stderr.on('data', data => {
         stderr += data.toString();
       });
       proc.on('error', reject);
       proc.on('close', code => {
+        options?.signal?.removeEventListener('abort', handleAbort);
+        if (options?.signal?.aborted) { reject(new Error(CANCELLED_ERROR_MESSAGE)); return; }
         if (code === 0) resolve();
         else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
       });
