@@ -3412,6 +3412,8 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
           '-i',
           audioPath,
           '-vn',
+          '-af',
+          'dynaudnorm=f=500:g=31:p=0.95:m=5',
           '-ar',
           String(TTS_INTERNAL_SAMPLE_RATE),
           '-ac',
@@ -3660,16 +3662,17 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
         const trimEndSample = sourceTrimStartSamples + playDurationSamples;
         inputArgs.push('-i', cuePaths[cueIndex]);
         filterChains.push(
-          `[${inputIndex}:a]atrim=start_sample=${sourceTrimStartSamples}:end_sample=${trimEndSample},asetpts=PTS-STARTPTS,adelay=${delaySamples}S|${delaySamples}S,aresample=${TTS_INTERNAL_SAMPLE_RATE}[a${inputIndex}]`
+          `[${inputIndex}:a]atrim=start_sample=${sourceTrimStartSamples}:end_sample=${trimEndSample},asetpts=PTS-STARTPTS,adelay=${delaySamples}S|${delaySamples}S,aresample=${TTS_INTERNAL_SAMPLE_RATE},apad=whole_len=${segmentDurationSamples}[a${inputIndex}]`
         );
         mixInputs.push(`[a${inputIndex}]`);
         inputIndex += 1;
       });
 
+      const nInputs = mixInputs.length;
       const filter = [
         ...filterChains,
-        `${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=0[mix_raw]`,
-        `[mix_raw]volume=${mixInputs.length.toFixed(4)},alimiter=limit=0.97[out]`
+        `${mixInputs.join('')}amix=inputs=${nInputs}:duration=longest:dropout_transition=0[mix_raw]`,
+        `[mix_raw]volume=${nInputs.toFixed(4)},alimiter=limit=0.97[out]`
       ].join(';');
       const filterScriptPath = path.join(
         cueCacheRoot,
