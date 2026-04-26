@@ -508,15 +508,21 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
   }, [project, renderInputFileIds, renderVideoId, renderAudioId, renderSubtitleId]);
 
   function applyRenderTemplate(template: RenderTemplate, mapping: Record<string, string>) {
+    // Lấy file ID trực tiếp từ mapping theo placeholder key
+    const videoId = mapping['video'] ?? mapping['video1'] ?? null;
+    const audioId = mapping['audio'] ?? mapping['audio1'] ?? null;
+    const subtitleId = mapping['subtitle'] ?? mapping['subtitle1'] ?? null;
+    
+    // Fallback: nếu không có trong mapping, lấy file đầu tiên của loại đó
     const selectedFiles = project?.files.filter(file => Object.values(mapping).includes(file.id)) ?? [];
     const firstVideo = selectedFiles.find(file => file.type === 'video');
     const firstImage = selectedFiles.find(file => file.type === 'image');
     const firstAudio = selectedFiles.find(file => file.type === 'audio');
     const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
 
-    setRenderVideoId(firstVideo?.id ?? firstImage?.id ?? null);
-    setRenderAudioId(firstAudio?.id ?? null);
-    setRenderSubtitleId(firstSubtitle?.id ?? null);
+    setRenderVideoId(videoId ?? firstVideo?.id ?? firstImage?.id ?? null);
+    setRenderAudioId(audioId ?? firstAudio?.id ?? null);
+    setRenderSubtitleId(subtitleId ?? firstSubtitle?.id ?? null);
 
     const firstVideoItem = template.config.items.find(item => item.type === 'video') ?? null;
     if (firstVideoItem) {

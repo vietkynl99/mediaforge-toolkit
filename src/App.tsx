@@ -43,7 +43,9 @@ import {
   computePlaceholderKeyByFileId,
   normalizeItemEffects,
   normalizeLoadedRenderEffects,
-  RENDER_TEXT_PARAM_FIELDS
+  RENDER_TEXT_PARAM_FIELDS,
+  encodeInputsToUrl,
+  decodeInputsFromUrl
 } from './utils/vault';
 import { summarizeRenderConfigForDebug } from './features/render-studio/utils/config-builder';
 import { BASE_SUBTITLE_STYLE, DEFAULT_RENDER_SUBTITLE_ASS, SUBTITLE_STYLE_PRESETS, VIET_SUBTITLE_FONTS } from './types';
@@ -152,13 +154,15 @@ export default function App() {
     projectId?: string | null,
     templateId?: string | null,
     pipelineId?: string | null,
-    projectName?: string | null
+    projectName?: string | null,
+    inputs?: string | null
   ) => {
     const params = new URLSearchParams();
     if (projectName) params.set('project', projectName);
     if (projectId) params.set('projectId', projectId);
     if (templateId && templateId !== 'custom') params.set('template', templateId);
     if (pipelineId) params.set('pipeline', pipelineId);
+    if (inputs) params.set('inputs', inputs);
     const query = params.toString();
     return `${RENDER_STUDIO_PATH}${query ? `?${query}` : ''}`;
   };
@@ -328,6 +332,13 @@ export default function App() {
   const renderStudioQueryAppliedRef = useRef(false);
   const renderStudioPendingProjectIdRef = useRef<string | null>(null);
   const renderStudioPendingProjectNameRef = useRef<string | null>(null);
+  const renderStudioPendingInputsRef = useRef<{
+    videoId: string | null;
+    audioId: string | null;
+    subtitleId: string | null;
+    imageIds: string[];
+    allIds: string[];
+  } | null>(null);
   const lastRenderProjectIdRef = useRef<string | null>(null);
   const [renderPresetSaveMenuOpen, setRenderPresetSaveMenuOpen] = useState(false);
   const [renderStudioLeftMenuOpen, setRenderStudioLeftMenuOpen] = useState(false);
@@ -1078,6 +1089,12 @@ export default function App() {
         const currentPath = window.location.pathname;
         if (currentPath !== RENDER_STUDIO_PATH) {
           renderStudioReturnPathRef.current = currentPath;
+          const inputsString = encodeInputsToUrl({
+            renderVideoId,
+            renderAudioId,
+            renderSubtitleId,
+            renderImageOrderIds
+          });
           window.history.pushState(
             {},
             '',
@@ -1085,7 +1102,8 @@ export default function App() {
               runPipelineProjectId,
               runPipelineRenderTemplateId,
               runPipelineId,
-              runPipelineProject?.name ?? null
+              runPipelineProject?.name ?? null,
+              inputsString || null
             )
           );
         }
@@ -1152,6 +1170,7 @@ export default function App() {
     const projectName = params.get('project');
     const templateId = params.get('template');
     const pipelineId = params.get('pipeline');
+    const inputsParam = params.get('inputs');
     if (projectId) renderStudioPendingProjectIdRef.current = projectId;
     if (projectName) renderStudioPendingProjectNameRef.current = projectName;
     if (templateId) {
@@ -1159,6 +1178,9 @@ export default function App() {
     }
     if (pipelineId) {
       setRunPipelineId(pipelineId);
+    }
+    if (inputsParam) {
+      renderStudioPendingInputsRef.current = decodeInputsFromUrl(inputsParam);
     }
     renderStudioQueryAppliedRef.current = true;
   }, [authUser, showRenderStudio]);
@@ -1197,6 +1219,28 @@ export default function App() {
     }
   }, [authUser, showRenderStudio, vaultFolders]);
 
+  // Apply pending inputs sau khi project được load
+  useEffect(() => {
+    if (!authUser || !showRenderStudio) return;
+    if (!runPipelineProjectId) return;
+    const pendingInputs = renderStudioPendingInputsRef.current;
+    if (!pendingInputs) return;
+    
+    // Verify tất cả file IDs tồn tại trong project
+    const projectFiles = runPipelineProject?.files ?? [];
+    const validIds = pendingInputs.allIds.filter(id => projectFiles.some(f => f.id === id));
+    
+    if (validIds.length > 0) {
+      setRenderVideoId(pendingInputs.videoId);
+      setRenderAudioId(pendingInputs.audioId);
+      setRenderSubtitleId(pendingInputs.subtitleId);
+      setRenderImageOrderIds(pendingInputs.imageIds);
+      setRenderInputFileIds(validIds);
+    }
+    
+    renderStudioPendingInputsRef.current = null;
+  }, [authUser, showRenderStudio, runPipelineProjectId, runPipelineProject?.files]);
+
   useEffect(() => {
     if (!authUser || !showRenderStudio) return;
     if (runPipelineHasRender) return;
@@ -1208,17 +1252,24 @@ export default function App() {
   useEffect(() => {
     if (!authUser || !showRenderStudio) return;
     if (typeof window === 'undefined') return;
+    const inputsString = encodeInputsToUrl({
+      renderVideoId,
+      renderAudioId,
+      renderSubtitleId,
+      renderImageOrderIds
+    });
     const nextUrl = buildRenderStudioUrl(
       runPipelineProjectId,
       runPipelineRenderTemplateId,
       runPipelineId,
-      runPipelineProject?.name ?? null
+      runPipelineProject?.name ?? null,
+      inputsString || null
     );
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     if (currentUrl !== nextUrl) {
       window.history.replaceState({}, '', nextUrl);
     }
-  }, [authUser, showRenderStudio, runPipelineProjectId, runPipelineRenderTemplateId]);
+  }, [authUser, showRenderStudio, runPipelineProjectId, runPipelineRenderTemplateId, renderVideoId, renderAudioId, renderSubtitleId, renderImageOrderIds]);
 
   useEffect(() => {
     if (!authUser) return;
@@ -3198,14 +3249,22 @@ export default function App() {
     if (imageIdsInOrder.length > 0) {
       setRenderImageOrderIds(imageIdsInOrder);
     }
+    
+    // Lấy file ID trực tiếp từ mapping theo placeholder key
+    const videoId = mapping['video'] ?? mapping['video1'] ?? null;
+    const audioId = mapping['audio'] ?? mapping['audio1'] ?? null;
+    const subtitleId = mapping['subtitle'] ?? mapping['subtitle1'] ?? null;
+    
+    // Fallback: nếu không có trong mapping, lấy file đầu tiên của loại đó từ selectedIds
     const selectedFiles = runPipelineProject?.files.filter(file => selectedIds.includes(file.id)) ?? [];
     const firstVideo = selectedFiles.find(file => file.type === 'video');
     const firstImage = selectedFiles.find(file => file.type === 'image');
     const firstAudio = selectedFiles.find(file => file.type === 'audio');
     const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
-    setRenderVideoId(firstVideo?.id ?? firstImage?.id ?? null);
-    setRenderAudioId(firstAudio?.id ?? null);
-    setRenderSubtitleId(firstSubtitle?.id ?? null);
+    
+    setRenderVideoId(videoId ?? firstVideo?.id ?? firstImage?.id ?? null);
+    setRenderAudioId(audioId ?? firstAudio?.id ?? null);
+    setRenderSubtitleId(subtitleId ?? firstSubtitle?.id ?? null);
 
     const firstVideoItem = template.config.items.find(item => item.type === 'video') ?? null;
     if (firstVideoItem) {

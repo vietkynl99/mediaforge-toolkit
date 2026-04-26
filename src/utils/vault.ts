@@ -112,3 +112,65 @@ export const RENDER_TEXT_PARAM_FIELDS = new Set([
   'textAutoMoveInterval',
   'textAutoMovePositions'
 ]);
+
+/**
+ * Encode inputs sang URL format: "video:abc123,audio:def456,subtitle:xyz789"
+ */
+export const encodeInputsToUrl = (params: {
+  renderVideoId: string | null;
+  renderAudioId: string | null;
+  renderSubtitleId: string | null;
+  renderImageOrderIds: string[];
+}): string => {
+  const parts: string[] = [];
+  if (params.renderVideoId) parts.push(`video:${params.renderVideoId}`);
+  if (params.renderAudioId) parts.push(`audio:${params.renderAudioId}`);
+  if (params.renderSubtitleId) parts.push(`subtitle:${params.renderSubtitleId}`);
+  params.renderImageOrderIds.forEach((id, index) => {
+    const key = index === 0 ? 'image' : `image${index + 1}`;
+    parts.push(`${key}:${id}`);
+  });
+  return parts.join(',');
+};
+
+/**
+ * Decode inputs từ URL format: "video:abc123,audio:def456,subtitle:xyz789"
+ */
+export const decodeInputsFromUrl = (input: string | null): {
+  videoId: string | null;
+  audioId: string | null;
+  subtitleId: string | null;
+  imageIds: string[];
+  allIds: string[];
+} => {
+  const result = {
+    videoId: null as string | null,
+    audioId: null as string | null,
+    subtitleId: null as string | null,
+    imageIds: [] as string[],
+    allIds: [] as string[]
+  };
+
+  if (!input) return result;
+
+  input.split(',').forEach(part => {
+    const [key, value] = part.split(':');
+    if (!key || !value) return;
+    
+    if (key === 'video') {
+      result.videoId = value;
+      result.allIds.push(value);
+    } else if (key === 'audio') {
+      result.audioId = value;
+      result.allIds.push(value);
+    } else if (key === 'subtitle') {
+      result.subtitleId = value;
+      result.allIds.push(value);
+    } else if (key.startsWith('image')) {
+      result.imageIds.push(value);
+      result.allIds.push(value);
+    }
+  });
+
+  return result;
+};
