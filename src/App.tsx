@@ -1236,10 +1236,27 @@ export default function App() {
       setRenderSubtitleId(pendingInputs.subtitleId);
       setRenderImageOrderIds(pendingInputs.imageIds);
       setRenderInputFileIds(validIds);
+      
+      // Nếu có template, build và apply mapping với pending inputs
+      if (runPipelineRenderTemplateId && runPipelineRenderTemplateId !== 'custom') {
+        const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
+        if (template && runPipelineProject) {
+          const mapping = buildRenderTemplateApplyMap(template, {
+            videoId: pendingInputs.videoId,
+            audioId: pendingInputs.audioId,
+            subtitleId: pendingInputs.subtitleId,
+            imageIds: pendingInputs.imageIds
+          });
+          commitRenderTemplateApplyMap(template.id, mapping);
+          applyRenderTemplate(template, mapping);
+          // Đánh dấu đã apply để ngăn auto-apply template chạy lại
+          lastAutoTemplateApplyKeyRef.current = `${runPipelineProject.id}:${template.id}`;
+        }
+      }
     }
     
     renderStudioPendingInputsRef.current = null;
-  }, [authUser, showRenderStudio, runPipelineProjectId, runPipelineProject?.files]);
+  }, [authUser, showRenderStudio, runPipelineProjectId, runPipelineProject?.files, runPipelineRenderTemplateId, renderTemplates]);
 
   useEffect(() => {
     if (!authUser || !showRenderStudio) return;
@@ -1986,7 +2003,12 @@ export default function App() {
     setTemplateSaveOpen(false);
   };
 
-  const buildRenderTemplateApplyMap = (template: RenderTemplate) => {
+  const buildRenderTemplateApplyMap = (template: RenderTemplate, overrideInputs?: {
+    videoId?: string | null;
+    audioId?: string | null;
+    subtitleId?: string | null;
+    imageIds?: string[];
+  }) => {
     const inputs = Object.keys(template.config.inputsMap ?? {});
     const typeOfKey = (key: string) => {
       const item = template.config.items.find((i: any) => i.source?.ref === key);
@@ -2001,9 +2023,40 @@ export default function App() {
     };
     const indices = { video: 0, audio: 0, subtitle: 0, image: 0 } as Record<string, number>;
     const mapping: Record<string, string> = {};
+    
+    // Ưu tiên sử dụng inputs từ tham số (từ URL deeplink), fallback sang state
+    const videoInput = overrideInputs?.videoId ?? renderVideoId;
+    const audioInput = overrideInputs?.audioId ?? renderAudioId;
+    const subtitleInput = overrideInputs?.subtitleId ?? renderSubtitleId;
+    const imageInputs = overrideInputs?.imageIds ?? renderImageOrderIds;
+    
     inputs.forEach((key) => {
       const type = typeOfKey(key);
       if (!type) return;
+      
+      // Ưu tiên sử dụng input đã có
+      if (type === 'video' && videoInput && indices.video === 0) {
+        mapping[key] = videoInput;
+        indices.video += 1;
+        return;
+      }
+      if (type === 'audio' && audioInput && indices.audio === 0) {
+        mapping[key] = audioInput;
+        indices.audio += 1;
+        return;
+      }
+      if (type === 'subtitle' && subtitleInput && indices.subtitle === 0) {
+        mapping[key] = subtitleInput;
+        indices.subtitle += 1;
+        return;
+      }
+      if (type === 'image' && imageInputs.length > indices.image) {
+        mapping[key] = imageInputs[indices.image];
+        indices.image += 1;
+        return;
+      }
+      
+      // Fallback: lấy file đầu tiên của loại đó
       const file = filesByType[type][indices[type]];
       if (file) {
         mapping[key] = file.id;
@@ -3262,7 +3315,7 @@ export default function App() {
     const firstAudio = selectedFiles.find(file => file.type === 'audio');
     const firstSubtitle = selectedFiles.find(file => file.type === 'subtitle');
     
-    setRenderVideoId(videoId ?? firstVideo?.id ?? firstImage?.id ?? null);
+    setRenderVideoId(videoId ?? firstVideo?.id ?? null);
     setRenderAudioId(audioId ?? firstAudio?.id ?? null);
     setRenderSubtitleId(subtitleId ?? firstSubtitle?.id ?? null);
 
