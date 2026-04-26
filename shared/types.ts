@@ -57,6 +57,7 @@ export type RenderConfigV2 = {
     framerate: number;
     duration?: number;
     start?: number;
+    exportMode?: 'video+audio' | 'video only' | 'audio only';
   };
   inputsMap: Record<string, string>;
   items: RenderItemV2[];

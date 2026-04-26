@@ -112,7 +112,8 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
       levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
       targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.targetLufs, -14),
       resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
-      framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30
+      framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
+      exportMode: DEFAULT_RENDER_PARAMS.timeline.exportMode as 'video+audio' | 'video only' | 'audio only'
     },
     inputsMap,
     items
@@ -129,7 +130,8 @@ export const summarizeRenderConfigForDebug = (config: RenderConfigV2 | null | un
       start: config.timeline?.start ?? 0,
       duration: config.timeline?.duration ?? null,
       framerate: config.timeline?.framerate ?? null,
-      resolution: config.timeline?.resolution ?? null
+      resolution: config.timeline?.resolution ?? null,
+      exportMode: config.timeline?.exportMode ?? null
     },
     items: Array.isArray(config.items)
       ? config.items.map(item => ({
@@ -269,11 +271,13 @@ export const buildTemplateFromConfig = (config: RenderConfigV2): RenderConfigV2 
   });
 
   const { duration: _duration, ...timelineWithoutDuration } = (config.timeline ?? {}) as RenderConfigV2['timeline'];
+  const exportMode = timelineWithoutDuration.exportMode ?? 'video+audio';
 
   return {
     version: '2',
     timeline: {
-      ...timelineWithoutDuration
+      ...timelineWithoutDuration,
+      exportMode
     },
     inputsMap: normalizedInputsMap,
     items: normalizedItems
@@ -588,7 +592,8 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
       resolution: timelineResolution,
       framerate: timelineFramerate,
       levelControl: renderParams.timeline.levelControl as any,
-      targetLufs: targetLufs
+      targetLufs: targetLufs,
+      exportMode: renderParams.timeline.exportMode as 'video+audio' | 'video only' | 'audio only' || 'video+audio'
     },
     inputsMap,
     items

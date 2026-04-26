@@ -545,7 +545,8 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
           framerate: String(template.config.timeline?.framerate ?? prev.timeline.framerate),
           resolution: String(template.config.timeline?.resolution ?? prev.timeline.resolution),
           levelControl: template.config.timeline?.levelControl ?? prev.timeline.levelControl,
-          targetLufs: String(template.config.timeline?.targetLufs ?? prev.timeline.targetLufs)
+          targetLufs: String(template.config.timeline?.targetLufs ?? prev.timeline.targetLufs),
+          exportMode: template.config.timeline?.exportMode ?? prev.timeline.exportMode
         },
         video: {
           ...prev.video,

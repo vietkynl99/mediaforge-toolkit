@@ -1086,21 +1086,34 @@ const buildRenderV2FilterGraph = async (
   const debugLabel = options?.debugLabel ? ` ${options.debugLabel}` : '';
   const onLog = options?.onLog;
   const INPUT_SEEK_PREROLL_SECONDS = 1;
-  const includeAudio = options?.includeAudio !== false;
+  const exportMode = (config.timeline as any).exportMode || 'video+audio';
+  const includeVideo = exportMode !== 'audio only';
+  const includeAudio = options?.includeAudio !== false && exportMode !== 'video only';
   const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
   const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
   const background = '0x000000'; // Default black background
   const configOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
   const outputStart = Number.isFinite(options?.outputStart) ? Math.max(0, Number(options?.outputStart)) : configOutputStart;
 
-  const visualItems = config.items.filter(item => item.type === 'video' || item.type === 'image');
+  const visualItems = includeVideo ? config.items.filter(item => item.type === 'video' || item.type === 'image') : [];
   const audioItems = config.items.filter(item => item.type === 'audio');
-  const subtitleItems = config.items.filter(item => item.type === 'subtitle');
-  const textItems = config.items.filter(item => item.type === 'text');
+  const subtitleItems = includeVideo ? config.items.filter(item => item.type === 'subtitle') : [];
+  const textItems = includeVideo ? config.items.filter(item => item.type === 'text') : [];
 
-  const sourceItems = includeAudio
-    ? [...visualItems, ...audioItems, ...subtitleItems]
-    : [...visualItems, ...subtitleItems];
+  // In 'audio only' mode visualItems is empty (no video rendered), but we still
+  // need the video file entries in sourceItems so their embedded audio streams
+  // can be mixed. Use a separate list so they get loaded as inputs without
+  // triggering any visual filter graph.
+  const videoItemsForAudio = !includeVideo && includeAudio
+    ? config.items.filter(item => item.type === 'video')
+    : [];
+
+  const sourceItems = [
+    ...visualItems,
+    ...videoItemsForAudio,
+    ...(includeAudio ? audioItems : []),
+    ...subtitleItems
+  ];
   const inputs: Array<{ path: string; type: RenderItemV2['type']; item: RenderItemV2; duration?: number }> = [];
   for (const item of sourceItems) {
     const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
@@ -1249,15 +1262,18 @@ const buildRenderV2FilterGraph = async (
   });
 
   const filters: string[] = [];
-  filters.push(`color=c=${background}:s=${outW}x${outH}:d=${outputDuration}:r=${framerate}[base]`);
-
-  let currentVideo = '[base]';
+  let currentVideo: string | null = null;
   let visualIndex = 0;
   let circleMaskPath: string | null = null;
-  const sortedVisual = [...visualItems].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
-  for (const item of sortedVisual) {
-    const timing = finalItemTiming.find(t => t.entry.item === item);
-    if (!timing) continue;
+
+  if (includeVideo) {
+    filters.push(`color=c=${background}:s=${outW}x${outH}:d=${outputDuration}:r=${framerate}[base]`);
+    currentVideo = '[base]';
+
+    const sortedVisual = [...visualItems].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+    for (const item of sortedVisual) {
+      const timing = finalItemTiming.find(t => t.entry.item === item);
+      if (!timing) continue;
 
     const inputIndex = inputEntries.findIndex(e => e.item === item);
     if (inputIndex < 0) continue;
@@ -1509,6 +1525,7 @@ const buildRenderV2FilterGraph = async (
       // ignore text rendering errors
     }
   }
+  } // end if (includeVideo)
 
   // ─── Audio Mixing ─────────────────────────────────────────────────────────
   // Resolve timeline-level audio settings
@@ -1532,7 +1549,10 @@ const buildRenderV2FilterGraph = async (
 
   if (includeAudio) {
     // 1. Video items: include their embedded audio stream if not muted
-    for (const item of visualItems) {
+    //    Covers both normal (video+audio) mode and audio-only mode where
+    //    video files are loaded purely for their audio stream.
+    const videoAudioSourceItems = includeVideo ? visualItems : videoItemsForAudio;
+    for (const item of videoAudioSourceItems) {
       if (item.type !== 'video') continue;
       const timing = finalItemTiming.find(t => t.entry.item === item);
       if (!timing) continue;
@@ -1770,29 +1790,29 @@ const buildRenderV2FfmpegArgs = async (
     const fr = Number(graph.framerate);
     if (Number.isFinite(fr) && fr > 0) gop = Math.round(fr * 2);
   }
+  const isAudioOnlyMode = !graph.videoLabel && graph.audioMap.length > 0;
   const args = [
     '-y',
     ...graph.inputArgs,
-    '-filter_complex',
-    graph.filterComplex,
-    '-map',
-    graph.videoLabel,
+    ...(graph.filterComplex ? ['-filter_complex', graph.filterComplex] : []),
+    ...(graph.videoLabel ? ['-map', graph.videoLabel] : []),
     ...graph.audioMap,
-    '-c:v',
-    codec,
-    '-preset',
-    preset,
-    '-crf',
-    String(crf),
-    ...(tune ? ['-tune', tune] : []),
-    ...(gop && gop > 0 ? ['-g', String(Math.round(gop))] : []),
+    ...(graph.videoLabel ? [
+      '-c:v', codec,
+      '-preset', preset,
+      '-crf', String(crf),
+      ...(tune ? ['-tune', tune] : []),
+      ...(gop && gop > 0 ? ['-g', String(Math.round(gop))] : []),
+      '-pix_fmt', 'yuv420p',
+      '-r', String(graph.framerate)
+    ] : isAudioOnlyMode ? [
+      // Audio-only output: suppress video stream, encode to mp3
+      '-vn',
+      '-c:a', 'libmp3lame',
+      '-q:a', '2'
+    ] : []),
     ...(threadCount ? ['-threads', String(threadCount)] : []),
-    '-r',
-    String(graph.framerate),
-    '-t',
-    String(graph.outputDuration),
-    '-pix_fmt',
-    'yuv420p',
+    '-t', String(graph.outputDuration),
     outputPath
   ];
 
@@ -1926,7 +1946,10 @@ const runRenderV2Task = async (
     const ss = String(date.getSeconds()).padStart(2, '0');
     return `${yy}${mm}${dd}-${hh}${min}${ss}`;
   };
-  const outputName = `render-${formatRenderTimestamp(new Date())}.mp4`;
+  const exportModeForOutput = (config.timeline as any).exportMode || 'video+audio';
+  const isAudioOnlyOutput = exportModeForOutput === 'audio only';
+  const outputExt = isAudioOnlyOutput ? '.mp3' : '.mp4';
+  const outputName = `render-${formatRenderTimestamp(new Date())}${outputExt}`;
   const outputPath = path.join(outputDir, outputName);
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-v2-'));
   try {
@@ -1968,11 +1991,11 @@ const runRenderV2Task = async (
     for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
       const localStartSeconds = segmentIndex * segmentSeconds;
       const expectedDuration = Math.max(0.001, Math.min(segmentSeconds, totalSeconds - localStartSeconds));
-      const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}.mp4`;
+      const segmentExt = isAudioOnlyOutput ? '.mp3' : '.mp4';
+      const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}${segmentExt}`;
       const segmentPath = path.join(segmentsDir, segmentName);
-      // Keep ".mp4" extension on temporary segment files so older ffmpeg builds
-      // can infer output format without requiring an explicit "-f mp4".
-      const partialSegmentPath = `${segmentPath.replace(/\.mp4$/i, '')}.part.mp4`;
+      // Keep extension on temporary segment files so ffmpeg can infer format.
+      const partialSegmentPath = `${segmentPath.replace(/\.(mp4|mp3)$/i, '')}.part${segmentExt}`;
       const reusable = await isReusableRenderSegment(segmentPath, expectedDuration);
       if (reusable) {
         completedSeconds = Math.min(totalSeconds, localStartSeconds + expectedDuration);
@@ -2014,7 +2037,7 @@ const runRenderV2Task = async (
     const concatListPath = path.join(cacheRoot, 'concat.txt');
     const concatLines: string[] = [];
     for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-      const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}.mp4`;
+      const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}${isAudioOnlyOutput ? '.mp3' : '.mp4'}`;
       const segmentPath = path.join(segmentsDir, segmentName);
       concatLines.push(`file '${escapeConcatFilePath(segmentPath)}'`);
     }

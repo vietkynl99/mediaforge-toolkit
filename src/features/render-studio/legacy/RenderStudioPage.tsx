@@ -921,12 +921,23 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               )}
                             </div>
                           ) : renderPreviewUrl ? (
-                            <img
-                              src={renderPreviewUrl}
-                              alt="Render preview"
-                              className="w-full h-full object-contain select-none"
-                              draggable={false}
-                            />
+                            <>
+                              <img
+                                src={renderPreviewUrl}
+                                alt="Render preview"
+                                className="w-full h-full object-contain select-none"
+                                draggable={false}
+                              />
+                              {renderParamsDraft?.timeline?.exportMode === 'audio only' && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-[2px] z-10 pointer-events-none">
+                                  <div className="flex items-center justify-center w-16 h-16 rounded-full bg-zinc-900/80 mb-4 border border-zinc-700/50">
+                                    <FileAudio size={28} className="text-zinc-400" />
+                                  </div>
+                                  <div className="text-sm font-medium text-zinc-300">Audio Only Mode</div>
+                                  <div className="text-xs text-zinc-500 mt-1 max-w-[200px] text-center leading-relaxed">Video tracks are disabled for this preview.</div>
+                                </div>
+                              )}
+                            </>
                           ) : renderVideoFile ? (
                             'Preview ready'
                           ) : (
@@ -1914,6 +1925,24 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       />
                                     </div>
                                   )}
+                                </div>
+                                <div className="grid grid-cols-1 gap-2">
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Export Mode</label>
+                                    <select
+                                      value={renderParamsDraft.timeline.exportMode ?? 'video+audio'}
+                                      onChange={e => {
+                                        const v = e.target.value;
+                                        updateRenderParamDraft('timeline', 'exportMode', v);
+                                        updateRenderParam('timeline', 'exportMode', v);
+                                      }}
+                                      className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none w-full"
+                                    >
+                                      <option value="video+audio">Video + Audio</option>
+                                      <option value="video only">Video Only</option>
+                                      <option value="audio only">Audio Only</option>
+                                    </select>
+                                  </div>
                                 </div>
                               </div>
                           )}

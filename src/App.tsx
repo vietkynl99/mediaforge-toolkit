@@ -471,7 +471,8 @@ export default function App() {
       framerate: '30',
       resolution: '1920x1080',
       levelControl: 'gain',
-      targetLufs: '-14'
+      targetLufs: '-14',
+      exportMode: 'video+audio'
     },
     video: {
       trimStart: '',
@@ -2373,6 +2374,15 @@ export default function App() {
       setRenderPreviewLoading(false);
       return;
     }
+    if (renderConfigPreviewForPreview?.timeline?.exportMode === 'audio only') {
+      setRenderPreviewUrl(prev => {
+        if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+        return RENDER_PREVIEW_BLACK_DATA_URL;
+      });
+      setRenderPreviewError(null);
+      setRenderPreviewLoading(false);
+      return;
+    }
     if (!renderConfigPreviewForPreview || !Array.isArray(renderConfigPreviewForPreview.items) || renderConfigPreviewForPreview.items.length === 0) {
       setRenderPreviewUrl(null);
       setRenderPreviewError(null);
@@ -2991,7 +3001,8 @@ export default function App() {
         targetLufs,
         resolution: timelineResolution,
         framerate: timelineFramerate,
-        duration: renderTimelineDuration > 0 ? renderTimelineDuration : undefined
+        duration: renderTimelineDuration > 0 ? renderTimelineDuration : undefined,
+        exportMode: (renderParams.timeline.exportMode as 'video+audio' | 'video only' | 'audio only') ?? 'video+audio'
       },
       inputsMap,
       items
@@ -3074,11 +3085,13 @@ export default function App() {
     });
 
     const { duration: _duration, ...timelineWithoutDuration } = (config.timeline ?? {}) as RenderConfigV2['timeline'];
+    const exportMode = timelineWithoutDuration.exportMode ?? 'video+audio';
 
     return {
       ...config,
       timeline: {
-        ...timelineWithoutDuration
+        ...timelineWithoutDuration,
+        exportMode
       },
       inputsMap: normalizedInputsMap,
       items: normalizedItems
@@ -3206,7 +3219,8 @@ export default function App() {
         levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
         targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.targetLufs, -14),
         resolution: String(DEFAULT_RENDER_PARAMS.timeline.resolution),
-        framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30
+        framerate: coerceNumber(DEFAULT_RENDER_PARAMS.timeline.framerate, 30) ?? 30,
+        exportMode: DEFAULT_RENDER_PARAMS.timeline.exportMode as 'video+audio' | 'video only' | 'audio only'
       },
       inputsMap,
       items
@@ -3339,7 +3353,8 @@ export default function App() {
           framerate: String(template.config.timeline?.framerate ?? prev.timeline.framerate),
           resolution: String(template.config.timeline?.resolution ?? prev.timeline.resolution),
           levelControl: template.config.timeline?.levelControl ?? prev.timeline.levelControl,
-          targetLufs: String(template.config.timeline?.targetLufs ?? prev.timeline.targetLufs)
+          targetLufs: String(template.config.timeline?.targetLufs ?? prev.timeline.targetLufs),
+          exportMode: template.config.timeline?.exportMode ?? prev.timeline.exportMode
         },
         video: {
           ...prev.video,

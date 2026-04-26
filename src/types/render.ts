@@ -177,7 +177,8 @@ export const DEFAULT_RENDER_PARAMS = {
     framerate: '30',
     resolution: '1920x1080',
     levelControl: 'gain',
-    targetLufs: '-14'
+    targetLufs: '-14',
+    exportMode: 'video+audio'
   },
   video: {
     trimStart: '',
