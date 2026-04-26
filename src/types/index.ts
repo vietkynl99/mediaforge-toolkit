@@ -16,9 +16,4 @@ export type NewJobPopupDraft = {
   projectName: string | null;
   pipelineId: string | null;
   runPipelineRenderTemplateId: string | null;
-  runPipelineTaskTemplate: Record<string, string>;
-  runPipelineInputId: string | null;
-  renderInputFileIds: string[];
-  renderTemplateApplyMap: Record<string, string>;
-  renderTemplateApplyMapById: Record<string, Record<string, string>>;
 };

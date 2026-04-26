@@ -50,6 +50,7 @@ import { BASE_SUBTITLE_STYLE, DEFAULT_RENDER_SUBTITLE_ASS, SUBTITLE_STYLE_PRESET
 import type {
   AuthUser,
   BlurRegionEffect,
+  NewJobPopupDraft,
   RenderConfigV2,
   RenderSubtitleAssState,
   RenderTemplate,
@@ -110,19 +111,6 @@ type TaskTemplate = {
   taskType: string;
   updatedAt: string;
   params: Record<string, any>;
-};
-
-type NewJobPopupDraft = {
-  version: 1;
-  projectId?: string | null;
-  projectName?: string | null;
-  pipelineId?: string | null;
-  runPipelineRenderTemplateId?: string | null;
-  runPipelineTaskTemplate?: Record<string, string>;
-  runPipelineInputId?: string | null;
-  renderInputFileIds?: string[];
-  renderTemplateApplyMap?: Record<string, string>;
-  renderTemplateApplyMapById?: Record<string, Record<string, string>>;
 };
 
 const SHOW_PARAM_PRESETS = false;
@@ -4507,39 +4495,7 @@ export default function App() {
       }
     }
 
-    if (draft.runPipelineTaskTemplate && Object.keys(draft.runPipelineTaskTemplate).length > 0) {
-      setRunPipelineTaskTemplate(prev => ({ ...prev, ...draft.runPipelineTaskTemplate }));
-    }
-
-    if (draft.renderTemplateApplyMapById && Object.keys(draft.renderTemplateApplyMapById).length > 0) {
-      setRenderTemplateApplyMapById(prev => ({ ...prev, ...draft.renderTemplateApplyMapById }));
-    }
-
-    const targetProject = resolvedProject ?? runPipelineProject ?? null;
-    const validFileIds = new Set((targetProject?.files ?? []).map(file => file.id));
-    const projectReadyForDraft = Boolean(targetProject) || (!vaultLoading && hasLoadedOnce);
-
-    if (targetProject) {
-      if (draft.runPipelineInputId && validFileIds.has(draft.runPipelineInputId) && runPipelineInputId !== draft.runPipelineInputId) {
-        setRunPipelineInputId(draft.runPipelineInputId);
-      }
-
-      if (Array.isArray(draft.renderInputFileIds)) {
-        const filtered = draft.renderInputFileIds.filter(id => validFileIds.has(id));
-        if (filtered.length > 0) {
-          setRenderInputFileIds(filtered);
-        }
-      }
-
-      if (draft.renderTemplateApplyMap && Object.keys(draft.renderTemplateApplyMap).length > 0) {
-        const filteredMap = Object.fromEntries(
-          Object.entries(draft.renderTemplateApplyMap).filter(([, fileId]) => validFileIds.has(fileId))
-        );
-        if (Object.keys(filteredMap).length > 0) {
-          setRenderTemplateApplyMap(filteredMap);
-        }
-      }
-    }
+    const projectReadyForDraft = Boolean(resolvedProject ?? runPipelineProject) || (!vaultLoading && hasLoadedOnce);
 
     if (projectReadyForDraft) {
       newJobDraftPendingRef.current = null;
@@ -4571,12 +4527,7 @@ export default function App() {
         ? (downloadProjectName || runPipelineProject?.name || null)
         : (runPipelineProject?.name ?? null),
       pipelineId: runPipelineId ?? null,
-      runPipelineRenderTemplateId,
-      runPipelineTaskTemplate,
-      runPipelineInputId: runPipelineInputId ?? null,
-      renderInputFileIds,
-      renderTemplateApplyMap,
-      renderTemplateApplyMapById
+      runPipelineRenderTemplateId
     };
     try {
       window.localStorage.setItem(NEW_JOB_POPUP_DRAFT_STORAGE_KEY, JSON.stringify(draft));
@@ -4590,12 +4541,7 @@ export default function App() {
     runPipelineHasDownload,
     downloadProjectName,
     runPipelineId,
-    runPipelineRenderTemplateId,
-    runPipelineTaskTemplate,
-    runPipelineInputId,
-    renderInputFileIds,
-    renderTemplateApplyMap,
-    renderTemplateApplyMapById
+    runPipelineRenderTemplateId
   ]);
 
   useEffect(() => {

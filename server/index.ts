@@ -2047,6 +2047,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
   job.progress = 0;
   job.startedAt = new Date().toISOString();
   scheduleJobPersist(job);
+  appendJobLog(job, `Job params: ${JSON.stringify(job.params ?? {}, null, 2)}\n`);
 
   try {
     const downloadSubsTask = job.tasks.find(task => task.type === 'download_subs');
