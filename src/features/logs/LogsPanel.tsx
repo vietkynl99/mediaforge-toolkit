@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { RefreshCw, Pause, CheckCircle2, Clock, AlertCircle, ExternalLink } from 'lucide-react';
-import { MediaJob, JobStatus } from '../../types';
+import { RefreshCw, Pause, CheckCircle2, Clock, AlertCircle, ExternalLink, ScrollText } from 'lucide-react';
+import { MediaJob, JobStatus, ProcessingTask } from '../../types';
 
 interface LogsPanelProps {
   jobs: MediaJob[];
@@ -30,7 +30,30 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
 };
 
 export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime }) => {
-  const lastJob = [...jobs].reverse().find(job => job.status !== 'queued') ?? null;
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logRef = useRef<HTMLDivElement>(null);
+
+  const { lastJob, activeTaskName } = useMemo(() => {
+    const processingJob = jobs.find(job => job.status === 'processing');
+    const lastJob = processingJob ?? (() => {
+      const nonQueuedJobs = jobs.filter(job => job.status !== 'queued');
+      if (nonQueuedJobs.length === 0) return null;
+      return nonQueuedJobs.sort((a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )[0];
+    })();
+
+    const activeTask = lastJob?.tasks?.find((task: ProcessingTask) => task.status === 'active');
+    const activeTaskName = activeTask?.name || lastJob?.name || null;
+
+    return { lastJob, activeTaskName };
+  }, [jobs]);
+
+  useEffect(() => {
+    if (autoScroll && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [lastJob?.log, lastJob?.error, autoScroll]);
 
   const handleViewFullLog = () => {
     if (lastJob) {
@@ -66,15 +89,31 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime 
                 <div className="text-sm font-semibold text-zinc-100 truncate">
                   {lastJob.projectName || 'Unknown Project'}
                 </div>
+                <div className="text-xs font-medium text-blue-400 truncate mt-0.5">
+                  {activeTaskName}
+                </div>
                 <div className="text-xs text-zinc-500 mt-1 truncate">
                   {lastJob.fileName} • {lastJob.fileSize} • {formatLocalDateTime(lastJob.createdAt)}
                 </div>
               </div>
-              <div className="shrink-0">
+              <div className="shrink-0 flex flex-col items-end gap-2">
                 <StatusBadge status={lastJob.status} />
+                <button
+                  onClick={() => setAutoScroll(v => !v)}
+                  className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                    autoScroll ? 'text-lime-400 hover:text-lime-300' : 'text-zinc-500 hover:text-zinc-400'
+                  }`}
+                  title={autoScroll ? 'Auto scroll enabled' : 'Auto scroll disabled'}
+                >
+                  <ScrollText size={10} />
+                  Auto Scroll
+                </button>
               </div>
             </div>
-            <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap overflow-y-auto flex-1 min-h-0 font-mono leading-relaxed">
+            <div
+              ref={logRef}
+              className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap overflow-y-auto flex-1 min-h-0 font-mono leading-relaxed"
+            >
               {lastJob.log || lastJob.error || 'No log output yet.'}
             </div>
           </div>
