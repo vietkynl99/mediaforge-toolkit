@@ -411,6 +411,11 @@ export default function App() {
   const [renderVideoTransforms, setRenderVideoTransforms] = useState<Record<string, {
     blurEffects?: BlurRegionEffect[];
   }>>({});
+  const [renderAudioTransforms, setRenderAudioTransforms] = useState<Record<string, {
+    targetLufs?: string;
+    gainDb?: string;
+    mute?: boolean;
+  }>>({});
   const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
   const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
   const [renderTemplates, setRenderTemplates] = useState<RenderTemplate[]>([]);
@@ -680,6 +685,7 @@ export default function App() {
     setRenderTrackLabels({});
     setRenderImageTransforms({});
     setRenderVideoTransforms({});
+    setRenderAudioTransforms({});
     setRenderImageDurations({});
     setRenderImageMatchDuration({});
     setRenderImageOrderIds([]);
@@ -2282,6 +2288,7 @@ export default function App() {
     renderImageMatchDuration,
     renderImageTransforms,
     renderVideoTransforms,
+    renderAudioTransforms,
     renderTrackLabels,
     renderParams
   ]);
@@ -2319,6 +2326,7 @@ export default function App() {
     renderImageMatchDuration,
     renderImageTransforms,
     renderVideoTransforms,
+    renderAudioTransforms,
     renderParams.timeline,
     renderParams.video.speed, // Chỉ track các thông số visual của video
     renderParams.video.scale,
@@ -2351,6 +2359,7 @@ export default function App() {
     renderConfigV2Override,
     renderParams,
     renderVideoTransforms,
+    renderAudioTransforms,
     renderTrackLabels,
     renderImageTransforms,
     renderImageDurations,
@@ -2928,11 +2937,12 @@ export default function App() {
       }
 
       if (file.type === 'audio') {
+        const audioTransform = renderAudioTransforms[file.id];
         baseItem.audioMix = {
           levelControl: renderParams.timeline.levelControl as any,
-          targetLufs: coerceNumber(renderParams.audio.targetLufs, -14),
-          gainDb: coerceNumber(renderParams.audio.gainDb, 0),
-          mute: Boolean(renderParams.audio.mute)
+          targetLufs: coerceNumber(audioTransform?.targetLufs ?? renderParams.audio.targetLufs, -14),
+          gainDb: coerceNumber(audioTransform?.gainDb ?? renderParams.audio.gainDb, 0),
+          mute: Boolean(audioTransform?.mute ?? renderParams.audio.mute)
         };
       }
 
@@ -3407,6 +3417,31 @@ export default function App() {
           next[targetId] = {
             ...(next[targetId] ?? {}),
             blurEffects
+          };
+        });
+        return next;
+      });
+    }
+
+    const audioItems = template.config.items.filter(item => item.type === 'audio');
+    if (audioItems.length > 0) {
+      const audioIdsByRef = Object.keys(template.config.inputsMap ?? {})
+        .filter(key => key.startsWith('audio'))
+        .map(key => mapping[key])
+        .filter((id): id is string => Boolean(id));
+      setRenderAudioTransforms(prev => {
+        const next = { ...prev };
+        let fallbackIndex = 0;
+        audioItems.forEach((item) => {
+          const refKey = item.source?.ref;
+          const targetId = refKey ? mapping[refKey] : audioIdsByRef[fallbackIndex++];
+          if (!targetId) return;
+          const audioMix = item.audioMix ?? {};
+          next[targetId] = {
+            ...(next[targetId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+            targetLufs: String(audioMix.targetLufs ?? next[targetId]?.targetLufs ?? '-14'),
+            gainDb: String(audioMix.gainDb ?? next[targetId]?.gainDb ?? '0'),
+            mute: Boolean(audioMix.mute ?? next[targetId]?.mute ?? false)
           };
         });
         return next;
@@ -5944,7 +5979,9 @@ export default function App() {
       renderImageOrderIds,
       setRenderImageOrderIds,
       renderImageTransforms,
-      setRenderImageTransforms
+      setRenderImageTransforms,
+      renderAudioTransforms,
+      setRenderAudioTransforms
     },
     timeline: {
       formatDuration,

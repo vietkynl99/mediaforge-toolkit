@@ -32,6 +32,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
   const [renderImageMatchDuration, setRenderImageMatchDuration] = useState<Record<string, boolean>>({});
   const [renderImageTransforms, setRenderImageTransforms] = useState<Record<string, any>>({});
   const [renderVideoTransforms, setRenderVideoTransforms] = useState<Record<string, any>>({});
+  const [renderAudioTransforms, setRenderAudioTransforms] = useState<Record<string, any>>({});
   const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
   const [renderTimelineScale, setRenderTimelineScale] = useState(-1);
   const [renderPlayheadSeconds, setRenderPlayheadSeconds] = useState(0);
@@ -125,6 +126,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
       renderImageMatchDuration,
       renderImageTransforms,
       renderVideoTransforms,
+      renderAudioTransforms,
       renderVideoId,
       renderTimelineDuration: timelineDuration
     });
@@ -137,6 +139,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     renderImageMatchDuration,
     renderImageTransforms,
     renderVideoTransforms,
+    renderAudioTransforms,
     renderVideoId,
     timelineDuration
   ]);
@@ -218,6 +221,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
       renderImageMatchDuration,
       renderImageTransforms,
       renderVideoTransforms,
+      renderAudioTransforms,
       renderVideoId,
       renderTimelineDuration: timelineDuration
     });
@@ -230,6 +234,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     renderImageMatchDuration, 
     renderImageTransforms, 
     renderVideoTransforms, 
+    renderAudioTransforms,
     renderVideoId,
     timelineDuration
   ]);
@@ -360,6 +365,22 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
       };
     });
   }, []);
+
+  const updateRenderAudioTransform = useCallback((fileId: string | null, patch: Partial<{ targetLufs: string; gainDb: string; mute: boolean }>) => {
+    if (!fileId) return;
+    setRenderAudioTransforms(prev => ({
+      ...prev,
+      [fileId]: {
+        ...(prev[fileId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+        ...patch
+      }
+    }));
+  }, []);
+
+  const getRenderAudioTransform = useCallback((fileId: string | null) => {
+    if (!fileId) return null;
+    return renderAudioTransforms[fileId] ?? null;
+  }, [renderAudioTransforms]);
 
   const buildRenderTemplateApplyMap = useCallback((template: RenderTemplate) => {
     const inputs = Object.keys(template.config.inputsMap ?? {});
@@ -585,6 +606,32 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
       }));
     }
 
+    // Restore audio transforms for each audio track
+    const audioItems = template.config.items.filter(item => item.type === 'audio');
+    if (audioItems.length > 0) {
+      const audioIdsByRef = Object.keys(mapping)
+        .filter(key => key.startsWith('audio'))
+        .map(key => mapping[key])
+        .filter((id): id is string => Boolean(id));
+      setRenderAudioTransforms(prev => {
+        const next = { ...prev };
+        let fallbackIndex = 0;
+        audioItems.forEach((item) => {
+          const refKey = item.source?.ref;
+          const targetId = refKey ? mapping[refKey] : audioIdsByRef[fallbackIndex++];
+          if (!targetId) return;
+          const audioMix = item.audioMix ?? {};
+          next[targetId] = {
+            ...(next[targetId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+            targetLufs: String(audioMix.targetLufs ?? next[targetId]?.targetLufs ?? '-14'),
+            gainDb: String(audioMix.gainDb ?? next[targetId]?.gainDb ?? '0'),
+            mute: Boolean(audioMix.mute ?? next[targetId]?.mute ?? false)
+          };
+        });
+        return next;
+      });
+    }
+
     const firstSubtitleItem = template.config.items.find(item => item.type === 'subtitle') ?? null;
     if (firstSubtitleItem?.subtitleStyle) {
       const s = firstSubtitleItem.subtitleStyle as any;
@@ -725,6 +772,10 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     setRenderImageTransforms,
     renderVideoTransforms,
     setRenderVideoTransforms,
+    renderAudioTransforms,
+    setRenderAudioTransforms,
+    updateRenderAudioTransform,
+    getRenderAudioTransform,
     renderTrackLabels,
     setRenderTrackLabels,
     timelineDuration,

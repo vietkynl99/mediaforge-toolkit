@@ -381,6 +381,7 @@ export interface RenderConfigParams {
   renderImageMatchDuration: Record<string, boolean>;
   renderImageTransforms: Record<string, any>;
   renderVideoTransforms: Record<string, any>;
+  renderAudioTransforms: Record<string, any>;
   renderVideoId: string | null;
   renderTimelineDuration: number;
 }
@@ -395,6 +396,7 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
     renderImageMatchDuration,
     renderImageTransforms,
     renderVideoTransforms,
+    renderAudioTransforms,
     renderVideoId,
     renderTimelineDuration
   } = params;
@@ -522,11 +524,12 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
     }
 
     if (file.type === 'audio') {
+      const audioTransform = renderAudioTransforms[file.id];
       baseItem.audioMix = {
         levelControl: renderParams.timeline.levelControl as any,
-        targetLufs: coerceNumber(renderParams.audio.targetLufs, -14),
-        gainDb: coerceNumber(renderParams.audio.gainDb, 0),
-        mute: Boolean(renderParams.audio.mute)
+        targetLufs: coerceNumber(audioTransform?.targetLufs ?? renderParams.audio.targetLufs, -14),
+        gainDb: coerceNumber(audioTransform?.gainDb ?? renderParams.audio.gainDb, 0),
+        mute: Boolean(audioTransform?.mute ?? renderParams.audio.mute)
       };
     }
 

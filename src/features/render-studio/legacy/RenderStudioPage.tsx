@@ -91,6 +91,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     setRenderImageOrderIds,
     renderImageTransforms,
     setRenderImageTransforms,
+    renderAudioTransforms,
+    setRenderAudioTransforms,
     formatDuration,
     formatDurationFine,
     renderTimelineDuration,
@@ -2417,15 +2419,20 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                           <input
                                             type="number"
                                             step="0.5"
-                                            value={renderParamsDraft.audio.targetLufs ?? '-14'}
+                                            value={renderAudioTransforms?.[renderAudioId]?.targetLufs ?? renderParamsDraft.audio.targetLufs ?? '-14'}
                                             onChange={e => {
                                               const v = e.target.value;
-                                              updateRenderParamDraft('audio', 'targetLufs', v);
-                                              updateRenderParam('audio', 'targetLufs', v);
+                                              setRenderAudioTransforms((prev: any) => ({
+                                                ...prev,
+                                                [renderAudioId]: {
+                                                  ...(prev?.[renderAudioId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+                                                  targetLufs: v
+                                                }
+                                              }));
                                             }}
                                             onFocus={holdPreview}
-                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
-                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'targetLufs'))}
+                                            onBlur={() => releasePreview(() => {})}
+                                            onKeyDown={releasePreviewOnEnter(() => {})}
                                             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                           />
                                         </div>
@@ -2435,11 +2442,20 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                           <input
                                             type="number"
                                             step="0.5"
-                                            value={renderParamsDraft.audio.gainDb}
-                                            onChange={e => updateRenderParamDraft('audio', 'gainDb', e.target.value)}
+                                            value={renderAudioTransforms?.[renderAudioId]?.gainDb ?? renderParamsDraft.audio.gainDb ?? '0'}
+                                            onChange={e => {
+                                              const v = e.target.value;
+                                              setRenderAudioTransforms((prev: any) => ({
+                                                ...prev,
+                                                [renderAudioId]: {
+                                                  ...(prev?.[renderAudioId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+                                                  gainDb: v
+                                                }
+                                              }));
+                                            }}
                                             onFocus={holdPreview}
-                                            onBlur={() => releasePreview(() => commitRenderParamDraftValue('audio', 'gainDb'))}
-                                            onKeyDown={releasePreviewOnEnter(() => commitRenderParamDraftValue('audio', 'gainDb'))}
+                                            onBlur={() => releasePreview(() => {})}
+                                            onKeyDown={releasePreviewOnEnter(() => {})}
                                             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
                                           />
                                         </div>
