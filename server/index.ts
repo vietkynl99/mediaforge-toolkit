@@ -579,7 +579,7 @@ const getJobLogPath = (job: JobRecord) => {
   const seconds = String(date.getSeconds()).padStart(2, '0');
   const timePrefix = `${hours}-${minutes}-${seconds}`;
   const sanitizedJobName = (job.name || 'job').replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
-  
+
   const dir = path.join(JOB_LOGS_DIR, monthDir);
   const filename = `${dayPrefix}_${timePrefix}_${sanitizedJobName}_${job.id}.log`;
   return { dir, filename, fullPath: path.join(dir, filename) };
@@ -1072,6 +1072,70 @@ const ensureFeatherMaskPgm = async (tmpDir: string, featherPct: number) => {
   }
 };
 
+/**
+ * Measures integrated loudness (LUFS) of an audio/video file using ffmpeg ebur128.
+ *
+ * @param maxDuration - Limit measurement to this many seconds from trimStart.
+ *   Keeps measurement fast and avoids scanning long files end-to-end.
+ *
+ * Uses `silenceremove` before `ebur128` to strip inter-sentence gaps.
+ * Without this, sparse audio (TTS voice, instrument cues) has most of its
+ * 400ms analysis windows fall below the ebur128 absolute gate (-70 LUFS),
+ * causing integrated loudness to report -70 LUFS even when actual content
+ * is at a perfectly normal level.
+ *
+ * Returns the measured LUFS value, or null if measurement fails.
+ */
+const measureAudioLufs = (
+  ffmpegPath: string,
+  filePath: string,
+  trimStart: number,
+  maxDuration: number,
+  onLog?: (chunk: string) => void
+): Promise<number | null> => {
+  return new Promise((resolve) => {
+    const filters: string[] = [];
+    if (trimStart > 0) {
+      filters.push(`atrim=start=${trimStart.toFixed(3)}`);
+      filters.push('asetpts=PTS-STARTPTS');
+    }
+    filters.push('silenceremove=stop_periods=-1:stop_threshold=-50dB:stop_duration=0.1');
+    filters.push('asetpts=PTS-STARTPTS');
+    filters.push('ebur128=peak=true');
+    // -t before -i limits input decode time (fast path for long files).
+    // -vn excludes embedded cover-art/video streams from the audio filter graph.
+    const args = [
+      ...(maxDuration > 0 ? ['-t', maxDuration.toFixed(3)] : []),
+      '-i', filePath,
+      '-vn',
+      '-af', filters.join(','),
+      '-f', 'null', '-'
+    ];
+    onLog?.(`[LUFS Measure] ffmpeg ${args.map(a => (a.includes(' ') ? `"${a}"` : a)).join(' ')}\n`);
+    let stderr = '';
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+    proc.on('error', () => resolve(null));
+    proc.on('close', () => {
+      // ebur128 prints real-time "I: -70 LUFS" lines before any gated audio accumulates.
+      // The FIRST match is always -70; the LAST match is the correct Summary value.
+      // Use matchAll + last element to get the final integrated loudness.
+      const matches = [...stderr.matchAll(/\bI:\s*([\-\d.]+)\s*LUFS/g)];
+      const lastMatch = matches[matches.length - 1];
+      if (lastMatch) {
+        const val = Number(lastMatch[1]);
+        if (Number.isFinite(val)) {
+          onLog?.(`[LUFS Measure] "${path.basename(filePath)}" → ${val.toFixed(1)} LUFS\n`);
+          resolve(val);
+          return;
+        }
+      }
+      onLog?.(`[LUFS Measure] Failed to parse LUFS for "${path.basename(filePath)}", defaulting to 0 dB gain\n`);
+      resolve(null);
+    });
+  });
+};
+
 const buildRenderV2FilterGraph = async (
   config: RenderConfigV2,
   tmpDir: string,
@@ -1084,6 +1148,10 @@ const buildRenderV2FilterGraph = async (
     debugEnabled?: boolean;
     debugLabel?: string;
     onLog?: (chunk: string) => void;
+    /** ffmpeg binary path – required for per-track LUFS measurement */
+    ffmpegPath?: string;
+    /** Shared LUFS cache across segment builds; populated on first measurement */
+    lufsCache?: Map<string, number>;
   }
 ) => {
   const debugEnabled = options?.debugEnabled === true;
@@ -1532,29 +1600,29 @@ const buildRenderV2FilterGraph = async (
   } // end if (includeVideo)
 
   // ─── Audio Mixing ─────────────────────────────────────────────────────────
-  // Resolve timeline-level audio settings
-  const timelineLevelControl = (config.timeline as any).levelControl as 'gain' | 'loudness' | 'lufs' | undefined;
+  // Resolve timeline-level audio settings.
+  // timeline.targetLufs = final output loudness target (applied once via loudnorm).
+  // track.targetLufs    = relative balance between tracks (applied via volume gain).
   const timelineTargetLufs = typeof (config.timeline as any).targetLufs === 'number'
     ? Number((config.timeline as any).targetLufs)
     : -14;
 
-  // Build list of all items that contribute audio (audio-only tracks + video tracks with audio)
-  // Each entry carries its item, inputIndex, timing, and stream selector
+  // Build list of all items that contribute audio.
+  // Video tracks (non-muted) are included just like dedicated audio tracks.
   type AudioCandidate = {
     item: RenderItemV2;
     inputIndex: number;
     timing: { start: number; duration: number; trimStart: number };
-    streamSelector: string;  // e.g. '[0:a]' for use in filter chains
-    directMapSelector: string; // e.g. '0:a' for use in -map args
+    streamSelector: string;    // e.g. '[0:a]'
+    directMapSelector: string; // e.g. '0:a'
     trackLabel: string;
   };
 
   const audioCandidates: AudioCandidate[] = [];
 
   if (includeAudio) {
-    // 1. Video items: include their embedded audio stream if not muted
-    //    Covers both normal (video+audio) mode and audio-only mode where
-    //    video files are loaded purely for their audio stream.
+    // 1. Video items: include their embedded audio stream if not muted.
+    //    Covers both normal (video+audio) mode and audio-only export mode.
     const videoAudioSourceItems = includeVideo ? visualItems : videoItemsForAudio;
     for (const item of videoAudioSourceItems) {
       if (item.type !== 'video') continue;
@@ -1564,7 +1632,7 @@ const buildRenderV2FilterGraph = async (
       if (inputIndex < 0) continue;
       const trackLabel = item.name ?? item.id ?? 'video';
       const isMuted = item.audioMix?.mute === true;
-      const muteMsg = `[AudioMix] Video track "${trackLabel}" (id=${item.id}): muted=${isMuted}, levelControl=${(item.audioMix as any)?.levelControl ?? timelineLevelControl ?? 'gain'}, gainDb=${(item.audioMix as any)?.gainDb ?? 0}`;
+      const muteMsg = `[AudioMix] Video track "${trackLabel}" (id=${item.id}): muted=${isMuted}`;
       if (debugEnabled) console.log(muteMsg);
       onLog?.(`${muteMsg}\n`);
       if (isMuted) continue;
@@ -1586,7 +1654,7 @@ const buildRenderV2FilterGraph = async (
       if (inputIndex < 0) continue;
       const trackLabel = item.name ?? item.id ?? 'audio';
       const isMuted = item.audioMix?.mute === true;
-      const muteMsg = `[AudioMix] Audio track "${trackLabel}" (id=${item.id}): muted=${isMuted}, levelControl=${(item.audioMix as any)?.levelControl ?? timelineLevelControl ?? 'gain'}, gainDb=${(item.audioMix as any)?.gainDb ?? 0}`;
+      const muteMsg = `[AudioMix] Audio track "${trackLabel}" (id=${item.id}): muted=${isMuted}`;
       if (debugEnabled) console.log(muteMsg);
       onLog?.(`${muteMsg}\n`);
       if (isMuted) continue;
@@ -1607,73 +1675,121 @@ const buildRenderV2FilterGraph = async (
     if (debugEnabled) console.log(fullMsg);
     onLog?.(`${fullMsg}\n`);
   };
-  audioLog(`Timeline levelControl="${timelineLevelControl ?? 'gain'}" targetLufs=${timelineTargetLufs}`);
+  audioLog(`Timeline targetLufs=${timelineTargetLufs} (output loudnorm target)`);
   audioLog(`Active audio candidates: ${audioCandidates.length} (after mute filter)`);
 
-  // ── Per-track: resolve effective level control ───────────────────────────
-  // 'loudness' and 'lufs' both map to loudnorm filter; 'gain' uses volume filter
-  const isLoudnessMode = (ctrl: string | undefined): boolean =>
-    ctrl === 'loudness' || ctrl === 'lufs';
-
-  const resolveTrackLevelControl = (item: RenderItemV2): 'gain' | 'loudness' => {
-    const trackLevel = (item.audioMix as any)?.levelControl as string | undefined;
-    const effectiveLevel = trackLevel ?? (timelineLevelControl as string | undefined);
-    return isLoudnessMode(effectiveLevel) ? 'loudness' : 'gain';
-  };
+  // ── Per-track: resolve target LUFS ──────────────────────────────────────
+  // track.targetLufs controls relative balance between tracks.
+  // Falls back to timeline.targetLufs when not set per-track.
   const resolveTrackTargetLufs = (item: RenderItemV2): number => {
     const trackLufs = (item.audioMix as any)?.targetLufs;
     return typeof trackLufs === 'number' ? trackLufs : timelineTargetLufs;
   };
 
-  // ── Build per-candidate audio filter chains ──────────────────────────────
-  const buildAudioChain = (
+  // ── LUFS measurement helpers ─────────────────────────────────────────────
+  const ffmpegPathForLufs = options?.ffmpegPath;
+  const lufsCache = options?.lufsCache;
+
+  // Maximum seconds to scan when measuring LUFS.
+  // Keeps measurement fast and representative for long files with sparse content.
+  const MAX_LUFS_MEASURE_SECONDS = 120;
+
+  // Minimum LUFS considered a valid/reliable measurement.
+  // ebur128 floors at -70 LUFS when content is near-silent; readings at or below
+  // this threshold indicate excessive silence in the measured window and should
+  // be treated as unreliable to avoid extreme gain boosts.
+  const LUFS_UNRELIABLE_FLOOR = -60;
+
+  /**
+   * Returns measured LUFS from cache, or measures and caches it.
+   * @param maxDuration  Seconds to scan (should match the content window in use).
+   * Returns null when ffmpegPath is unavailable or measurement fails.
+   */
+  const getOrMeasureLufs = async (
+    filePath: string,
+    trimStart: number,
+    maxDuration: number
+  ): Promise<number | null> => {
+    if (!ffmpegPathForLufs) return null;
+    const cacheKey = `${filePath}::${trimStart.toFixed(3)}::${maxDuration.toFixed(0)}`;
+    if (lufsCache?.has(cacheKey)) return lufsCache.get(cacheKey)!;
+    const measured = await measureAudioLufs(ffmpegPathForLufs, filePath, trimStart, maxDuration, options?.onLog);
+    if (measured !== null && lufsCache) lufsCache.set(cacheKey, measured);
+    return measured;
+  };
+
+  // ── Build per-candidate audio filter chains (async: measures LUFS) ───────
+  //
+  // FLOW per track:
+  //   1. atrim / asetpts  – trim to content window
+  //   2. volume=<factor>  – normalize to track.targetLufs using measured LUFS
+  //   3. aformat          – unify sample format & channel layout for amix
+  //   4. adelay           – timeline offset
+  //   5. afade            – optional fade in/out
+  //
+  // ❌ No loudnorm per track (applied once on final mixed output instead)
+  const buildAudioChain = async (
     candidate: AudioCandidate,
     outputLabel: string
-  ): string => {
+  ): Promise<string> => {
     const { item, timing } = candidate;
     const trimStart = timing.trimStart;
     const duration = timing.duration;
     const start = timing.start;
     const endValue = trimStart + duration;
-
-    const levelControl = resolveTrackLevelControl(item);
-    const gainDb = (item.audioMix as any)?.gainDb ?? 0;
-    const targetLufs = resolveTrackTargetLufs(item);
+    const trackTargetLufs = resolveTrackTargetLufs(item);
     const fadeIn = Math.max(0, item.audioMix?.fadeIn ?? 0);
     const fadeOut = Math.max(0, item.audioMix?.fadeOut ?? 0);
 
-    audioLog(
-      `  Track "${candidate.trackLabel}": levelControl=${levelControl}, gainDb=${gainDb}, targetLufs=${targetLufs}, ` +
-      `trimStart=${trimStart.toFixed(3)}, duration=${duration.toFixed(3)}, start=${start.toFixed(3)}`
-    );
+    // Measure LUFS → compute gainDb for relative balance.
+    // Limit measurement to the content window (capped at MAX_LUFS_MEASURE_SECONDS)
+    // so that a long file with sparse content doesn't drag the LUFS average to -70.
+    const inputFile = inputs[candidate.inputIndex];
+    let gainDb = 0;
+    if (inputFile?.path) {
+      const measureDuration = Math.min(Math.max(duration, 5), MAX_LUFS_MEASURE_SECONDS);
+      const measuredLufs = await getOrMeasureLufs(inputFile.path, trimStart, measureDuration);
+      if (measuredLufs !== null) {
+        if (measuredLufs <= LUFS_UNRELIABLE_FLOOR) {
+          // Near-silent measurement window — avoid extreme gain boost.
+          // The final loudnorm pass will still normalize the output level.
+          audioLog(
+            `  Track "${candidate.trackLabel}": measuredLufs=${measuredLufs.toFixed(1)} (at/below ` +
+            `${LUFS_UNRELIABLE_FLOOR} LUFS floor — treating as unreliable, gainDb=0)`
+          );
+        } else {
+          gainDb = trackTargetLufs - measuredLufs;
+          audioLog(
+            `  Track "${candidate.trackLabel}": measuredLufs=${measuredLufs.toFixed(1)}, ` +
+            `targetLufs=${trackTargetLufs}, gainDb=${gainDb.toFixed(2)}`
+          );
+        }
+      } else {
+        audioLog(
+          `  Track "${candidate.trackLabel}": LUFS measurement unavailable, ` +
+          `gainDb=0 (targetLufs=${trackTargetLufs})`
+        );
+      }
+    }
 
     let chain = candidate.streamSelector;
     const addFilter = (filter: string) => {
       chain += chain.endsWith(']') ? filter : `,${filter}`;
     };
 
-    // Trim
+    // 1. Trim to content window
     if (trimStart > 0 || duration > trimThreshold) {
       addFilter(`atrim=start=${trimStart}:end=${endValue}`);
     }
     addFilter('asetpts=PTS-STARTPTS');
 
-    // Level control
-    if (levelControl === 'loudness') {
-      // Two-pass loudnorm: integrated loudness target
-      const lufsVal = Math.max(-70, Math.min(-5, targetLufs));
-      addFilter(`loudnorm=I=${lufsVal}:TP=-1.5:LRA=11`);
-      audioLog(`    → using loudnorm filter: I=${lufsVal} TP=-1.5 LRA=11`);
-    } else {
-      // Gain adjustment
-      if (gainDb !== 0) {
-        const factor = Math.pow(10, gainDb / 20);
-        addFilter(`volume=${factor.toFixed(6)}`);
-        audioLog(`    → using volume filter: ${factor.toFixed(6)} (${gainDb > 0 ? '+' : ''}${gainDb} dB)`);
-      } else {
-        audioLog(`    → no volume adjustment (gainDb=0)`);
-      }
-    }
+    // 2. Volume normalization (gain = trackTargetLufs − measuredLufs)
+    const gainFactor = Math.pow(10, gainDb / 20);
+    addFilter(`volume=${gainFactor.toFixed(6)}`);
+    audioLog(`    → volume: factor=${gainFactor.toFixed(6)} (${gainDb >= 0 ? '+' : ''}${gainDb.toFixed(2)} dB)`);
+
+    // 3. Unify format for consistent mixing across all tracks
+    addFilter('aformat=sample_fmts=fltp:channel_layouts=stereo');
 
     // Delay (timeline offset)
     if (start > 0) {
@@ -1698,49 +1814,34 @@ const buildRenderV2FilterGraph = async (
   let audioMap: string[] = [];
 
   if (includeAudio && audioCandidates.length > 0) {
-    // ── Special-case optimization: single active audio track ────────────────
-    if (audioCandidates.length === 1) {
-      const sole = audioCandidates[0];
-      const levelControl = resolveTrackLevelControl(sole.item);
-      const gainDb = (sole.item.audioMix as any)?.gainDb ?? 0;
-      const targetLufs = resolveTrackTargetLufs(sole.item);
-      const trimStart = sole.timing.trimStart;
-      const duration = sole.timing.duration;
-      const start = sole.timing.start;
-      const fadeIn = Math.max(0, sole.item.audioMix?.fadeIn ?? 0);
-      const fadeOut = Math.max(0, sole.item.audioMix?.fadeOut ?? 0);
-      const needsFilter =
-        (levelControl === 'loudness') ||
-        (levelControl === 'gain' && gainDb !== 0) ||
-        trimStart > 0 ||
-        duration > trimThreshold ||
-        start > 0 ||
-        fadeIn > 0 ||
-        fadeOut > 0;
+    // Clamp loudnorm target to safe ffmpeg range
+    const lufsOut = Math.max(-70, Math.min(-5, timelineTargetLufs));
 
-      if (!needsFilter) {
-        // Pure stream copy — zero filter overhead
-        audioLog(`Optimization: single unmuted audio track with no adjustments → direct stream map (no filter)`);
-        audioMap = ['-map', sole.directMapSelector];
-      } else {
-        audioLog(`Single audio track with adjustments (levelControl=${levelControl}, gainDb=${gainDb}) → single filter chain`);
-        const chain = buildAudioChain(sole, '[aout]');
-        filters.push(chain);
-        audioMap = ['-map', '[aout]'];
-      }
+    if (audioCandidates.length === 1) {
+      // ── Single track: per-track gain → pre-label → output loudnorm ──────
+      audioLog(`Single audio track → per-track gain + output loudnorm (I=${lufsOut})`);
+      const chain = await buildAudioChain(audioCandidates[0], '[apre]');
+      filters.push(chain);
+      // loudnorm applied once: ensures consistent output level (timeline.targetLufs)
+      filters.push(`[apre]loudnorm=I=${lufsOut}:TP=-1:LRA=11[aout]`);
+      audioLog(`Output loudnorm: I=${lufsOut} TP=-1 LRA=11 → [aout]`);
+      audioMap = ['-map', '[aout]'];
     } else {
-      // ── Multiple audio tracks: build filter chain per track then amix ──────
-      audioLog(`Multiple audio tracks (${audioCandidates.length}) → building per-track chains then amix`);
+      // ── Multiple tracks: per-track chains → amix → output loudnorm ──────
+      audioLog(`${audioCandidates.length} audio tracks → per-track gain → amix → output loudnorm`);
       for (let i = 0; i < audioCandidates.length; i++) {
-        const label = `[a${i}]`;
-        const chain = buildAudioChain(audioCandidates[i], label);
+        const chain = await buildAudioChain(audioCandidates[i], `[a${i}]`);
         audioFilters.push(chain);
       }
       const mixInputs = audioCandidates.map((_, idx) => `[a${idx}]`).join('');
       filters.push(...audioFilters);
-      filters.push(`${mixInputs}amix=inputs=${audioCandidates.length}:duration=longest[aout]`);
+      // Note: 'normalize' option omitted — not supported on this ffmpeg build
+      filters.push(`${mixInputs}amix=inputs=${audioCandidates.length}:duration=longest:dropout_transition=0[amixed]`);
+      audioLog(`amix: ${audioCandidates.length} inputs → [amixed]`);
+      // loudnorm applied once: guarantees consistent output level across renders
+      filters.push(`[amixed]loudnorm=I=${lufsOut}:TP=-1:LRA=11[aout]`);
+      audioLog(`Output loudnorm: I=${lufsOut} TP=-1 LRA=11 → [aout]`);
       audioMap = ['-map', '[aout]'];
-      audioLog(`amix: ${audioCandidates.length} inputs → [aout]`);
     }
   } else if (includeAudio) {
     audioLog(`No active audio tracks after mute filter — output will have no audio stream`);
@@ -1781,6 +1882,10 @@ const buildRenderV2FfmpegArgs = async (
     debugEnabled?: boolean;
     debugLabel?: string;
     onLog?: (chunk: string) => void;
+    /** ffmpeg binary path forwarded to the filter graph for LUFS measurement */
+    ffmpegPath?: string;
+    /** Shared LUFS cache forwarded to the filter graph; populated on first use */
+    lufsCache?: Map<string, number>;
   }
 ) => {
   const graph = await buildRenderV2FilterGraph(config, tmpDir, options);
@@ -1956,12 +2061,17 @@ const runRenderV2Task = async (
   const outputName = `render-${formatRenderTimestamp(new Date())}${outputExt}`;
   const outputPath = path.join(outputDir, outputName);
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'render-v2-'));
+  // Shared LUFS cache: measurements are performed once for the first segment
+  // and reused by all subsequent segments, avoiding redundant ffmpeg passes.
+  const lufsCache = new Map<string, number>();
   try {
     const ffmpegPath = await getFfmpegPath();
     const { outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir, {
       debugEnabled: LOG_RENDER_V2_DEBUG,
       debugLabel: 'render-total',
-      onLog
+      onLog,
+      ffmpegPath,
+      lufsCache
     });
     const totalSeconds = Number.isFinite(outputDuration) && outputDuration > 0 ? outputDuration : 0;
     if (totalSeconds <= 0) {
@@ -2018,7 +2128,9 @@ const runRenderV2Task = async (
           allowShortDuration: true,
           debugEnabled: LOG_RENDER_V2_DEBUG,
           debugLabel: `render-segment-${segmentIndex + 1}`,
-          onLog: segmentIndex === 0 ? onLog : undefined
+          onLog: segmentIndex === 0 ? onLog : undefined,
+          ffmpegPath,
+          lufsCache
         }
       );
       await runFfmpegLoggedCommand(
