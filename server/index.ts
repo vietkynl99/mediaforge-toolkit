@@ -574,10 +574,14 @@ const getJobLogPath = (job: JobRecord) => {
   const date = new Date(job.createdAt);
   const monthDir = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
   const dayPrefix = date.toISOString().split('T')[0];
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  const timePrefix = `${hours}-${minutes}-${seconds}`;
   const sanitizedJobName = (job.name || 'job').replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
   
   const dir = path.join(JOB_LOGS_DIR, monthDir);
-  const filename = `${dayPrefix}_${sanitizedJobName}_${job.id}.log`;
+  const filename = `${dayPrefix}_${timePrefix}_${sanitizedJobName}_${job.id}.log`;
   return { dir, filename, fullPath: path.join(dir, filename) };
 };
 
