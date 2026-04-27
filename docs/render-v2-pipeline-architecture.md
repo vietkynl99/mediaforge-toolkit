@@ -89,6 +89,70 @@ In standard mode, a complex filter graph is built:
 
 ---
 
+## 5. Parallel Segment Rendering
+
+### How It Works
+Instead of rendering segments one-by-one (sequential), the engine now renders multiple segments simultaneously.
+
+**Flow:**
+1. **Phase 1 – Classify** (sequential): Iterate all segment indices. Check cache for each. Build two lists: `cachedIndices` and `pendingIndices`. Report all cache hits immediately.
+2. **Phase 2 – Render** (parallel): Run `pendingIndices` through a concurrency-limited Promise runner. At most `RENDER_V2_PARALLEL_SEGMENTS` FFmpeg processes run at the same time.
+3. **Phase 3 – Concat** (sequential): After all segments are ready, run the concat pass as before.
+
+### Concurrency Engine (Semaphore Pattern)
+```typescript
+const runWithConcurrency = async (tasks, limit) => {
+  const active = new Set();
+  for (const task of tasks) {
+    const p = task().finally(() => active.delete(p));
+    active.add(p);
+    if (active.size >= limit) await Promise.race(active); // wait for a slot
+  }
+  await Promise.all(active); // drain remaining
+};
+```
+
+### Progress Reporting in Parallel Mode
+Each segment reports its own progress seconds independently. The total shown to the user is:
+```
+total_progress = sum(cached segment durations)
+               + sum(in-progress seconds from all active segments)
+```
+This produces a smooth, continuously increasing progress bar even when segments run out of order.
+
+### Isolation: Per-Segment `tmpDir`
+When `parallelism > 1`, each segment gets its own `tmpDir` (e.g., `render-v2-seg3-XXXX/`) created via `mkdtemp`. This prevents two FFmpeg processes from writing to the same temp path simultaneously. The `tmpDir` is cleaned up automatically in the `finally` block of each segment.
+
+When `parallelism = 1` (sequential mode), the shared `tmpDir` is reused as before — no extra overhead.
+
+### LUFS Cache Safety
+The `lufsCache` Map is pre-populated before the parallel loop (by the `buildRenderV2FfmpegArgs` dry-run call that measures output duration). By the time segments run in parallel, all LUFS measurements are already cached — **no duplicate FFmpeg measurement passes occur**.
+
+### Configuration
+| Variable | Default | Description |
+|---|---|---|
+| `RENDER_V2_PARALLEL_SEGMENTS` | `2` | Max concurrent FFmpeg encode processes |
+
+Set via environment variable:
+```bash
+RENDER_V2_PARALLEL_SEGMENTS=4  # Recommended for 8+ core servers
+RENDER_V2_PARALLEL_SEGMENTS=1  # Sequential mode (profiling / low-memory)
+```
+
+> **Tip:** Setting this higher than the number of physical CPU cores is counterproductive — each FFmpeg process already uses multiple threads internally (controlled by `RENDER_V2_FFMPEG_THREADS`).
+
+### Log Output
+```
+[Parallel] Rendering 6 segment(s) with concurrency=2 (2 cached).
+CACHE HIT (render segment 1/8): ...
+CACHE HIT (render segment 3/8): ...
+Rendering render v2 segment 2/8 ...
+Rendering render v2 segment 4/8 ...   ← running simultaneously
+...
+```
+
+---
+
 ## 5. Summary of Experience & Lessons Learned
 
 - **Segmentation Conflict**: Initially, "Copy" was attempted per-segment. This caused "Keyframe Misalignment" (black frames or jitter at segment joins) because you cannot accurately cut a stream-copied video at arbitrary timestamps. **Solution**: Copy path now always bypasses segments and runs as a single pass.

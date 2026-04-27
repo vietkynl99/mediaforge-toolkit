@@ -146,6 +146,16 @@ const RENDER_V2_FFMPEG_THREADS = (() => {
   const normalized = Math.floor(value);
   return normalized >= 1 ? normalized : null;
 })();
+// Maximum number of segments rendered in parallel. Default 2; set
+// RENDER_V2_PARALLEL_SEGMENTS=1 to revert to sequential (useful for profiling
+// or on memory-constrained servers). Each parallel segment spawns its own
+// FFmpeg process, so values above the CPU core count are counterproductive.
+const RENDER_V2_PARALLEL_SEGMENTS = Math.max(
+  1,
+  Number.isFinite(Number(process.env.RENDER_V2_PARALLEL_SEGMENTS))
+    ? Number(process.env.RENDER_V2_PARALLEL_SEGMENTS)
+    : 2
+);
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
 const AUTH_SESSION_COOKIE = 'mf_session';
 const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
@@ -2408,54 +2418,112 @@ const runRenderV2Task = async (
     ).catch(() => null);
 
     const segmentCount = Math.max(1, Math.ceil(totalSeconds / segmentSeconds));
-    let completedSeconds = 0;
-    for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-      const localStartSeconds = segmentIndex * segmentSeconds;
-      const expectedDuration = Math.max(0.001, Math.min(segmentSeconds, totalSeconds - localStartSeconds));
-      const segmentExt = isAudioOnlyOutput ? '.mp3' : '.mp4';
-      const segmentName = `seg-${String(segmentIndex).padStart(5, '0')}${segmentExt}`;
-      const segmentPath = path.join(segmentsDir, segmentName);
-      // Keep extension on temporary segment files so ffmpeg can infer format.
-      const partialSegmentPath = `${segmentPath.replace(/\.(mp4|mp3)$/i, '')}.part${segmentExt}`;
-      const reusable = await isReusableRenderSegment(segmentPath, expectedDuration);
+    const segmentExt = isAudioOnlyOutput ? '.mp3' : '.mp4';
+    const getSegmentPath = (i: number) =>
+      path.join(segmentsDir, `seg-${String(i).padStart(5, '0')}${segmentExt}`);
+    const getSegmentDuration = (i: number) =>
+      Math.max(0.001, Math.min(segmentSeconds, totalSeconds - i * segmentSeconds));
+
+    // ── Phase 1: classify segments (cached vs pending) ────────────────────
+    const cachedIndices: number[]  = [];
+    const pendingIndices: number[] = [];
+    for (let i = 0; i < segmentCount; i += 1) {
+      const reusable = await isReusableRenderSegment(getSegmentPath(i), getSegmentDuration(i));
       if (reusable) {
-        completedSeconds = Math.min(totalSeconds, localStartSeconds + expectedDuration);
-        onLog?.(`CACHE HIT (render segment ${segmentIndex + 1}/${segmentCount}): ${path.relative(projectRoot, segmentPath)}\n`);
-        onProgress?.(completedSeconds, totalSeconds);
-        continue;
+        cachedIndices.push(i);
+        onLog?.(`CACHE HIT (render segment ${i + 1}/${segmentCount}): ${path.relative(projectRoot, getSegmentPath(i))}\n`);
+      } else {
+        pendingIndices.push(i);
       }
-      await fs.rm(partialSegmentPath, { force: true }).catch(() => null);
-      const { args } = await buildRenderV2FfmpegArgs(
-        config,
-        partialSegmentPath,
-        tmpDir,
-        {
-          outputStart: configStart + localStartSeconds,
-          outputDuration: expectedDuration,
-          allowShortDuration: true,
-          debugEnabled: LOG_RENDER_V2_DEBUG,
-          debugLabel: `render-segment-${segmentIndex + 1}`,
-          onLog: segmentIndex === 0 ? onLog : undefined,
-          ffmpegPath,
-          lufsCache
-        }
-      );
-      await runFfmpegLoggedCommand(
-        ffmpegPath,
-        args,
-        `render v2 segment ${segmentIndex + 1}/${segmentCount}`,
-        onLog,
-        onSpawn,
-        seconds => {
-          if (!onProgress) return;
-          const bounded = Math.min(expectedDuration, Math.max(0, seconds));
-          onProgress(Math.min(totalSeconds, localStartSeconds + bounded), totalSeconds);
-        }
-      );
-      await fs.rename(partialSegmentPath, segmentPath);
-      completedSeconds = Math.min(totalSeconds, localStartSeconds + expectedDuration);
-      onProgress?.(completedSeconds, totalSeconds);
     }
+
+    const cachedSeconds = cachedIndices.reduce((acc, i) => acc + getSegmentDuration(i), 0);
+    onProgress?.(Math.min(totalSeconds, cachedSeconds), totalSeconds);
+
+    if (pendingIndices.length > 0) {
+      const parallelism = Math.min(RENDER_V2_PARALLEL_SEGMENTS, pendingIndices.length);
+      onLog?.(`[Parallel] Rendering ${pendingIndices.length} segment(s) with concurrency=${parallelism} (${cachedIndices.length} cached).\n`);
+
+      // Per-segment progress accumulator (seconds of encoded output reported by FFmpeg)
+      const segProgress = new Map<number, number>();
+
+      const renderOneSegment = async (segmentIndex: number): Promise<void> => {
+        const localStartSeconds = segmentIndex * segmentSeconds;
+        const expectedDuration  = getSegmentDuration(segmentIndex);
+        const segmentPath       = getSegmentPath(segmentIndex);
+        const partialPath       = `${segmentPath.replace(/\.(mp4|mp3)$/i, '')}.part${segmentExt}`;
+
+        // Each parallel segment gets its own tmpDir so temp files never collide.
+        const useParallelTmp = parallelism > 1;
+        const segTmpDir = useParallelTmp
+          ? await fs.mkdtemp(path.join(os.tmpdir(), `render-v2-seg${segmentIndex}-`))
+          : tmpDir;
+
+        try {
+          await fs.rm(partialPath, { force: true }).catch(() => null);
+          const { args } = await buildRenderV2FfmpegArgs(
+            config,
+            partialPath,
+            segTmpDir,
+            {
+              outputStart: configStart + localStartSeconds,
+              outputDuration: expectedDuration,
+              allowShortDuration: true,
+              debugEnabled: LOG_RENDER_V2_DEBUG,
+              debugLabel: `render-segment-${segmentIndex + 1}`,
+              // Only relay FFmpeg filter-graph logs for segment 0 (they are
+              // identical for all segments; logging every one wastes output).
+              onLog: segmentIndex === 0 ? onLog : undefined,
+              ffmpegPath,
+              lufsCache
+            }
+          );
+          segProgress.set(segmentIndex, 0);
+          await runFfmpegLoggedCommand(
+            ffmpegPath,
+            args,
+            `render v2 segment ${segmentIndex + 1}/${segmentCount}`,
+            onLog,
+            onSpawn,
+            seconds => {
+              if (!onProgress) return;
+              const bounded = Math.min(expectedDuration, Math.max(0, seconds));
+              segProgress.set(segmentIndex, bounded);
+              // Aggregate: cached + sum of in-progress renders
+              const inFlightSeconds = Array.from(segProgress.values()).reduce((a, b) => a + b, 0);
+              onProgress(Math.min(totalSeconds, cachedSeconds + inFlightSeconds), totalSeconds);
+            }
+          );
+          await fs.rename(partialPath, segmentPath);
+          segProgress.set(segmentIndex, expectedDuration);
+        } finally {
+          if (useParallelTmp) {
+            await fs.rm(segTmpDir, { recursive: true, force: true }).catch(() => null);
+          }
+        }
+      };
+
+      // Concurrency-limited Promise runner (semaphore pattern)
+      const runWithConcurrency = async (
+        tasks: Array<() => Promise<void>>,
+        limit: number
+      ): Promise<void> => {
+        const active = new Set<Promise<void>>();
+        for (const task of tasks) {
+          const p: Promise<void> = task().finally(() => active.delete(p));
+          active.add(p);
+          if (active.size >= limit) await Promise.race(active);
+        }
+        await Promise.all(active);
+      };
+
+      await runWithConcurrency(
+        pendingIndices.map(i => () => renderOneSegment(i)),
+        parallelism
+      );
+    }
+
+    onProgress?.(totalSeconds, totalSeconds);
 
     const concatListPath = path.join(cacheRoot, 'concat.txt');
     const concatLines: string[] = [];
