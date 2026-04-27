@@ -2934,6 +2934,13 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const outputs = after
         .filter(pathname => !before.has(pathname))
         .map(pathname => path.relative(MEDIA_VAULT_ROOT, pathname));
+      
+      // Validate UVR outputs - check if any output files were generated
+      // UVR CLI may exit with code 0 even when it fails (e.g., missing chunk files)
+      if (outputs.length === 0) {
+        throw new Error('UVR task completed but no output files were generated. Check if the process was interrupted or if there were chunk file errors.');
+      }
+      
       const uvrInputRelativePath = path.relative(MEDIA_VAULT_ROOT, uvrInputPath);
       if (uvrInputRelativePath) {
         upsertUvrMetadata({
@@ -5499,9 +5506,31 @@ app.post('/api/jobs/run', async (req, res) => {
           }
         };
         const alreadyHasOutputs = await hasFiles(sourceDir) || await hasFiles(outputDir);
-        if (alreadyHasOutputs && !overwrite) {
-          res.status(409).json({ error: 'Project outputs already exist.', kind: 'download' });
-          return;
+        if (alreadyHasOutputs) {
+          if (!overwrite) {
+            res.status(409).json({ error: 'Project outputs already exist.', kind: 'download' });
+            return;
+          }
+          // Clean old outputs when overwrite is requested
+          const hasUvr = tasks.some(task => task.type === 'uvr');
+          if (hasUvr) {
+            try {
+              const existing = await fs.readdir(outputDir).catch(() => []);
+              for (const name of existing) {
+                const itemPath = path.join(outputDir, name);
+                const stat = await fs.stat(itemPath).catch(() => null);
+                if (stat) {
+                  if (stat.isDirectory()) {
+                    await fs.rm(itemPath, { recursive: true, force: true }).catch(() => null);
+                  } else {
+                    await fs.unlink(itemPath).catch(() => null);
+                  }
+                }
+              }
+            } catch (err) {
+              console.error('Failed to clean old outputs for overwrite:', err);
+            }
+          }
         }
       }
       await fs.mkdir(sourceDir, { recursive: true });
@@ -5617,7 +5646,35 @@ app.post('/api/jobs/run', async (req, res) => {
       const outputDir = path.join(projectRoot, UVR_OUTPUT_DIRNAME);
       await fs.mkdir(outputDir, { recursive: true });
 
-      if (!overwrite) {
+      // Clean old outputs when overwrite is requested to avoid UVR CLI reusing stale split folders
+      if (overwrite) {
+        const baseName = path.parse(fullPath).name.toLowerCase();
+        const hasUvr = tasks.some(task => task.type === 'uvr');
+        const hasTts = tasks.some(task => task.type === 'tts');
+        
+        if (hasUvr || hasTts) {
+          try {
+            const existing = await fs.readdir(outputDir).catch(() => []);
+            // Delete old UVR outputs and split folders that match the input file
+            for (const name of existing) {
+              const nameLower = name.toLowerCase();
+              if (nameLower.includes(baseName) || nameLower.startsWith('uvr_cli_split_')) {
+                const itemPath = path.join(outputDir, name);
+                const stat = await fs.stat(itemPath).catch(() => null);
+                if (stat) {
+                  if (stat.isDirectory()) {
+                    await fs.rm(itemPath, { recursive: true, force: true }).catch(() => null);
+                  } else {
+                    await fs.unlink(itemPath).catch(() => null);
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Failed to clean old outputs for overwrite:', err);
+          }
+        }
+      } else {
         const existing = await fs.readdir(outputDir).catch(() => []);
         const baseName = path.parse(fullPath).name.toLowerCase();
         const hasUvr = tasks.some(task => task.type === 'uvr');
