@@ -19,6 +19,12 @@ export type RenderItemV2 = {
   id: string;
   name?: string;
   type: 'video' | 'audio' | 'image' | 'subtitle' | 'text';
+  /**
+   * Whether this track is visible/active during rendering.
+   * Applies to video, image, subtitle, and text tracks.
+   * Defaults to true when undefined. When false, the track is skipped entirely.
+   */
+  visible?: boolean;
   source: { ref?: string; path?: string };
   timeline?: { start?: number; duration?: number; trimStart?: number; trimEnd?: number; matchDuration?: boolean };
   layer?: number;

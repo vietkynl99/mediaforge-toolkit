@@ -1,5 +1,5 @@
 import React from 'react';
-import { File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { Eye, EyeOff, File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload, Volume2, VolumeX, X } from 'lucide-react';
 import { parseSubtitleCues } from '../../app/appData';
 import { parseDurationToSeconds } from '../../../utils/helpers';
 import { RenderStudioPageProvider } from './RenderStudioPageContext';
@@ -142,6 +142,8 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     renderTrackLabels,
     placeholderKeyByFileId,
     updateRenderTrackLabel,
+    renderTrackVisible,
+    updateRenderTrackVisible,
     coerceNumber,
     RENDER_BLUR_FEATHER_MAX,
     RENDER_PREVIEW_BLACK_DATA_URL,
@@ -1069,7 +1071,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         </div>
                         <div className="max-h-[min(45vh,28rem)] overflow-y-auto pr-1">
                         <div className="flex gap-2 text-[11px] text-zinc-400 min-w-0">
-                          <div className="w-[7.5rem] shrink-0 flex flex-col gap-2">
+                          <div className="w-[9.5rem] shrink-0 flex flex-col gap-2">
                             <span className="h-5" />
                             {showRenderTimelineTextTrack ? (
                               <div
@@ -1086,6 +1088,18 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                   onClick={e => e.stopPropagation()}
                                   onChange={e => updateRenderTrackLabel('text', e.target.value)}
                                 />
+                                <button
+                                  type="button"
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    updateRenderTrackVisible('text', renderTrackVisible?.text !== false ? false : true);
+                                  }}
+                                  className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${renderTrackVisible?.text === false ? 'text-zinc-600' : 'text-zinc-400'}`}
+                                  title={renderTrackVisible?.text === false ? 'Show track' : 'Hide track'}
+                                >
+                                  {renderTrackVisible?.text === false ? <EyeOff size={10} /> : <Eye size={10} />}
+                                </button>
+                                <div className="shrink-0 h-3 w-3" />
                               </div>
                             ) : null}
                             {showRenderTimelineSubtitleTrack ? (
@@ -1107,6 +1121,24 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 ) : (
                                   <span className="text-zinc-500 text-[10px] leading-tight">Subtitle</span>
                                 )}
+                                {renderSubtitleFile ? (() => {
+                                  const subKey = placeholderKeyByFileId[renderSubtitleFile.id] ?? 'subtitle';
+                                  const isHidden = renderTrackVisible?.[subKey] === false;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        updateRenderTrackVisible(subKey, isHidden ? true : false);
+                                      }}
+                                      className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${isHidden ? 'text-zinc-600' : 'text-zinc-400'}`}
+                                      title={isHidden ? 'Show track' : 'Hide track'}
+                                    >
+                                      {isHidden ? <EyeOff size={10} /> : <Eye size={10} />}
+                                    </button>
+                                  );
+                                })() : <div className="shrink-0 h-3 w-3" />}
+                                <div className="shrink-0 h-3 w-3" />
                               </div>
                             ) : null}
                             {showRenderTimelineImageTrack
@@ -1121,6 +1153,24 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       onClick={e => e.stopPropagation()}
                                       onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[file.id] ?? `image${idx + 1}`, e.target.value)}
                                     />
+                                    {(() => {
+                                      const imgKey = placeholderKeyByFileId[file.id] ?? `image${idx + 1}`;
+                                      const isHidden = renderTrackVisible?.[imgKey] === false;
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={e => {
+                                            e.stopPropagation();
+                                            updateRenderTrackVisible(imgKey, isHidden ? true : false);
+                                          }}
+                                          className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${isHidden ? 'text-zinc-600' : 'text-zinc-400'}`}
+                                          title={isHidden ? 'Show track' : 'Hide track'}
+                                        >
+                                          {isHidden ? <EyeOff size={10} /> : <Eye size={10} />}
+                                        </button>
+                                      );
+                                    })()}
+                                    <div className="shrink-0 h-3 w-3" />
                                   </div>
                                 ))
                               : null}
@@ -1139,6 +1189,23 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 ) : (
                                   <span className="text-zinc-500 text-[10px] w-full min-w-0">Video</span>
                                 )}
+                                {renderVideoFile ? (() => {
+                                  const vidKey = placeholderKeyByFileId[renderVideoFile.id] ?? 'video';
+                                  const isHidden = renderTrackVisible?.[vidKey] === false;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={e => {
+                                        e.stopPropagation();
+                                        updateRenderTrackVisible(vidKey, isHidden ? true : false);
+                                      }}
+                                      className={`shrink-0 h-3 w-3 flex items-center justify-center rounded-sm hover:bg-zinc-800 ${isHidden ? 'text-zinc-600' : 'text-zinc-400'}`}
+                                      title={isHidden ? 'Show track' : 'Hide track'}
+                                    >
+                                      {isHidden ? <EyeOff size={10} /> : <Eye size={10} />}
+                                    </button>
+                                  );
+                                })() : <div className="shrink-0 h-3 w-3" />}
                                 <button
                                   type="button"
                                   onClick={e => {
@@ -1166,6 +1233,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                     onClick={e => e.stopPropagation()}
                                     onChange={e => updateRenderTrackLabel(placeholderKeyByFileId[audioFile.id] ?? (idx === 0 ? 'audio' : `audio${idx + 1}`), e.target.value)}
                                   />
+                                  <div className="shrink-0 h-3 w-3" />
                                   <button
                                     type="button"
                                     onClick={e => {
@@ -1240,7 +1308,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               </div>
                               {showRenderTimelineTextTrack ? (
                                 <div
-                                  className="rounded-md bg-zinc-800/60 relative overflow-hidden cursor-pointer"
+                                  className={`rounded-md bg-zinc-800/60 relative overflow-hidden cursor-pointer transition-opacity ${renderTrackVisible?.text === false ? 'opacity-40' : ''}`}
                                   style={{ height: renderTextTrackHeight }}
                                   title="Text track"
                                   role="button"
@@ -1302,7 +1370,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                               ) : null}
                               {showRenderTimelineSubtitleTrack ? (
                                 <div
-                                  className="rounded-md bg-zinc-800/60 relative overflow-hidden cursor-pointer"
+                                  className={`rounded-md bg-zinc-800/60 relative overflow-hidden cursor-pointer transition-opacity ${renderSubtitleFile && renderTrackVisible?.[placeholderKeyByFileId[renderSubtitleFile.id] ?? 'subtitle'] === false ? 'opacity-40' : ''}`}
                                   style={{ height: subtitleTrackHeight }}
                                   title={renderSubtitleFile ? renderSubtitleFile.name : 'Subtitle track'}
                                   role="button"
@@ -1389,10 +1457,13 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                 </div>
                               ) : null}
                               {showRenderTimelineImageTrack
-                                ? renderImageDurationEntries.map((entry, idx) => (
+                                ? renderImageDurationEntries.map((entry, idx) => {
+                                    const imgKey = placeholderKeyByFileId[entry.id] ?? `image${idx + 1}`;
+                                    const imgHidden = renderTrackVisible?.[imgKey] === false;
+                                    return (
                                     <div
                                       key={`img-track-${entry.id}`}
-                                      className="h-3 rounded-full bg-zinc-800 relative shrink-0 cursor-pointer"
+                                      className={`h-3 rounded-full bg-zinc-800 relative shrink-0 cursor-pointer transition-opacity ${imgHidden ? 'opacity-40' : ''}`}
                                       title={`${renderImageFiles[idx]?.name ?? `Image ${idx + 1}`}`}
                                       role="button"
                                       tabIndex={0}
@@ -1424,11 +1495,12 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         />
                                       ) : null}
                                     </div>
-                                  ))
+                                    );
+                                  })
                                 : null}
                               {showRenderTimelineVideoTrack ? (
                                 <div
-                                  className="h-3 rounded-full bg-zinc-800 relative cursor-pointer"
+                                  className={`h-3 rounded-full bg-zinc-800 relative cursor-pointer transition-opacity ${renderVideoFile && renderTrackVisible?.[placeholderKeyByFileId[renderVideoFile.id] ?? 'video'] === false ? 'opacity-40' : ''}`}
                                   role="button"
                                   tabIndex={0}
                                   title={renderVideoFile ? renderVideoFile.name : 'Video track'}

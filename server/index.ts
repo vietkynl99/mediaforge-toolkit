@@ -1167,17 +1167,22 @@ const buildRenderV2FilterGraph = async (
   const configOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
   const outputStart = Number.isFinite(options?.outputStart) ? Math.max(0, Number(options?.outputStart)) : configOutputStart;
 
-  const visualItems = includeVideo ? config.items.filter(item => item.type === 'video' || item.type === 'image') : [];
+  // visible === false means the track is hidden and should be skipped entirely.
+  // Applies to: video, image, subtitle, text. Audio uses its own mute flag.
+  const isVisible = (item: RenderItemV2) => item.visible !== false;
+
+  const visualItems = includeVideo ? config.items.filter(item => (item.type === 'video' || item.type === 'image') && isVisible(item)) : [];
   const audioItems = config.items.filter(item => item.type === 'audio');
-  const subtitleItems = includeVideo ? config.items.filter(item => item.type === 'subtitle') : [];
-  const textItems = includeVideo ? config.items.filter(item => item.type === 'text') : [];
+  const subtitleItems = includeVideo ? config.items.filter(item => item.type === 'subtitle' && isVisible(item)) : [];
+  const textItems = includeVideo ? config.items.filter(item => item.type === 'text' && isVisible(item)) : [];
 
   // In 'audio only' mode visualItems is empty (no video rendered), but we still
   // need the video file entries in sourceItems so their embedded audio streams
   // can be mixed. Use a separate list so they get loaded as inputs without
   // triggering any visual filter graph.
+  // Also respect visible: hidden video items don't contribute embedded audio.
   const videoItemsForAudio = !includeVideo && includeAudio
-    ? config.items.filter(item => item.type === 'video')
+    ? config.items.filter(item => item.type === 'video' && isVisible(item))
     : [];
 
   const sourceItems = [

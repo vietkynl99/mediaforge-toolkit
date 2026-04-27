@@ -417,6 +417,7 @@ export default function App() {
     mute?: boolean;
   }>>({});
   const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
+  const [renderTrackVisible, setRenderTrackVisible] = useState<Record<string, boolean>>({});
   const [renderConfigV2Override, setRenderConfigV2Override] = useState<RenderConfigV2 | null>(null);
   const [renderTemplates, setRenderTemplates] = useState<RenderTemplate[]>([]);
   const [renderTemplateModalOpen, setRenderTemplateModalOpen] = useState(false);
@@ -660,8 +661,13 @@ export default function App() {
     setRenderTrackLabels(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  const updateRenderTrackVisible = React.useCallback((key: string, value: boolean) => {
+    setRenderTrackVisible(prev => ({ ...prev, [key]: value }));
+  }, []);
+
   useEffect(() => {
     setRenderTrackLabels({});
+    setRenderTrackVisible({});
   }, [runPipelineProject?.id]);
 
   const selectProjectDefaults = () => {
@@ -683,6 +689,7 @@ export default function App() {
     setRunPipelineRenderTemplateId('custom');
     setRenderConfigV2Override(null);
     setRenderTrackLabels({});
+    setRenderTrackVisible({});
     setRenderImageTransforms({});
     setRenderVideoTransforms({});
     setRenderAudioTransforms({});
@@ -2290,6 +2297,7 @@ export default function App() {
     renderVideoTransforms,
     renderAudioTransforms,
     renderTrackLabels,
+    renderTrackVisible,
     renderParams
   ]);
 
@@ -2344,7 +2352,8 @@ export default function App() {
     renderParams.video.maskTop,
     renderParams.video.maskBottom,
     renderParams.subtitle,
-    renderParams.text
+    renderParams.text,
+    renderTrackVisible
   ]);
 
   const renderPreviewParamsKey = useMemo(() => {
@@ -2833,10 +2842,13 @@ export default function App() {
       inputsMap[key] = file.relativePath;
       const labelFromUser = (renderTrackLabels[key] ?? '').trim();
       const name = labelFromUser || file.name || key;
+      const trackIsVisible = renderTrackVisible[key];
       const baseItem: RenderConfigV2['items'][number] = {
         id: `${file.type}-${counts[file.type]}`,
         name,
         type: file.type,
+        // audio tracks use `mute` — visible is not applicable
+        ...(file.type !== 'audio' ? { visible: trackIsVisible !== false } : {}),
         source: { ref: key },
         timeline: { start: 0 },
         layer: file.type === 'audio' || file.type === 'subtitle' ? 0 : 10 + idx
@@ -2991,9 +3003,11 @@ export default function App() {
         textSubtitleStyle.autoMoveInterval = parsedAutoMoveInterval;
         textSubtitleStyle.autoMovePositions = parsedAutoMovePositions;
       }
+      const textIsVisible = renderTrackVisible['text'];
       items.push({
         id: 'text-track',
         type: 'text',
+        visible: textIsVisible !== false,
         source: {},
         timeline: { start, duration: safeEnd - start },
         text: { value: singleTextValue, start, end: safeEnd, matchDuration: isSingleTextMatchDuration ? '1' : '0' },
@@ -3514,6 +3528,17 @@ export default function App() {
       }));
       setRenderTextTrackEnabled(true);
     }
+
+    // Restore visible state from template items (keyed by placeholder ref).
+    // Only record explicitly-false values; absence / true = visible (default).
+    const restoredVisible: Record<string, boolean> = {};
+    template.config.items.forEach((item: any) => {
+      const ref = item.source?.ref || (item.type === 'text' ? 'text' : null);
+      if (ref && item.visible === false) {
+        restoredVisible[ref] = false;
+      }
+    });
+    setRenderTrackVisible(restoredVisible);
   };
 
   const isRenderTemplateDirty = React.useMemo(() => {
@@ -6030,7 +6055,9 @@ export default function App() {
       commitRenderParamDraftOnEnter,
       updateRenderParam,
       renderTrackLabels,
-      updateRenderTrackLabel
+      updateRenderTrackLabel,
+      renderTrackVisible,
+      updateRenderTrackVisible
     },
     effects: {
       renderVideoTransforms,
