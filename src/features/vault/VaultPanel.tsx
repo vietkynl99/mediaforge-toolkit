@@ -332,7 +332,7 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
                         onClick={() => onSelectFile(item.id)}
                       >
                         <div className="min-w-0">
-                          <div className={`truncate ${selectedFileId === item.id ? 'text-lime-400 font-semibold' : 'text-zinc-200'}`}>{item.name}</div>
+                          <div className={`truncate ${selectedFileId === item.id ? 'text-lime-400 font-semibold' : 'text-zinc-200'}`} title={item.name}>{item.name}</div>
                           <div className="text-[10px] text-zinc-500 mt-1">
                             {item.size}
                             {item.duration ? ` • ${item.duration}` : ''}
