@@ -31,6 +31,7 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
 
 export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime }) => {
   const [autoScroll, setAutoScroll] = useState(true);
+  const [logContent, setLogContent] = useState<string>('');
   const logRef = useRef<HTMLDivElement>(null);
 
   const { lastJob, activeTaskName } = useMemo(() => {
@@ -49,11 +50,37 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime 
     return { lastJob, activeTaskName };
   }, [jobs]);
 
+  // Fetch log content from API
+  useEffect(() => {
+    if (!lastJob) {
+      setLogContent('');
+      return;
+    }
+
+    // For processing jobs, poll the log every 2 seconds
+    const fetchLog = () => {
+      fetch(`/api/jobs/${lastJob.id}/log`)
+        .then(res => {
+          if (!res.ok) throw new Error('Failed to load log');
+          return res.text();
+        })
+        .then(text => setLogContent(text))
+        .catch(() => setLogContent(''));
+    };
+
+    fetchLog();
+
+    if (lastJob.status === 'processing') {
+      const interval = setInterval(fetchLog, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [lastJob?.id, lastJob?.status]);
+
   useEffect(() => {
     if (autoScroll && logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [lastJob?.log, lastJob?.error, autoScroll]);
+  }, [logContent, lastJob?.error, autoScroll]);
 
   const handleViewFullLog = () => {
     if (lastJob) {
@@ -114,7 +141,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime 
               ref={logRef}
               className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap overflow-y-auto flex-1 min-h-0 font-mono leading-relaxed"
             >
-              {lastJob.log || lastJob.error || 'No log output yet.'}
+              {logContent || lastJob.error || 'No log output yet.'}
             </div>
           </div>
         </div>

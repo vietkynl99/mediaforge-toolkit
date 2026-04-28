@@ -2593,6 +2593,18 @@ const runRenderV2Task = async (
 };
 
 const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
+  // Check if job was cancelled while in queue
+  if ((job as any).__cancelRequested) {
+    // Reset activeJobId if this was the active job
+    if (mode === 'normal' && activeJobId === job.id) {
+      activeJobId = null;
+      setImmediate(processNextJob);
+    } else if (mode === 'download') {
+      activeDownloadCount = Math.max(0, activeDownloadCount - 1);
+      setImmediate(processNextDownload);
+    }
+    return;
+  }
   job.status = 'processing';
   job.progress = 0;
   job.startedAt = new Date().toISOString();
@@ -4981,6 +4993,7 @@ app.get('/api/jobs', async (req, res) => {
       status: job.status,
       progress: job.progress,
       eta: job.eta,
+      tasks: job.tasks,
       taskCount: job.tasks.length,
       createdAt: job.createdAt,
       startedAt: job.startedAt,
