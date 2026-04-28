@@ -5870,7 +5870,7 @@ const runYtDlpTask = async (
     '--no-warnings',
     '--newline',
     ...(cookiesFile ? ['--cookies', cookiesFile] : []),
-    '-o', path.join(outputDir, '%(title).200s.%(ext)s'),
+    '-o', path.join(outputDir, '%(id)s %(title).60s.%(ext)s'),
     url
   ];
 
