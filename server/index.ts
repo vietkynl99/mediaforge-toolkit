@@ -2719,7 +2719,9 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
               setVideoProgress(5);
               continue;
             }
-            if (/ERROR:/i.test(line)) {
+            // Only mark error for fatal errors, not transient retry messages
+            // yt-dlp outputs "ERROR: ... Retrying (N/M)..." for transient errors
+            if (/ERROR:/i.test(line) && !/Retrying\s*\(\d+\/\d+\)/i.test(line)) {
               if (phase === 'subs') {
                 markError(downloadSubsTask);
               } else if (phase === 'media') {
@@ -2800,15 +2802,22 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       if (projectRelativePath) {
         appendJobLog(job, `Project:\n- ${projectRelativePath}\n`);
       }
+      const wantsSubs = downloadMode !== 'media';
+      const wantsMedia = downloadMode !== 'subs';
       const subsCandidates = downloadResult.subsFiles.map(name => path.join(sourceDir, name)).filter(pathname => isSubtitleFile(pathname));
-      const mediaCandidates = downloadResult.mediaFiles.map(name => path.join(sourceDir, name)).filter(pathname => isVideoFile(pathname) || isAudioFile(pathname));
+      let mediaCandidates = downloadResult.mediaFiles.map(name => path.join(sourceDir, name)).filter(pathname => isVideoFile(pathname) || isAudioFile(pathname));
+      // If no new files, check for existing media files (yt-dlp may have skipped download)
+      if (mediaCandidates.length === 0 && wantsMedia) {
+        const existingFiles = (await fs.readdir(sourceDir, { withFileTypes: true }))
+          .filter(entry => entry.isFile())
+          .map(entry => path.join(sourceDir, entry.name));
+        mediaCandidates = existingFiles.filter(pathname => isVideoFile(pathname) || isAudioFile(pathname));
+      }
       const hasVideoFile = mediaCandidates.some(pathname => isVideoFile(pathname));
       const hasAudioFile = mediaCandidates.some(pathname => isAudioFile(pathname));
       const hasMuxedVideo = hasVideoFile;
       const hasVideo = hasVideoFile;
       const hasAudio = hasAudioFile || hasMuxedVideo;
-      const wantsSubs = downloadMode !== 'media';
-      const wantsMedia = downloadMode !== 'subs';
       if (mediaCandidates.length) {
         let selectedPath = mediaCandidates[0];
         let selectedSize = 0;
