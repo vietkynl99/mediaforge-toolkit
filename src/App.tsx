@@ -5660,7 +5660,7 @@ export default function App() {
       }
     }
 
-    const sendPipeline = async (overwrite: boolean) => {
+    const sendPipeline = async (overwrite: boolean, continueIfExists: boolean = false) => {
       const pipelinePayload: Record<string, any> = runPipelineHasDownload
         ? {
           url: downloadUrl.trim(),
@@ -5762,6 +5762,9 @@ export default function App() {
       if (overwrite) {
         pipelinePayload.overwrite = true;
       }
+      if (continueIfExists) {
+        pipelinePayload.continueIfExists = true;
+      }
       if (runPipelineHasTts) {
         pipelinePayload.voice = runPipelineTtsVoice;
         pipelinePayload.overlapMode = runPipelineTtsOverlapMode;
@@ -5831,15 +5834,27 @@ export default function App() {
         setRunPipelineSubmitting(false);
         openConfirm(
           {
-            title: 'Overwrite existing output?',
-            description: 'Output already exists. Do you want to overwrite it or cancel?',
+            title: 'Existing output detected',
+            description: 'Output already exists. Choose an action:',
             confirmLabel: 'Overwrite',
+            secondaryLabel: 'Continue',
             variant: 'danger'
           },
           async () => {
             setRunPipelineSubmitting(true);
             try {
-              await sendPipeline(true);
+              await sendPipeline(true, false);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Unable to run pipeline';
+              showToast(message, 'error');
+            } finally {
+              setRunPipelineSubmitting(false);
+            }
+          },
+          async () => {
+            setRunPipelineSubmitting(true);
+            try {
+              await sendPipeline(false, true);
             } catch (error) {
               const message = error instanceof Error ? error.message : 'Unable to run pipeline';
               showToast(message, 'error');

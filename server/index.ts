@@ -5535,6 +5535,7 @@ app.post('/api/jobs/run', async (req, res) => {
   const ttsOverlapMode = req.body?.overlapMode === 'overlap' ? 'overlap' : 'truncate';
   const ttsRemoveLineBreaks = req.body?.removeLineBreaks !== false;
   const overwrite = req.body?.overwrite === true;
+  const continueIfExists = req.body?.continueIfExists === true;
   const ttsVoice = typeof req.body?.voice === 'string' ? req.body.voice.trim() : '';
   const ttsRate = typeof req.body?.rate === 'number' ? req.body.rate : undefined;
   const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
@@ -5633,7 +5634,7 @@ app.post('/api/jobs/run', async (req, res) => {
         };
         const alreadyHasOutputs = await hasFiles(sourceDir) || await hasFiles(outputDir);
         if (alreadyHasOutputs) {
-          if (!overwrite) {
+          if (!overwrite && !continueIfExists) {
             res.status(409).json({ error: 'Project outputs already exist.', kind: 'download' });
             return;
           }
@@ -5800,7 +5801,8 @@ app.post('/api/jobs/run', async (req, res) => {
             console.error('Failed to clean old outputs for overwrite:', err);
           }
         }
-      } else {
+      } else if (!continueIfExists) {
+        // Only check for existing outputs if not continuing
         const existing = await fs.readdir(outputDir).catch(() => []);
         const baseName = path.parse(fullPath).name.toLowerCase();
         const hasUvr = tasks.some(task => task.type === 'uvr');
