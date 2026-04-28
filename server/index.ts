@@ -355,7 +355,6 @@ db.run(
     finished_at TEXT,
     duration_ms INTEGER,
     error TEXT,
-    log TEXT,
     params_json TEXT
   )`
 );
@@ -395,6 +394,45 @@ try {
   db.run('ALTER TABLE jobs ADD COLUMN params_json TEXT');
 } catch {
   // ignore if already exists
+}
+
+// Migration: remove log column from jobs table (log is now stored in files)
+const jobsTableInfo = db.exec("PRAGMA table_info('jobs')");
+const jobsColumns = (jobsTableInfo[0]?.values ?? []).map((row: any[]) => String(row[1]));
+const hasLogColumn = jobsColumns.includes('log');
+
+if (hasLogColumn) {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS jobs_new (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      project_name TEXT,
+      file_name TEXT NOT NULL,
+      file_size TEXT NOT NULL,
+      status TEXT NOT NULL,
+      progress INTEGER NOT NULL,
+      tasks_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT,
+      duration_ms INTEGER,
+      error TEXT,
+      params_json TEXT
+    )`
+  );
+  try {
+    db.run(
+      `INSERT INTO jobs_new (id, name, project_name, file_name, file_size, status, progress,
+        tasks_json, created_at, started_at, finished_at, duration_ms, error, params_json)
+       SELECT id, name, project_name, file_name, file_size, status, progress,
+        tasks_json, created_at, started_at, finished_at, duration_ms, error, params_json
+       FROM jobs`
+    );
+  } catch {
+    // ignore if table is empty or other error
+  }
+  db.run('DROP TABLE jobs');
+  db.run('ALTER TABLE jobs_new RENAME TO jobs');
 }
 
 const paramPresetTableInfo = db.exec("PRAGMA table_info('param_presets')");
@@ -674,8 +712,8 @@ const upsertJobRecord = (job: JobRecord) => {
   db.run(
     `INSERT OR REPLACE INTO jobs (
       id, name, project_name, file_name, file_size, status, progress,
-      tasks_json, created_at, started_at, finished_at, duration_ms, error, log, params_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      tasks_json, created_at, started_at, finished_at, duration_ms, error, params_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       job.id,
       job.name,
@@ -690,7 +728,6 @@ const upsertJobRecord = (job: JobRecord) => {
       job.finishedAt ?? null,
       job.durationMs ?? null,
       job.error ?? null,
-      job.log ?? null,
       job.params ? JSON.stringify(job.params) : null
     ]
   );
@@ -823,7 +860,7 @@ const loadJobsFromDb = () => {
   try {
     const result = db.exec(
       `SELECT id, name, project_name, file_name, file_size, status, progress,
-        tasks_json, created_at, started_at, finished_at, duration_ms, error, log, params_json
+        tasks_json, created_at, started_at, finished_at, duration_ms, error, params_json
        FROM jobs
        ORDER BY created_at DESC`
     );
@@ -844,7 +881,6 @@ const loadJobsFromDb = () => {
         finishedAt,
         durationMs,
         error,
-        log,
         paramsJson
       ] = row;
       let tasks: JobTask[] = [];
@@ -867,7 +903,7 @@ const loadJobsFromDb = () => {
         finishedAt: finishedAt ?? undefined,
         durationMs: typeof durationMs === 'number' ? durationMs : durationMs ? Number(durationMs) : undefined,
         error: error ?? undefined,
-        log: log ?? undefined
+        log: undefined // log is stored in file, loaded on demand via /api/jobs/:id/log
       };
       if (paramsJson) {
         try {
@@ -4920,8 +4956,76 @@ app.post('/api/pipelines', async (req, res) => {
   }
 });
 
-app.get('/api/jobs', async (_req, res) => {
-  res.json({ jobs, now: new Date().toISOString() });
+app.get('/api/jobs', async (req, res) => {
+  // Pagination support
+  const page = Math.max(1, parseInt(req.query.page as string) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+  const offset = (page - 1) * limit;
+  const total = jobs.length;
+  const totalPages = Math.ceil(total / limit);
+  const pagedJobs = jobs.slice(offset, offset + limit);
+
+  // Return summary-only (without params, tasks details)
+  const jobSummaries = pagedJobs.map(job => {
+    const { fullPath, filename } = getJobLogPath(job);
+    const logFile = existsSync(fullPath) ? filename : null;
+    const truncatedError = job.error && job.error.length > 200 
+      ? job.error.slice(0, 200) + '...(truncated)'
+      : job.error;
+    return {
+      id: job.id,
+      name: job.name,
+      projectName: job.projectName,
+      fileName: job.fileName,
+      fileSize: job.fileSize,
+      status: job.status,
+      progress: job.progress,
+      eta: job.eta,
+      taskCount: job.tasks.length,
+      createdAt: job.createdAt,
+      startedAt: job.startedAt,
+      finishedAt: job.finishedAt,
+      durationMs: job.durationMs,
+      error: truncatedError,
+      logFile
+    };
+  });
+  res.json({ jobs: jobSummaries, total, page, limit, totalPages, now: new Date().toISOString() });
+});
+
+// Get full job details by ID
+app.get('/api/jobs/:id', async (req, res) => {
+  const { id } = req.params;
+  const job = getJobById(id);
+  
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  const { fullPath, filename } = getJobLogPath(job);
+  const logFile = existsSync(fullPath) ? filename : null;
+  const truncatedError = job.error && job.error.length > 500 
+    ? job.error.slice(0, 500) + '...(truncated, see log file for full error)'
+    : job.error;
+
+  res.json({
+    id: job.id,
+    name: job.name,
+    projectName: job.projectName,
+    fileName: job.fileName,
+    fileSize: job.fileSize,
+    status: job.status,
+    progress: job.progress,
+    eta: job.eta,
+    tasks: job.tasks,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    durationMs: job.durationMs,
+    error: truncatedError,
+    logFile,
+    params: job.params
+  });
 });
 
 app.get('/api/jobs/:id/log', async (req, res) => {
@@ -5911,7 +6015,9 @@ const runYtDlpTask = async (
         }
         const combined = [output.trim(), error.trim()].filter(Boolean).join('\n');
         if (code !== 0) {
-          reject(new Error(combined || `yt-dlp exited with code ${code}`));
+          // Only use stderr for error message, not full output (log is stored separately)
+          const errorMsg = error.trim() || `yt-dlp exited with code ${code}`;
+          reject(new Error(errorMsg));
           return;
         }
         resolve(combined);

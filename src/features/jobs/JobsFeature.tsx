@@ -51,6 +51,9 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
   const [jobServerNowMs, setJobServerNowMs] = useState<number | null>(null);
   const previousJobsRef = useRef<MediaJob[]>([]);
   const [jobPage, setJobPage] = useState(1);
+  const [totalJobs, setTotalJobs] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const JOBS_PER_PAGE = 10;
   const [jobLogOpen, setJobLogOpen] = useState(false);
   const [jobLogJobId, setJobLogJobId] = useState<string | null>(null);
   const [jobContextMenu, setJobContextMenu] = useState<JobContextMenuState>({
@@ -60,12 +63,15 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     jobId: null
   });
 
-  const loadJobs = useCallback(async () => {
+  const loadJobs = useCallback(async (page?: number) => {
     try {
-      const response = await fetch('/api/jobs');
+      const targetPage = page ?? jobPage;
+      const response = await fetch(`/api/jobs?page=${targetPage}&limit=${JOBS_PER_PAGE}`);
       if (!response.ok) return;
-      const data = await response.json() as { jobs: MediaJob[]; now?: string };
+      const data = await response.json() as { jobs: MediaJob[]; total: number; totalPages: number; now?: string };
       setJobs(data.jobs ?? []);
+      setTotalJobs(data.total ?? 0);
+      setTotalPages(data.totalPages ?? 1);
       if (data.now) {
         const serverMs = new Date(data.now).getTime();
         if (Number.isFinite(serverMs)) setJobServerNowMs(serverMs);
@@ -73,7 +79,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     } catch {
       return;
     }
-  }, []);
+  }, [jobPage]);
 
   useImperativeHandle(ref, () => ({
     reloadJobs: loadJobs
@@ -87,9 +93,8 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
   }, [loadJobs]);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(jobs.length / 10));
     if (jobPage > totalPages) setJobPage(totalPages);
-  }, [jobs.length, jobPage]);
+  }, [jobPage, totalPages]);
 
   const cancelJob = useCallback(async (jobId: string) => {
     try {
@@ -130,7 +135,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
       const was = previousStatus.get(job.id);
       if (was === job.status) return false;
       if (job.status !== 'completed') return false;
-      return job.tasks.some(task => task.type === 'uvr' || task.type === 'tts');
+      return job.tasks?.some(task => task.type === 'uvr' || task.type === 'tts') ?? false;
     });
     if (outputCompleted) onJobOutputsCompleted();
     previousJobsRef.current = jobs;
@@ -200,7 +205,11 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
           <LazyDashboard
             jobs={jobs}
             jobPage={jobPage}
-            onPageChange={setJobPage}
+            totalPages={totalPages}
+            onPageChange={(page) => {
+              setJobPage(page);
+              loadJobs(page);
+            }}
             serverNowMs={jobServerNowMs}
             onJobContextMenu={openJobContextMenu}
           />

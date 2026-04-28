@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { RefreshCw, CheckCircle2, Clock } from 'lucide-react';
 import { MediaJob } from '../../types';
@@ -7,6 +7,7 @@ import { JobRow } from '../jobs/JobRow';
 interface DashboardProps {
   jobs: MediaJob[];
   jobPage: number;
+  totalPages: number;
   onPageChange: (page: number) => void;
   serverNowMs: number | null;
   onJobContextMenu: (event: React.MouseEvent, job: MediaJob) => void;
@@ -15,6 +16,7 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({
   jobs,
   jobPage,
+  totalPages,
   onPageChange,
   serverNowMs,
   onJobContextMenu
@@ -29,11 +31,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
     setNowMs(serverNowMs);
   }, [serverNowMs]);
 
-  const totalPages = Math.max(1, Math.ceil(jobs.length / 10));
   const clampedJobPage = Math.min(Math.max(1, jobPage), totalPages);
-  const pageJobs = useMemo(() => {
-    return jobs.slice((clampedJobPage - 1) * 10, clampedJobPage * 10);
-  }, [jobs, clampedJobPage]);
+  // Jobs are already paginated from server
+  const pageJobs = jobs;
 
   useEffect(() => {
     needsTickRef.current = pageJobs.some(job => Boolean(job.startedAt) && !job.finishedAt);

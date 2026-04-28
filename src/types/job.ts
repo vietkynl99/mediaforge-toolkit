@@ -25,6 +25,8 @@ export interface MediaJob {
   cpuUsage?: number;
   gpuUsage?: number;
   log?: string;
+  logFile?: string | null;
+  taskCount?: number;
   error?: string;
   params?: {
     pipelineId?: number;

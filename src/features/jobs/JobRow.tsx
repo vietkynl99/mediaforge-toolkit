@@ -84,7 +84,7 @@ export const JobRow = React.memo(function JobRow({ job, index, onContextMenu, no
           {job.name}
         </div>
         <div className="flex items-center gap-0.5">
-          {job.tasks.map((task, i) => {
+          {job.tasks ? job.tasks.map((task, i) => {
             const Icon = (TASK_ICONS as any)[task.type] ?? File;
             const statusLabel = {
               pending: 'Pending',
@@ -115,7 +115,9 @@ export const JobRow = React.memo(function JobRow({ job, index, onContextMenu, no
                 {i < job.tasks.length - 1 && <ChevronRight size={12} className="text-zinc-700 -mx-0.5" />}
               </React.Fragment>
             );
-          })}
+          }) : (
+            <span className="text-[10px] text-zinc-500">{job.taskCount ?? '?'} tasks</span>
+          )}
         </div>
       </div>
 
