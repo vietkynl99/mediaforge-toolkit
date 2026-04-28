@@ -4592,11 +4592,13 @@ const readVault = async (): Promise<VaultFolderDTO[]> => {
       folderFiles.push(...outputFiles);
     }
 
-    folders.push({
-      name: entry.name,
-      path: folderPath,
-      files: folderFiles,
-    });
+    if (folderFiles.length > 0) {
+      folders.push({
+        name: entry.name,
+        path: folderPath,
+        files: folderFiles,
+      });
+    }
   }
 
   return folders;
