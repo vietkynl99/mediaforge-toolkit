@@ -1045,7 +1045,7 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
 const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
 const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = false;
 const LOG_RENDER_V2_DEBUG =
-  ['1', 'true', 'yes', 'on'].includes((process.env.LOG_RENDER_V2_DEBUG ?? '').toLowerCase());
+  ['1', 'true', 'yes', 'on'].includes((process.env.VITE_SERVER_LOG_RENDER_V2_DEBUG ?? '').toLowerCase());
 const BLUR_FEATHER_MAX = 10;
 const STATIC_MASK_LOOP_FILTER = 'loop=loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB';
 

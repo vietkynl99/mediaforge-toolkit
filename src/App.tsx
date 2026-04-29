@@ -39,7 +39,7 @@ import {
   TAB_PATH_MAP
 } from './constants';
 import { formatLocalDateTime } from './utils/format';
-import { coerceNumber, isCleanFontName, isRenderV2DebugEnabled, parseResolution } from './utils/helpers';
+import { coerceNumber, isCleanFontName, CLIENT_LOG_RENDER_V2_DEBUG, parseResolution } from './utils/helpers';
 import {
   computePlaceholderKeyByFileId,
   normalizeItemEffects,
@@ -2308,7 +2308,7 @@ export default function App() {
   }, [renderConfigPreviewRaw]);
 
   const renderConfigPreviewForPreview = useMemo(() => {
-    if (isRenderV2DebugEnabled()) {
+    if (CLIENT_LOG_RENDER_V2_DEBUG) {
       console.log('RENDER_V2_DEBUG: Recomputing renderConfigPreviewForPreview candidate');
     }
     const fullConfig = buildRenderConfigV2();
@@ -2380,7 +2380,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (isRenderV2DebugEnabled()) {
+    if (CLIENT_LOG_RENDER_V2_DEBUG) {
       console.log('RENDER_V2_DEBUG: Preview useEffect triggered', {
         renderPreviewParamsKey,
       });
@@ -2421,7 +2421,7 @@ export default function App() {
             ? Math.min(renderPlayheadSeconds, renderTimelineDuration)
             : renderPlayheadSeconds
         );
-        if (isRenderV2DebugEnabled()) {
+        if (CLIENT_LOG_RENDER_V2_DEBUG) {
           console.log('RENDER_V2_DEBUG preview request', {
             at: previewAt,
             timelineDuration: renderTimelineDuration,
@@ -5796,7 +5796,7 @@ export default function App() {
       } else {
         pipelinePayload.pipelineId = Number(runPipelineId);
       }
-      if (isRenderV2DebugEnabled()) {
+      if (CLIENT_LOG_RENDER_V2_DEBUG) {
         console.log('RENDER_V2_DEBUG jobs/run payload', {
           pipelineId: pipelinePayload.pipelineId ?? null,
           renderPreviewSeconds: pipelinePayload.renderPreviewSeconds ?? null,
