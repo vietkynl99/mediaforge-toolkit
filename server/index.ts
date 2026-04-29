@@ -2964,6 +2964,9 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       (job as any).__abortController = abortController;
       const outputDir = (job as any).__outputDir as string;
       const before = new Set<string>((await fs.readdir(outputDir)).map(name => path.join(outputDir, name)));
+      // Track UVR multi-file progress
+      let uvrTotalFiles = 1; // Default to 1 (single file mode)
+      let uvrCurrentFile = 1;
       const uvrLog = await runUvrTask(
         uvrInputPath,
         outputDir,
@@ -2974,12 +2977,30 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
           appendJobLog(job, chunk);
           const lines = chunk.split(/\r?\n/);
           for (const line of lines) {
+            // Parse "Split '...' into N chunk(s)."
+            const splitMatch = line.match(/Split\s+.*\s+into\s+(\d+)\s+chunk/);
+            if (splitMatch) {
+              uvrTotalFiles = Math.max(1, Number(splitMatch[1]));
+              uvrCurrentFile = 1;
+              continue;
+            }
+            // Parse "File X/Y Processing ... Slices..."
+            const fileMatch = line.match(/File\s+(\d+)\/(\d+)\s+Processing/);
+            if (fileMatch) {
+              uvrCurrentFile = Math.max(1, Number(fileMatch[1]));
+              uvrTotalFiles = Math.max(uvrCurrentFile, Number(fileMatch[2]));
+              continue;
+            }
+            // Parse progress bar "X%|..."
             const match = line.match(/^\s*(\d{1,3})%\|/);
             if (!match) continue;
             const percent = Math.min(100, Math.max(0, Number(match[1])));
             if (!Number.isFinite(percent)) continue;
-            if (percent <= (uvrTask.progress ?? 0)) continue;
-            uvrTask.progress = percent;
+            // Calculate overall progress across all files
+            // Formula: ((currentFile - 1) + percent/100) / totalFiles * 100
+            const overallPercent = Math.round(((uvrCurrentFile - 1) + percent / 100) / uvrTotalFiles * 100);
+            if (overallPercent <= (uvrTask.progress ?? 0)) continue;
+            uvrTask.progress = overallPercent;
             updateUvrJobProgress();
           }
         },
