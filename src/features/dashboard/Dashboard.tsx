@@ -233,7 +233,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </button>
           )}
           {search && !isSearchOpen && (
-            <span className="text-zinc-400 text-sm">"{search}"</span>
+            <div className="flex items-center gap-1">
+              <span className="text-zinc-400 text-sm">"{search}"</span>
+              <button
+                onClick={() => {
+                  onSearchChange('');
+                  onSearch();
+                }}
+                className="h-5 w-5 flex items-center justify-center text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
+                title="Clear search"
+              >
+                <X size={14} />
+              </button>
+            </div>
           )}
         </div>
 
