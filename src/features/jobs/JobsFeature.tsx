@@ -53,6 +53,9 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
   const [jobPage, setJobPage] = useState(1);
   const [totalJobs, setTotalJobs] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [jobSearch, setJobSearch] = useState('');
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const JOBS_PER_PAGE = 10;
   const [jobLogOpen, setJobLogOpen] = useState(false);
   const [jobLogJobId, setJobLogJobId] = useState<string | null>(null);
@@ -63,10 +66,14 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     jobId: null
   });
 
-  const loadJobs = useCallback(async (page?: number) => {
+  const loadJobs = useCallback(async (page?: number, search?: string, statuses?: string[]) => {
     try {
       const targetPage = page ?? jobPage;
-      const response = await fetch(`/api/jobs?page=${targetPage}&limit=${JOBS_PER_PAGE}`);
+      const searchParam = search ?? jobSearch;
+      const statusParam = statuses ?? selectedStatuses;
+      const searchQuery = searchParam ? `&search=${encodeURIComponent(searchParam)}` : '';
+      const statusQuery = statusParam.length > 0 ? `&status=${statusParam.join(',')}` : '';
+      const response = await fetch(`/api/jobs?page=${targetPage}&limit=${JOBS_PER_PAGE}${searchQuery}${statusQuery}`);
       if (!response.ok) return;
       const data = await response.json() as { jobs: MediaJob[]; total: number; totalPages: number; now?: string };
       setJobs(data.jobs ?? []);
@@ -79,22 +86,44 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     } catch {
       return;
     }
-  }, [jobPage]);
+  }, [jobPage, jobSearch, selectedStatuses]);
 
   useImperativeHandle(ref, () => ({
-    reloadJobs: loadJobs
+    reloadJobs: () => loadJobs()
   }), [loadJobs]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     loadJobs();
-    const interval = window.setInterval(loadJobs, 3000);
+    const interval = window.setInterval(() => loadJobs(), 3000);
     return () => window.clearInterval(interval);
   }, [loadJobs]);
 
   useEffect(() => {
     if (jobPage > totalPages) setJobPage(totalPages);
   }, [jobPage, totalPages]);
+
+  // Debounced realtime search
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setJobPage(1);
+      loadJobs(1, jobSearch);
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [jobSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Status filter change effect
+  useEffect(() => {
+    setJobPage(1);
+    loadJobs(1, jobSearch, selectedStatuses);
+  }, [selectedStatuses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cancelJob = useCallback(async (jobId: string) => {
     try {
@@ -212,6 +241,14 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
             }}
             serverNowMs={jobServerNowMs}
             onJobContextMenu={openJobContextMenu}
+            search={jobSearch}
+            onSearchChange={setJobSearch}
+            onSearch={() => {
+              setJobPage(1);
+              loadJobs(1, jobSearch);
+            }}
+            selectedStatuses={selectedStatuses}
+            onStatusChange={setSelectedStatuses}
           />
         </Suspense>
       )}

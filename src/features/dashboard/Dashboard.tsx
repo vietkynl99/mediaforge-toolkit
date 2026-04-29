@@ -1,8 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { RefreshCw, CheckCircle2, Clock } from 'lucide-react';
-import { MediaJob } from '../../types';
+import { RefreshCw, CheckCircle2, Clock, Search, X, ChevronDown, Filter } from 'lucide-react';
+import { MediaJob, JobStatus } from '../../types';
 import { JobRow } from '../jobs/JobRow';
+
+const JOB_STATUSES: JobStatus[] = ['queued', 'processing', 'awaiting_input', 'completed', 'failed', 'cancelled'];
+
+const STATUS_COLORS: Record<JobStatus, string> = {
+  queued: 'bg-zinc-500',
+  processing: 'bg-blue-500',
+  awaiting_input: 'bg-amber-500',
+  completed: 'bg-lime-500',
+  failed: 'bg-red-500',
+  cancelled: 'bg-zinc-600'
+};
 
 interface DashboardProps {
   jobs: MediaJob[];
@@ -11,6 +22,11 @@ interface DashboardProps {
   onPageChange: (page: number) => void;
   serverNowMs: number | null;
   onJobContextMenu: (event: React.MouseEvent, job: MediaJob) => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  onSearch: () => void;
+  selectedStatuses: string[];
+  onStatusChange: (statuses: string[]) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
@@ -19,9 +35,43 @@ export const Dashboard: React.FC<DashboardProps> = ({
   totalPages,
   onPageChange,
   serverNowMs,
-  onJobContextMenu
+  onJobContextMenu,
+  search,
+  onSearchChange,
+  onSearch,
+  selectedStatuses,
+  onStatusChange
 }) => {
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const statusContainerRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<{ serverMs: number; clientMs: number } | null>(null);
+
+  // Close search when clicking outside
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setIsSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isSearchOpen]);
+
+  // Close status dropdown when clicking outside
+  useEffect(() => {
+    if (!isStatusOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (statusContainerRef.current && !statusContainerRef.current.contains(event.target as Node)) {
+        setIsStatusOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isStatusOpen]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const needsTickRef = useRef(false);
 
@@ -95,14 +145,134 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center justify-between sm:justify-end gap-3 text-xs text-zinc-500 mb-2">
-        <span className="hidden sm:inline">
-          Page {clampedJobPage} of {totalPages}
-        </span>
-        <span className="sm:hidden">
-          {clampedJobPage}/{totalPages}
-        </span>
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-3 text-xs text-zinc-500 mb-2">
+        {/* Search */}
+        <div ref={searchContainerRef} className="flex items-center gap-2">
+          {isSearchOpen ? (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 'auto', opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              className="flex items-center gap-2 h-7"
+            >
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onSearch();
+                  if (e.key === 'Escape') {
+                    setIsSearchOpen(false);
+                  }
+                }}
+                placeholder="Search jobs..."
+                className="px-3 h-full bg-zinc-900 border border-zinc-700 rounded-md text-zinc-300 text-sm w-48 sm:w-64 focus:outline-none focus:border-zinc-500 placeholder:text-zinc-600 leading-none"
+                autoFocus
+              />
+              <button
+                onClick={() => {
+                  if (search) {
+                    onSearchChange('');
+                    onSearch();
+                  }
+                  setIsSearchOpen(false);
+                }}
+                className="h-7 w-7 flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-md transition-colors"
+                title="Close search"
+              >
+                <X size={16} />
+              </button>
+            </motion.div>
+          ) : (
+            <button
+              onClick={() => {
+                setIsSearchOpen(true);
+                // Focus input after animation
+                setTimeout(() => searchInputRef.current?.focus(), 100);
+              }}
+              className={`h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
+                search 
+                  ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10' 
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+              }`}
+              title="Search jobs"
+            >
+              <Search size={18} />
+            </button>
+          )}
+          {search && !isSearchOpen && (
+            <span className="text-zinc-400 text-sm">"{search}"</span>
+          )}
+        </div>
+
+        {/* Pagination with Status Filter */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Status Filter */}
+          <div ref={statusContainerRef} className="relative flex items-center">
+            <button
+              onClick={() => setIsStatusOpen(!isStatusOpen)}
+              className={`h-7 px-2 flex items-center gap-1.5 rounded-md text-xs sm:text-sm transition-colors border ${
+                selectedStatuses.length > 0
+                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20'
+                  : 'bg-zinc-900/50 border-zinc-700 text-zinc-400 hover:text-zinc-300 hover:border-zinc-600'
+              }`}
+              title="Filter by status"
+            >
+              <Filter size={14} />
+              <span className="hidden sm:inline max-w-[150px] truncate">
+                {selectedStatuses.length > 0
+                  ? selectedStatuses.map(s => s.replace('_', ' ').replace(/^\w/, c => c.toUpperCase())).join(', ')
+                  : 'Status: All'}
+              </span>
+              <span className="sm:hidden">
+                {selectedStatuses.length > 0
+                  ? selectedStatuses.length <= 1
+                    ? selectedStatuses[0].slice(0, 6)
+                    : `${selectedStatuses.length}`
+                  : 'All'}
+              </span>
+              <ChevronDown size={14} className={`transition-transform ${isStatusOpen ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {isStatusOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="absolute z-50 mt-1 top-8 right-0 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[140px]"
+              >
+                {JOB_STATUSES.map(status => (
+                  <label
+                    key={status}
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedStatuses.includes(status)}
+                      onChange={() => {
+                        const newStatuses = selectedStatuses.includes(status)
+                          ? selectedStatuses.filter(s => s !== status)
+                          : [...selectedStatuses, status];
+                        onStatusChange(newStatuses);
+                      }}
+                      className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
+                    />
+                    <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[status]}`} />
+                    <span className="capitalize text-zinc-300">{status.replace('_', ' ')}</span>
+                  </label>
+                ))}
+              </motion.div>
+            )}
+          </div>
+
+          <span className="hidden sm:inline">
+            Page {clampedJobPage} of {totalPages}
+          </span>
+          <span className="sm:hidden">
+            {clampedJobPage}/{totalPages}
+          </span>
+          <div className="flex items-center gap-2">
           <button
             onClick={() => onPageChange(Math.max(1, clampedJobPage - 1))}
             disabled={clampedJobPage === 1}
@@ -117,6 +287,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           >
             Next
           </button>
+          </div>
         </div>
       </div>
 

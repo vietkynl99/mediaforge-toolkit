@@ -4926,10 +4926,31 @@ app.get('/api/jobs', async (req, res) => {
   // Pagination support
   const page = Math.max(1, parseInt(req.query.page as string) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+  const search = (req.query.search as string || '').trim().toLowerCase();
+  const statusFilter = (req.query.status as string || '').trim();
+  
+  // Filter jobs by search keyword
+  let filteredJobs = jobs;
+  if (search) {
+    filteredJobs = filteredJobs.filter(job => 
+      job.name?.toLowerCase().includes(search) ||
+      job.projectName?.toLowerCase().includes(search) ||
+      job.fileName?.toLowerCase().includes(search)
+    );
+  }
+  
+  // Filter jobs by status
+  if (statusFilter) {
+    const allowedStatuses = statusFilter.split(',').filter(Boolean);
+    if (allowedStatuses.length > 0) {
+      filteredJobs = filteredJobs.filter(job => allowedStatuses.includes(job.status));
+    }
+  }
+  
   const offset = (page - 1) * limit;
-  const total = jobs.length;
-  const totalPages = Math.ceil(total / limit);
-  const pagedJobs = jobs.slice(offset, offset + limit);
+  const total = filteredJobs.length;
+  const totalPages = Math.ceil(total / limit) || 1;
+  const pagedJobs = filteredJobs.slice(offset, offset + limit);
 
   // Return summary-only (without params, tasks details)
   const jobSummaries = pagedJobs.map(job => {
