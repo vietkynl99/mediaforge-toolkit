@@ -21,3 +21,12 @@ export type TaskTemplate = {
   }>;
   preview?: string;
 };
+
+// Saved task template from backend (has id, name, taskType, params, updatedAt)
+export type SavedTaskTemplate = {
+  id: string;
+  name: string;
+  taskType: string;
+  params: Record<string, any>;
+  updatedAt: string;
+};

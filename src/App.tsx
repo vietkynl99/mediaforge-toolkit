@@ -57,6 +57,7 @@ import type {
   RenderConfigV2,
   RenderSubtitleAssState,
   RenderTemplate,
+  SavedTaskTemplate,
   SubtitleStylePreset
 } from './types';
 import {
@@ -423,7 +424,7 @@ export default function App() {
   const [templateSaveParams, setTemplateSaveParams] = useState<Record<string, any> | null>(null);
   const [templateSaveRenderConfig, setTemplateSaveRenderConfig] = useState<RenderConfigV2 | null>(null);
   const [templateSaveError, setTemplateSaveError] = useState<string | null>(null);
-  const [taskTemplates, setTaskTemplates] = useState<TaskTemplate[]>([]);
+  const [taskTemplates, setTaskTemplates] = useState<SavedTaskTemplate[]>([]);
   const [runPipelineTaskTemplate, setRunPipelineTaskTemplate] = useState<Record<string, string>>({});
   const newJobDraftLoadedRef = useRef(false);
   const newJobDraftPendingRef = useRef<NewJobPopupDraft | null>(null);
@@ -1391,7 +1392,7 @@ export default function App() {
     return taskTemplates.find(template => template.taskType === taskType && template.id === selectedId) ?? null;
   };
 
-  const renderTaskTemplateParamsSummary = (template: TaskTemplate | null) => {
+  const renderTaskTemplateParamsSummary = (template: SavedTaskTemplate | null) => {
     if (!template) return null;
     const entries = Object.entries(template.params || {});
     if (entries.length === 0) {
@@ -1554,7 +1555,7 @@ export default function App() {
       throw new Error(data.error || 'Unable to save task template');
     }
     const data = await response.json();
-    return data.template as TaskTemplate;
+    return data.template as SavedTaskTemplate;
   };
 
   const deleteTaskTemplate = async (id: string) => {
@@ -1579,7 +1580,7 @@ export default function App() {
     return JSON.stringify(currentParams) !== JSON.stringify(defaultParams);
   };
 
-  const saveTaskTemplateCurrent = async (taskType: 'download' | 'uvr' | 'tts', template: TaskTemplate) => {
+  const saveTaskTemplateCurrent = async (taskType: 'download' | 'uvr' | 'tts', template: SavedTaskTemplate) => {
     const params = buildTaskTemplateParams(taskType);
     try {
       const saved = await saveTaskTemplateRecord({
@@ -1598,7 +1599,7 @@ export default function App() {
     }
   };
 
-  const restoreTaskTemplateCurrent = (taskType: 'download' | 'uvr' | 'tts', template: TaskTemplate) => {
+  const restoreTaskTemplateCurrent = (taskType: 'download' | 'uvr' | 'tts', template: SavedTaskTemplate) => {
     applyTaskTemplateParams(taskType, template.params);
     showToast('Restored template values.', 'success');
   };
@@ -4269,7 +4270,7 @@ export default function App() {
         const data = await response.json();
         if (!active) return;
         if (Array.isArray(data?.templates)) {
-          setTaskTemplates(data.templates as TaskTemplate[]);
+          setTaskTemplates(data.templates as SavedTaskTemplate[]);
         }
       } catch {
         if (!active) return;
@@ -5896,6 +5897,8 @@ export default function App() {
                   <LazyPipelineForge
                     pipelineLibrary={pipelineLibrary}
                     availableTasks={availableTasks}
+                    renderTemplates={renderTemplates}
+                    taskTemplates={taskTemplates}
                     onOpenPipelinePreview={openPipelinePreview}
                     onOpenPipelineEditor={openPipelineEditor}
                     onCreateNewPipeline={() => setShowPipelineEditor(true)}

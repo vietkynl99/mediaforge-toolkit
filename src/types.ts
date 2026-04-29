@@ -44,7 +44,7 @@ export const TASK_ICONS = {
 };
 
 export type { AuthUser } from './types/auth';
-export type { PipelineSummary, TaskTemplate } from './types/pipeline';
+export type { PipelineSummary, TaskTemplate, SavedTaskTemplate } from './types/pipeline';
 export type { RenderConfigV2, RenderSubtitleAssState, RenderTemplate, SubtitleStylePreset, BlurRegionEffect } from './types/render';
 export { BASE_SUBTITLE_STYLE, DEFAULT_RENDER_SUBTITLE_ASS, SUBTITLE_STYLE_PRESETS, VIET_SUBTITLE_FONTS } from './types/render';
 export type { VaultFile, VaultFileDTO, VaultFileType, VaultFolder, VaultFolderDTO, VaultStatus } from './types/vault';
