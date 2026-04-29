@@ -145,7 +145,7 @@ export const isCleanFontName = (value: string) => {
 };
 
 export const CLIENT_LOG_RENDER_V2_DEBUG = ['1', 'true', 'yes', 'on'].includes(
-  String(import.meta.env.VITE_CLIENT_LOG_RENDER_V2_DEBUG ?? '').toLowerCase()
+  String((import.meta as any).env?.VITE_CLIENT_LOG_RENDER_V2_DEBUG ?? '').toLowerCase()
 );
 
 export const guessLanguage = (fileName: string) => {
