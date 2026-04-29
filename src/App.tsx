@@ -76,7 +76,6 @@ import {
   parseDurationToSeconds,
   guessLanguage,
   guessVersion,
-  computeFolderStatus,
   formatOverlapDisplay,
   canBrowserPlayVideo,
   getVideoMimeType
@@ -4809,11 +4808,7 @@ export default function App() {
             duration: formatDuration(file.durationSeconds),
             durationSeconds: file.durationSeconds,
             language: file.type === 'subtitle' ? guessLanguage(file.name) : undefined,
-            status: file.type === 'output'
-              ? 'complete'
-              : file.type === 'subtitle'
-                ? 'partial'
-                : 'raw',
+            status: file.status as VaultStatus,
             version: file.type === 'subtitle' ? guessVersion(file.name) : undefined,
             createdAt: formatRelativeTime(file.modifiedAt),
             uvr: file.uvr,
@@ -4837,14 +4832,7 @@ export default function App() {
         const mainVideo = mappedWithLinks.find(item => item.type === 'video')?.id;
         const linkedFiles = mappedWithLinks;
 
-        const status = computeFolderStatus(linkedFiles);
-        const tags = status === 'complete'
-          ? ['Ready']
-          : status === 'partial'
-            ? ['In progress']
-            : status === 'error'
-              ? ['Needs attention']
-              : [];
+        const folderStatus = (folder.status ?? 'todo') as VaultStatus;
 
         const hasSubtitle = linkedFiles.some(item => item.type === 'subtitle');
         const suggestedAction = !hasSubtitle
@@ -4855,15 +4843,15 @@ export default function App() {
           ? formatRelativeTime(folder.files.map(file => file.modifiedAt).sort().slice(-1)[0])
           : 'No activity';
 
-        return {
+        const result: VaultFolder = {
           id: `folder-${folderIndex}-${folder.name}`,
           name: folder.name,
-          status,
+          status: folderStatus,
           lastActivity,
-          tags,
           suggestedAction,
           files: linkedFiles,
         };
+        return result;
       });
 
       const nextFolders = mappedFolders;
@@ -4930,6 +4918,25 @@ export default function App() {
       },
       () => performDeleteVaultProject(folder)
     );
+  };
+
+  const updateProjectStatus = async (folder: VaultFolder, status: VaultStatus) => {
+    try {
+      const response = await fetch('/api/vault/project/status', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName: folder.name, status })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Update failed (${response.status})`);
+      }
+      showToast(`Updated ${folder.name} to ${status}`, 'success');
+      await loadVault();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to update status';
+      showToast(message, 'error');
+    }
   };
 
   const openVaultContextMenu = (event: React.MouseEvent, folder: VaultFolder) => {
@@ -6534,6 +6541,7 @@ export default function App() {
                     setVaultFileId(folder.files[0]?.id ?? null);
                     setShowFolderPanel(true);
                   }}
+                  onUpdateStatus={updateProjectStatus}
                 />
               </Suspense>
             )}

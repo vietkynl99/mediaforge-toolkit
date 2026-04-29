@@ -7,11 +7,26 @@ import {
   FileVideo, 
   FileAudio, 
   Type, 
-  File 
+  File,
+  ChevronDown
 } from 'lucide-react';
-import { VaultFolder, VaultFile } from '../../types';
+import { VaultFolder, VaultFile, VaultStatus } from '../../types';
 import { parseDurationToSeconds, formatDuration } from '../../utils/helpers';
 import { previewGroups, buildTooltip } from '../../utils/vault';
+
+const STATUS_COLORS: Record<VaultStatus, string> = {
+  'todo': 'bg-zinc-500',
+  'in progress': 'bg-blue-500',
+  'done': 'bg-lime-500',
+  'closed': 'bg-red-500',
+};
+
+const STATUS_LABELS: Record<VaultStatus, string> = {
+  'todo': 'Todo',
+  'in progress': 'In Progress',
+  'done': 'Done',
+  'closed': 'Closed',
+};
 
 type VaultFileView = VaultFile & {
   language?: string;
@@ -21,7 +36,6 @@ type VaultFileView = VaultFile & {
 
 type VaultFolderView = VaultFolder & {
   lastActivity?: string;
-  tags?: string[];
   files: VaultFileView[];
 };
 
@@ -39,6 +53,7 @@ interface VaultPanelProps {
   onOpenFileContextMenu: (event: React.MouseEvent, file: VaultFileView) => void;
   onRunPipeline: (folder: VaultFolderView) => void;
   onOpenProjectPanel: (folder: VaultFolderView) => void;
+  onUpdateStatus?: (folder: VaultFolderView, status: VaultStatus) => void;
 }
 
 export const VaultPanel: React.FC<VaultPanelProps> = ({
@@ -54,9 +69,23 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
   onOpenContextMenu,
   onOpenFileContextMenu,
   onRunPipeline,
-  onOpenProjectPanel
+  onOpenProjectPanel,
+  onUpdateStatus
 }) => {
+  const [openStatusFolderId, setOpenStatusFolderId] = useState<string | null>(null);
   const [folderQuery, setFolderQuery] = useState('');
+
+  const statusRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (statusRef.current && !statusRef.current.contains(event.target as Node)) {
+        setOpenStatusFolderId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const deferredFolderQuery = useDeferredValue(folderQuery);
 
@@ -217,8 +246,44 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
                         </div>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center min-w-0">
+                        <div className="flex items-center justify-between min-w-0">
                           <span className="text-sm font-semibold text-zinc-100 truncate min-w-0" title={folder.name}>{folder.name}</span>
+                          <div ref={openStatusFolderId === folder.id ? statusRef : undefined} className="relative">
+                            {folder.status && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenStatusFolderId(openStatusFolderId === folder.id ? null : folder.id);
+                                }}
+                                className={`flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${STATUS_COLORS[folder.status]} text-white shrink-0 hover:opacity-80 transition-opacity whitespace-nowrap`}
+                              >
+                                {STATUS_LABELS[folder.status]}
+                                <ChevronDown size={10} className={`transition-transform ${openStatusFolderId === folder.id ? 'rotate-180' : ''}`} />
+                              </button>
+                            )}
+                            {openStatusFolderId === folder.id && onUpdateStatus && (
+                              <motion.div
+                                initial={{ opacity: 0, y: -4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -4 }}
+                                className="absolute z-50 mt-1 top-full right-0 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[100px]"
+                              >
+                                {(['todo', 'in progress', 'done', 'closed'] as VaultStatus[]).map(status => (
+                                  <button
+                                    key={status}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onUpdateStatus(folder, status);
+                                      setOpenStatusFolderId(null);
+                                    }}
+                                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer text-sm w-full text-left"
+                                  >
+                                    <span className="capitalize text-zinc-300 text-xs">{status}</span>
+                                  </button>
+                                ))}
+                              </motion.div>
+                            )}
+                          </div>
                         </div>
                         <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500">
                           <div className="flex items-center gap-3">
@@ -250,13 +315,6 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
                           <span>
                             {totalVideoDuration ? `Total ${totalVideoDuration}` : `Updated ${folder.lastActivity ?? folder.updatedAt}`}
                           </span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {(folder.tags ?? []).map(tag => (
-                            <span key={tag} className="px-2 py-0.5 rounded-full text-[10px] bg-zinc-800 text-zinc-400">
-                              {tag}
-                            </span>
-                          ))}
                         </div>
                       </div>
                     </div>

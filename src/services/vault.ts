@@ -1,4 +1,4 @@
-import { VaultFile, VaultFolder, VaultFolderDTO } from '../types/vault';
+import { VaultFile, VaultFolder, VaultFolderDTO, VaultStatus } from '../types/vault';
 
 export const vaultService = {
   async getFolders(): Promise<VaultFolder[]> {
@@ -24,7 +24,6 @@ export const vaultService = {
           duration: file.duration,
           durationSeconds: file.durationSeconds,
           updatedAt: file.updatedAt,
-          status: file.type === 'output' ? 'complete' : (file.type === 'subtitle' ? 'partial' : 'raw'),
         };
       });
 
@@ -32,6 +31,7 @@ export const vaultService = {
         id: `folder-${folderIndex}-${folder.name}`,
         name: folder.name,
         updatedAt: folder.updatedAt,
+        status: folder.status as VaultStatus,
         files: mappedFiles,
       };
     });
@@ -74,5 +74,17 @@ export const vaultService = {
       throw new Error(data.error || 'Import failed');
     }
     return data;
+  },
+
+  async updateProjectStatus(projectName: string, status: VaultStatus): Promise<void> {
+    const response = await fetch('/api/vault/project/status', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectName, status })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Update status failed (${response.status})`);
+    }
   }
 };

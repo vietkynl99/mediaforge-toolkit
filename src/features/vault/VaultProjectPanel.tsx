@@ -224,10 +224,10 @@ export const VaultProjectPanel: React.FC<VaultProjectPanelProps> = ({
                                     </div>
                                   </div>
                                 )}
-                                {file.status === 'processing' && typeof file.progress === 'number' && (
+                                {file.status === 'in progress' && typeof file.progress === 'number' && (
                                   <div className="mt-3">
                                     <div className="flex justify-between text-[10px] text-zinc-500">
-                                      <span>Processing</span>
+                                      <span>In Progress</span>
                                       <span>{file.progress}%</span>
                                     </div>
                                     <div className="h-1 bg-zinc-800 rounded-full overflow-hidden mt-1">

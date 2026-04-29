@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { VaultFolder, VaultFile } from '../types/vault';
+import { VaultFolder, VaultFile, VaultStatus } from '../types/vault';
 import { vaultService } from '../services/vault';
 import { useToast } from './useToast';
 
@@ -45,12 +45,23 @@ export function useVault() {
     }
   };
 
+  const updateProjectStatus = async (folder: VaultFolder, status: VaultStatus) => {
+    try {
+      await vaultService.updateProjectStatus(folder.name, status);
+      showToast(`Updated ${folder.name} to ${status}`, 'success');
+      await loadVault(true);
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    }
+  };
+
   return {
     folders,
     loading,
     error,
     loadVault,
     deleteProject,
-    deleteFile
+    deleteFile,
+    updateProjectStatus
   };
 }

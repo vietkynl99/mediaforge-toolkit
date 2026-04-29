@@ -1,5 +1,5 @@
 export type VaultFileType = 'video' | 'audio' | 'subtitle' | 'image' | 'output' | 'other';
-export type VaultStatus = 'raw' | 'partial' | 'complete' | 'error' | 'processing';
+export type VaultStatus = 'todo' | 'in progress' | 'done' | 'closed';
 
 export interface VaultFile {
   id: string;
@@ -64,7 +64,6 @@ export interface VaultFolder {
   name: string;
   status?: VaultStatus;
   lastActivity?: string;
-  tags?: string[];
   suggestedAction?: string;
   path?: string;
   files: VaultFile[];
@@ -86,6 +85,7 @@ export interface VaultFileDTO {
   durationSeconds?: number;
   resolution?: string;
   linkedTo?: string;
+  status?: string;
   uvr?: VaultFile['uvr'];
   tts?: VaultFile['tts'];
 }
@@ -96,4 +96,5 @@ export interface VaultFolderDTO {
   path: string;
   updatedAt?: string;
   files: VaultFileDTO[];
+  status?: string;
 }

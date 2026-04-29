@@ -56,6 +56,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
   const [jobSearch, setJobSearch] = useState('');
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [selectedPipelineTypes, setSelectedPipelineTypes] = useState<string[]>([]);
   const JOBS_PER_PAGE = 10;
   const [jobLogOpen, setJobLogOpen] = useState(false);
   const [jobLogJobId, setJobLogJobId] = useState<string | null>(null);
@@ -66,14 +67,16 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     jobId: null
   });
 
-  const loadJobs = useCallback(async (page?: number, search?: string, statuses?: string[]) => {
+  const loadJobs = useCallback(async (page?: number, search?: string, statuses?: string[], pipelineTypes?: string[]) => {
     try {
       const targetPage = page ?? jobPage;
       const searchParam = search ?? jobSearch;
       const statusParam = statuses ?? selectedStatuses;
+      const pipelineParam = pipelineTypes ?? selectedPipelineTypes;
       const searchQuery = searchParam ? `&search=${encodeURIComponent(searchParam)}` : '';
       const statusQuery = statusParam.length > 0 ? `&status=${statusParam.join(',')}` : '';
-      const response = await fetch(`/api/jobs?page=${targetPage}&limit=${JOBS_PER_PAGE}${searchQuery}${statusQuery}`);
+      const pipelineQuery = pipelineParam.length > 0 ? `&pipeline=${pipelineParam.join(',')}` : '';
+      const response = await fetch(`/api/jobs?page=${targetPage}&limit=${JOBS_PER_PAGE}${searchQuery}${statusQuery}${pipelineQuery}`);
       if (!response.ok) return;
       const data = await response.json() as { jobs: MediaJob[]; total: number; totalPages: number; now?: string };
       setJobs(data.jobs ?? []);
@@ -86,7 +89,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     } catch {
       return;
     }
-  }, [jobPage, jobSearch, selectedStatuses]);
+  }, [jobPage, jobSearch, selectedStatuses, selectedPipelineTypes]);
 
   useImperativeHandle(ref, () => ({
     reloadJobs: () => loadJobs()
@@ -122,8 +125,14 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
   // Status filter change effect
   useEffect(() => {
     setJobPage(1);
-    loadJobs(1, jobSearch, selectedStatuses);
+    loadJobs(1, jobSearch, selectedStatuses, selectedPipelineTypes);
   }, [selectedStatuses]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pipeline filter change effect
+  useEffect(() => {
+    setJobPage(1);
+    loadJobs(1, jobSearch, selectedStatuses, selectedPipelineTypes);
+  }, [selectedPipelineTypes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cancelJob = useCallback(async (jobId: string) => {
     try {
@@ -249,6 +258,8 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
             }}
             selectedStatuses={selectedStatuses}
             onStatusChange={setSelectedStatuses}
+            selectedPipelineTypes={selectedPipelineTypes}
+            onPipelineTypeChange={setSelectedPipelineTypes}
           />
         </Suspense>
       )}

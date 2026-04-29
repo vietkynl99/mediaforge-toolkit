@@ -62,12 +62,34 @@ type VaultFolderDTO = {
   name: string;
   path: string;
   files: VaultFileDTO[];
+  status?: string;
 };
 
 type ProjectConfig = {
   renderV2?: {
     ffmpegThreads?: number;
   };
+};
+
+type ProjectMeta = {
+  status?: string;
+};
+
+const PROJECT_META_FILE = 'project-meta.json';
+
+const readProjectMeta = async (folderPath: string): Promise<ProjectMeta> => {
+  try {
+    const metaPath = path.join(folderPath, PROJECT_META_FILE);
+    const content = await fs.readFile(metaPath, 'utf-8');
+    return JSON.parse(content) as ProjectMeta;
+  } catch {
+    return {};
+  }
+};
+
+const writeProjectMeta = async (folderPath: string, meta: ProjectMeta): Promise<void> => {
+  const metaPath = path.join(folderPath, PROJECT_META_FILE);
+  await fs.writeFile(metaPath, JSON.stringify(meta, null, 2));
 };
 
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
@@ -4545,10 +4567,12 @@ const readVault = async (): Promise<VaultFolderDTO[]> => {
     }
 
     if (folderFiles.length > 0) {
+      const projectMeta = await readProjectMeta(folderPath);
       folders.push({
         name: entry.name,
         path: folderPath,
         files: folderFiles,
+        status: projectMeta.status ?? 'todo',
       });
     }
   }
@@ -4560,6 +4584,56 @@ app.get('/api/vault', async (_req, res) => {
   try {
     const folders = await readVault();
     res.json({ folders });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ error: message });
+  }
+});
+
+app.put('/api/vault/project/status', async (req, res) => {
+  const projectNameRaw = typeof req.body?.projectName === 'string' ? req.body.projectName.trim() : '';
+  const statusRaw = typeof req.body?.status === 'string' ? req.body.status.trim() : '';
+  const validStatuses = ['todo', 'in progress', 'done', 'closed'];
+
+  if (!projectNameRaw) {
+    res.status(400).json({ error: 'Missing projectName' });
+    return;
+  }
+  if (!validStatuses.includes(statusRaw)) {
+    res.status(400).json({ error: 'Invalid status' });
+    return;
+  }
+
+  const safeProjectName = sanitizeProjectName(projectNameRaw);
+  if (!safeProjectName || safeProjectName !== projectNameRaw) {
+    res.status(400).json({ error: 'Invalid project name' });
+    return;
+  }
+
+  const folderPath = path.join(MEDIA_VAULT_ROOT, safeProjectName);
+  const rootPath = path.resolve(MEDIA_VAULT_ROOT);
+  const resolvedFolderPath = path.resolve(folderPath);
+  if (!resolvedFolderPath.startsWith(`${rootPath}${path.sep}`)) {
+    res.status(400).json({ error: 'Invalid project path' });
+    return;
+  }
+
+  try {
+    const stats = await fs.stat(resolvedFolderPath);
+    if (!stats.isDirectory()) {
+      res.status(404).json({ error: 'Project not found' });
+      return;
+    }
+  } catch {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  try {
+    const meta = await readProjectMeta(resolvedFolderPath);
+    meta.status = statusRaw;
+    await writeProjectMeta(resolvedFolderPath, meta);
+    res.json({ success: true, status: statusRaw });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     res.status(500).json({ error: message });
@@ -4928,6 +5002,7 @@ app.get('/api/jobs', async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
   const search = (req.query.search as string || '').trim().toLowerCase();
   const statusFilter = (req.query.status as string || '').trim();
+  const pipelineFilter = (req.query.pipeline as string || '').trim();
   
   // Filter jobs by search keyword
   let filteredJobs = jobs;
@@ -4944,6 +5019,22 @@ app.get('/api/jobs', async (req, res) => {
     const allowedStatuses = statusFilter.split(',').filter(Boolean);
     if (allowedStatuses.length > 0) {
       filteredJobs = filteredJobs.filter(job => allowedStatuses.includes(job.status));
+    }
+  }
+  
+  // Filter jobs by pipeline type (check if any task type matches)
+  if (pipelineFilter) {
+    const allowedTypes = pipelineFilter.split(',').filter(Boolean);
+    if (allowedTypes.length > 0) {
+      filteredJobs = filteredJobs.filter(job => 
+        job.tasks?.some(task => {
+          // For 'download', match both 'download' and all sub-types (download_subs, download_video, etc.)
+          return allowedTypes.some(allowed => 
+            task.type === allowed || 
+            (allowed === 'download' && task.type.startsWith('download_'))
+          );
+        })
+      );
     }
   }
   

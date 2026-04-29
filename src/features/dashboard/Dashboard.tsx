@@ -15,6 +15,19 @@ const STATUS_COLORS: Record<JobStatus, string> = {
   cancelled: 'bg-zinc-600'
 };
 
+const PIPELINE_TYPES = ['download', 'uvr', 'tts', 'stt', 'translate', 'edit', 'burn', 'render'] as const;
+
+const PIPELINE_COLORS: Record<string, string> = {
+  download: 'bg-blue-500',
+  uvr: 'bg-purple-500',
+  tts: 'bg-pink-500',
+  stt: 'bg-cyan-500',
+  translate: 'bg-indigo-500',
+  edit: 'bg-orange-500',
+  burn: 'bg-red-500',
+  render: 'bg-lime-500'
+};
+
 interface DashboardProps {
   jobs: MediaJob[];
   jobPage: number;
@@ -27,6 +40,8 @@ interface DashboardProps {
   onSearch: () => void;
   selectedStatuses: string[];
   onStatusChange: (statuses: string[]) => void;
+  selectedPipelineTypes: string[];
+  onPipelineTypeChange: (types: string[]) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
@@ -40,13 +55,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onSearchChange,
   onSearch,
   selectedStatuses,
-  onStatusChange
+  onStatusChange,
+  selectedPipelineTypes,
+  onPipelineTypeChange
 }) => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const [isPipelineOpen, setIsPipelineOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const statusContainerRef = useRef<HTMLDivElement>(null);
+  const pipelineContainerRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<{ serverMs: number; clientMs: number } | null>(null);
 
   // Close search when clicking outside
@@ -72,6 +91,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isStatusOpen]);
+
+  // Close pipeline dropdown when clicking outside
+  useEffect(() => {
+    if (!isPipelineOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (pipelineContainerRef.current && !pipelineContainerRef.current.contains(event.target as Node)) {
+        setIsPipelineOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isPipelineOpen]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const needsTickRef = useRef(false);
 
@@ -258,8 +289,64 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       }}
                       className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
                     />
-                    <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[status]}`} />
                     <span className="capitalize text-zinc-300">{status.replace('_', ' ')}</span>
+                  </label>
+                ))}
+              </motion.div>
+            )}
+          </div>
+
+          {/* Pipeline Filter */}
+          <div ref={pipelineContainerRef} className="relative flex items-center">
+            <button
+              onClick={() => setIsPipelineOpen(!isPipelineOpen)}
+              className={`h-7 px-2 flex items-center gap-1.5 rounded-md text-xs sm:text-sm transition-colors border ${
+                selectedPipelineTypes.length > 0
+                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20'
+                  : 'bg-zinc-900/50 border-zinc-700 text-zinc-400 hover:text-zinc-300 hover:border-zinc-600'
+              }`}
+              title="Filter by pipeline type"
+            >
+              <Filter size={14} />
+              <span className="hidden sm:inline max-w-[120px] truncate">
+                {selectedPipelineTypes.length > 0
+                  ? selectedPipelineTypes.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(', ')
+                  : 'Pipeline: All'}
+              </span>
+              <span className="sm:hidden">
+                {selectedPipelineTypes.length > 0
+                  ? selectedPipelineTypes.length <= 1
+                    ? selectedPipelineTypes[0].slice(0, 4)
+                    : `${selectedPipelineTypes.length}`
+                  : 'Pipeline'}
+              </span>
+              <ChevronDown size={14} className={`transition-transform ${isPipelineOpen ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {isPipelineOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="absolute z-50 mt-1 top-8 right-0 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[120px]"
+              >
+                {PIPELINE_TYPES.map(type => (
+                  <label
+                    key={type}
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedPipelineTypes.includes(type)}
+                      onChange={() => {
+                        const newTypes = selectedPipelineTypes.includes(type)
+                          ? selectedPipelineTypes.filter(t => t !== type)
+                          : [...selectedPipelineTypes, type];
+                        onPipelineTypeChange(newTypes);
+                      }}
+                      className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
+                    />
+                    <span className="capitalize text-zinc-300">{type}</span>
                   </label>
                 ))}
               </motion.div>
