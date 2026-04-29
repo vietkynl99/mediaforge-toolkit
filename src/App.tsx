@@ -24,6 +24,7 @@ import {
   Upload,
   MousePointer2,
   Save,
+  Menu,
 } from 'lucide-react';
 import { MediaJob } from './types';
 import { AppHeader } from './components/AppHeader';
@@ -600,6 +601,7 @@ export default function App() {
   const [downloadAnalyzeError, setDownloadAnalyzeError] = useState<string | null>(null);
   const [downloadAnalyzeResult, setDownloadAnalyzeResult] = useState<any>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const paramPresetsLoadedRef = useRef(false);
 
   const TASK_PIPELINE_PREFIX = 'task:';
@@ -6412,18 +6414,51 @@ export default function App() {
 
   return authUser ? (
     <div className="flex h-screen bg-zinc-950 text-zinc-300 font-sans selection:bg-lime-500/30 selection:text-lime-200">
-      <Suspense fallback={<aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} border-r border-zinc-800`} />}>
-        <LazyAppSidebar
-          collapsed={sidebarCollapsed}
-          setCollapsed={setSidebarCollapsed}
-          activeTab={activeTab}
-          onNavigateTab={navigateTab}
-        />
+      {/* Desktop Sidebar */}
+      <Suspense fallback={<aside className={`${sidebarCollapsed ? 'w-20' : 'w-64'} border-r border-zinc-800 hidden md:flex`} />}>
+        <div className="hidden md:block">
+          <LazyAppSidebar
+            collapsed={sidebarCollapsed}
+            setCollapsed={setSidebarCollapsed}
+            activeTab={activeTab}
+            onNavigateTab={navigateTab}
+            isMobile={false}
+          />
+        </div>
       </Suspense>
 
+      {/* Mobile Sidebar Overlay */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* Mobile Sidebar Drawer */}
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-zinc-950 border-r border-zinc-800 transform transition-transform duration-300 md:hidden ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <Suspense fallback={<aside className="w-64 border-r border-zinc-800" />}>
+          <LazyAppSidebar
+            collapsed={false}
+            setCollapsed={() => {}}
+            activeTab={activeTab}
+            onNavigateTab={(tab) => {
+              navigateTab(tab);
+              setMobileSidebarOpen(false);
+            }}
+            isMobile={true}
+            onClose={() => setMobileSidebarOpen(false)}
+          />
+        </Suspense>
+      </div>
+
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <AppHeader onNewJob={openNewJob} onLogout={handleLogout} />
+      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <AppHeader
+          onNewJob={openNewJob}
+          onLogout={handleLogout}
+          onToggleMobileSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+        />
 
         {/* Content View */}
         <div className="flex-1 overflow-y-auto">

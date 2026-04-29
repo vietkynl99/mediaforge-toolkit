@@ -7,7 +7,8 @@ import {
   Terminal,
   Activity,
   Cpu,
-  HardDrive
+  HardDrive,
+  X
 } from 'lucide-react';
 
 interface AppSidebarProps {
@@ -15,6 +16,8 @@ interface AppSidebarProps {
   setCollapsed: (next: boolean) => void;
   activeTab: string;
   onNavigateTab: (tab: 'dashboard' | 'forge' | 'vault' | 'settings' | 'logs') => void;
+  isMobile?: boolean;
+  onClose?: () => void;
 }
 
 const SidebarItem = ({
@@ -45,20 +48,33 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   collapsed,
   setCollapsed,
   activeTab,
-  onNavigateTab
+  onNavigateTab,
+  isMobile = false,
+  onClose
 }) => {
   return (
-    <aside className={`${collapsed ? 'w-20' : 'w-64'} border-r border-zinc-800 flex flex-col p-4 gap-6 transition-all duration-300`}>
-      <button
-        type="button"
-        onClick={() => setCollapsed(!collapsed)}
-        aria-expanded={!collapsed}
-        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3 px-2'} mb-2 w-full text-left rounded-lg py-2 hover:bg-zinc-900/60 transition-colors`}
-      >
-        <div className="w-8 h-8 bg-lime-500 rounded-lg flex items-center justify-center text-zinc-950 font-black italic">MF</div>
-        {!collapsed && <h1 className="text-lg font-bold text-zinc-100 tracking-tight">MediaForge</h1>}
-      </button>
+    <aside className={`${collapsed && !isMobile ? 'w-20' : 'w-64'} border-r border-zinc-800 flex flex-col p-4 gap-6 transition-all duration-300 h-full bg-zinc-950`}>
+      <div className={`flex items-center ${collapsed && !isMobile ? 'justify-center' : 'gap-3 px-2'} mb-2 w-full`}>
+        <button
+          type="button"
+          onClick={() => !isMobile && setCollapsed(!collapsed)}
+          aria-expanded={!collapsed}
+          title={collapsed && !isMobile ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="flex items-center gap-3 text-left rounded-lg py-2 hover:bg-zinc-900/60 transition-colors flex-1"
+        >
+          <div className="w-8 h-8 bg-lime-500 rounded-lg flex items-center justify-center text-zinc-950 font-black italic">MF</div>
+          {(!collapsed || isMobile) && <h1 className="text-lg font-bold text-zinc-100 tracking-tight">MediaForge</h1>}
+        </button>
+        {isMobile && onClose && (
+          <button
+            onClick={onClose}
+            className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
+            aria-label="Close menu"
+          >
+            <X size={20} />
+          </button>
+        )}
+      </div>
 
       <nav className="flex flex-col gap-1 flex-1">
         <SidebarItem
@@ -98,31 +114,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           collapsed={collapsed}
         />
       </nav>
-
-      {!collapsed && (
-        <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800 flex flex-col gap-3">
-          <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-            <span>System Health</span>
-            <Activity size={12} className="text-lime-500" />
-          </div>
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-zinc-400"><Cpu size={12} /> CPU</div>
-              <span className="font-mono text-zinc-200">--</span>
-            </div>
-            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-              <div className="h-full bg-lime-500 w-[0%]" />
-            </div>
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-zinc-400"><HardDrive size={12} /> Disk</div>
-              <span className="font-mono text-zinc-200">--</span>
-            </div>
-            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500 w-[0%]" />
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 };

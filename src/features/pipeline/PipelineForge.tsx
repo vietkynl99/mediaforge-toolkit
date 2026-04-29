@@ -40,14 +40,14 @@ export const PipelineForge: React.FC<PipelineForgeProps> = ({
       initial={false}
       animate={false as any}
       exit={false as any}
-      className="p-8 h-full flex flex-col"
+      className="p-4 md:p-8 h-full flex flex-col"
     >
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-zinc-100">Pipeline Forge</h2>
         <p className="text-sm text-zinc-500">Construct a multi-step processing sequence</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">Pipelines</h3>
@@ -61,7 +61,7 @@ export const PipelineForge: React.FC<PipelineForgeProps> = ({
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {pipelineLibrary.map(pipeline => {
               const PipelineIcon = resolvePipelineIcon(pipeline);
               return (
@@ -135,7 +135,7 @@ export const PipelineForge: React.FC<PipelineForgeProps> = ({
             {paramPresetCards.length === 0 ? (
               <div className="text-sm text-zinc-500">No param presets yet. Click Add to create one.</div>
             ) : (
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {paramPresetCards.map(node => {
                   const NodeIcon = node.icon ?? Settings;
                   return (

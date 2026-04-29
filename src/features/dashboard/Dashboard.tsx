@@ -65,39 +65,42 @@ export const Dashboard: React.FC<DashboardProps> = ({
       initial={false}
       animate={false as any}
       exit={false as any}
-      className="p-8"
+      className="p-4 md:p-8"
     >
       {/* Quick Stats Grid */}
-      <div className="grid grid-cols-3 gap-4 mb-2">
-        <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg"><RefreshCw size={16} /></div>
-            <h3 className="font-semibold text-zinc-200">Throughput</h3>
+      <div className="grid grid-cols-3 gap-2 md:gap-4 mb-2">
+        <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+          <div className="flex items-center gap-1.5 md:gap-2 mb-2 md:mb-3">
+            <div className="p-1 md:p-1.5 bg-blue-500/10 text-blue-400 rounded-lg"><RefreshCw size={14} className="md:size-4" /></div>
+            <h3 className="text-xs md:text-sm font-semibold text-zinc-200 truncate">Throughput</h3>
           </div>
-          <div className="text-2xl font-bold text-zinc-100 mb-1">--</div>
-          <p className="text-[11px] text-zinc-500">No telemetry yet</p>
+          <div className="text-lg md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
+          <p className="text-[9px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
         </div>
-        <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="p-1.5 bg-lime-500/10 text-lime-400 rounded-lg"><CheckCircle2 size={16} /></div>
-            <h3 className="font-semibold text-zinc-200">Success Rate</h3>
+        <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+          <div className="flex items-center gap-1.5 md:gap-2 mb-2 md:mb-3">
+            <div className="p-1 md:p-1.5 bg-lime-500/10 text-lime-400 rounded-lg"><CheckCircle2 size={14} className="md:size-4" /></div>
+            <h3 className="text-xs md:text-sm font-semibold text-zinc-200 truncate">Success Rate</h3>
           </div>
-          <div className="text-2xl font-bold text-zinc-100 mb-1">{successRate !== null ? `${successRate}%` : '--'}</div>
-          <p className="text-[11px] text-zinc-500">{completedJobCount} jobs completed, {failedJobCount} failed</p>
+          <div className="text-lg md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">{successRate !== null ? `${successRate}%` : '--'}</div>
+          <p className="text-[9px] md:text-[11px] text-zinc-500 truncate">{completedJobCount} done, {failedJobCount} fail</p>
         </div>
-        <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="p-1.5 bg-amber-500/10 text-amber-400 rounded-lg"><Clock size={16} /></div>
-            <h3 className="font-semibold text-zinc-200">Queue Time</h3>
+        <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
+          <div className="flex items-center gap-1.5 md:gap-2 mb-2 md:mb-3">
+            <div className="p-1 md:p-1.5 bg-amber-500/10 text-amber-400 rounded-lg"><Clock size={14} className="md:size-4" /></div>
+            <h3 className="text-xs md:text-sm font-semibold text-zinc-200 truncate">Queue Time</h3>
           </div>
-          <div className="text-2xl font-bold text-zinc-100 mb-1">--</div>
-          <p className="text-[11px] text-zinc-500">No telemetry yet</p>
+          <div className="text-lg md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
+          <p className="text-[9px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-3 text-xs text-zinc-500 mb-2">
-        <span>
+      <div className="flex items-center justify-between sm:justify-end gap-3 text-xs text-zinc-500 mb-2">
+        <span className="hidden sm:inline">
           Page {clampedJobPage} of {totalPages}
+        </span>
+        <span className="sm:hidden">
+          {clampedJobPage}/{totalPages}
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -119,31 +122,34 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
       {/* Job List Table */}
       <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
-        <div className="grid grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] gap-4 px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
-          <span className="text-right pr-0.5">#</span>
-          <span>Created</span>
-          <span>Job Details</span>
-          <span>Pipeline</span>
-          <span>Progress</span>
-          <span>Status</span>
-          <span className="text-right -ml-2">Elapsed Time</span>
-        </div>
-        
-        <div className="flex flex-col">
+        <div className="overflow-x-auto">
+          <div className="min-w-[600px] sm:min-w-[800px]">
+            <div className="grid grid-cols-[24px_70px_minmax(0,1fr)_100px_90px_90px_70px] sm:grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] gap-2 sm:gap-4 px-3 sm:px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+              <span className="text-right pr-0.5">#</span>
+              <span>Created</span>
+              <span>Job Details</span>
+              <span>Pipeline</span>
+              <span>Progress</span>
+              <span>Status</span>
+              <span className="text-right -ml-2">Elapsed Time</span>
+            </div>
+            <div className="flex flex-col">
           {jobs.length === 0 ? (
             <div className="p-6 text-sm text-zinc-500">No jobs yet. Run a pipeline to start processing.</div>
           ) : (
             pageJobs.map((job, index) => (
-                <JobRow
-                  key={job.id}
-                  job={job}
-                  index={(clampedJobPage - 1) * 10 + index + 1}
-                  nowMs={job.startedAt && !job.finishedAt && hasServerNow ? nowMs : null}
-                  hasServerNow={hasServerNow}
-                  onContextMenu={onJobContextMenu}
-                />
-              ))
+                  <JobRow
+                    key={job.id}
+                    job={job}
+                    index={(clampedJobPage - 1) * 10 + index + 1}
+                    nowMs={job.startedAt && !job.finishedAt && hasServerNow ? nowMs : null}
+                    hasServerNow={hasServerNow}
+                    onContextMenu={onJobContextMenu}
+                  />
+                ))
           )}
+            </div>
+          </div>
         </div>
       </div>
     </motion.div>

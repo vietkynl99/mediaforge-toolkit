@@ -49,8 +49,8 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
         )}
       </div>
 
-      <div className="flex-1 flex items-center justify-center p-6 relative">
-        <div className="aspect-video w-full max-w-4xl bg-black rounded-lg shadow-2xl border border-zinc-800 overflow-hidden flex items-center justify-center group relative">
+      <div className="flex-1 flex items-center justify-center p-4 md:p-6 relative">
+        <div className="aspect-video w-full max-w-4xl max-h-[50vh] md:max-h-none bg-black rounded-lg shadow-2xl border border-zinc-800 overflow-hidden flex items-center justify-center group relative">
           {focus === 'item' && itemType === 'video' && videoFile?.relativePath ? (
             canPlay(getMimeType(videoFile.name)) ? (
               <video

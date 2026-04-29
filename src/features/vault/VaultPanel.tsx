@@ -142,7 +142,7 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
       initial={false}
       animate={false as any}
       exit={false as any}
-      className="p-8 h-full flex flex-col gap-4"
+      className="p-4 md:p-8 h-full flex flex-col gap-4"
     >
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-200 px-4 py-3 rounded-xl text-sm">
@@ -150,7 +150,7 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-[minmax(0,7fr)_minmax(0,3fr)] gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] gap-6 flex-1 min-h-0">
         {/* Folder Navigation */}
         <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 min-h-0 min-w-0">
           <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-400">
@@ -217,13 +217,8 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
                         </div>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-zinc-100 truncate">{folder.name}</span>
-                          </div>
-                          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-500/15 text-zinc-400">
-                            Project
-                          </span>
+                        <div className="flex items-center min-w-0">
+                          <span className="text-sm font-semibold text-zinc-100 truncate min-w-0" title={folder.name}>{folder.name}</span>
                         </div>
                         <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500">
                           <div className="flex items-center gap-3">
@@ -277,20 +272,9 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
           <div className="flex items-center justify-between">
             <div>
               <div className="text-xs text-zinc-500 uppercase tracking-widest">Preview</div>
-              <div className="text-sm font-semibold text-zinc-100">{selectedFolder?.name ?? 'Select a project'}</div>
+              <div className="text-[13px] sm:text-sm font-semibold text-zinc-100 truncate max-w-[240px] sm:max-w-[260px]" title={selectedFolder?.name}>{selectedFolder?.name ?? 'Select a project'}</div>
             </div>
             <div className="flex items-center gap-2">
-              {selectedFile && (
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                  selectedFile.origin === 'tts'
-                    ? 'bg-amber-500/15 text-amber-300'
-                    : selectedFile.origin === 'vr'
-                      ? 'bg-lime-500/15 text-lime-400'
-                      : 'bg-zinc-500/15 text-zinc-400'
-                }`}>
-                  {selectedFile.origin === 'tts' ? 'TTS' : selectedFile.origin === 'vr' ? 'VR' : 'Source'}
-                </span>
-              )}
               <button
                 onClick={() => selectedFolder && onOpenProjectPanel(selectedFolder)}
                 disabled={!selectedFolder}
@@ -304,7 +288,7 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
           {selectedFolder && (
             <button
               onClick={() => onRunPipeline(selectedFolder)}
-              className="w-full px-3 py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors"
+              className="w-full px-3 py-1.5 sm:py-2 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors compact-touch"
             >
               Run Pipeline
             </button>

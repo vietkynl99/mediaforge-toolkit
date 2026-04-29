@@ -10,7 +10,7 @@ import {
   File
 } from 'lucide-react';
 import { MediaJob, TASK_ICONS, JobStatus } from '../../types';
-import { formatLocalDateTime, formatDurationMs } from '../../utils/format';
+import { formatLocalDateTime, formatDurationMs, formatRelativeTime } from '../../utils/format';
 
 const StatusBadge = ({ status }: { status: JobStatus }) => {
   const configs = {
@@ -57,15 +57,15 @@ export const JobRow = React.memo(function JobRow({ job, index, onContextMenu, no
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="grid grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] items-center gap-4 p-4 border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors group"
+      className="grid grid-cols-[24px_70px_minmax(0,1fr)_100px_90px_90px_70px] sm:grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] items-center gap-2 sm:gap-4 p-3 sm:p-4 border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors group"
       onContextMenu={(event) => onContextMenu(event, job)}
     >
       <div className="text-xs text-zinc-600 font-mono text-right pr-0.5">
         {index}
       </div>
 
-      <div className="text-xs text-zinc-500">
-        {formatLocalDateTime(job.createdAt)}
+      <div className="text-xs text-zinc-500" title={formatLocalDateTime(job.createdAt)}>
+        {formatRelativeTime(job.createdAt)}
       </div>
 
       <div className="flex min-w-0 flex-col gap-1 overflow-hidden">
@@ -79,11 +79,28 @@ export const JobRow = React.memo(function JobRow({ job, index, onContextMenu, no
         </span>
       </div>
 
-      <div className="flex w-[130px] flex-col gap-1 shrink-0">
+      <div className="flex w-[100px] sm:w-[130px] flex-col gap-1 shrink-0">
         <div className="text-[11px] text-zinc-300 font-semibold truncate">
           {job.name}
         </div>
-        <div className="flex items-center gap-0.5">
+        {/* Mobile: Summary text */}
+        <div className="flex sm:hidden items-center gap-1.5">
+          {(() => {
+            const tasks = job.tasks || [];
+            const done = tasks.filter(t => t.status === 'done').length;
+            const error = tasks.filter(t => t.status === 'error').length;
+            const active = tasks.filter(t => t.status === 'active').length;
+            return (
+              <>
+                <span className="text-[10px] text-zinc-400">{done}/{tasks.length} done</span>
+                {error > 0 && <AlertCircle size={12} className="text-red-400" />}
+                {active > 0 && <RefreshCw size={12} className="text-blue-400 animate-spin-soft" />}
+              </>
+            );
+          })()}
+        </div>
+        {/* Desktop: Icon row */}
+        <div className="hidden sm:flex items-center gap-0.5">
           {job.tasks ? job.tasks.map((task, i) => {
             const Icon = (TASK_ICONS as any)[task.type] ?? File;
             const statusLabel = {

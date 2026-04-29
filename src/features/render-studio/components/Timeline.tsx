@@ -47,7 +47,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   const playheadPct = viewDuration > 0 ? (playheadSeconds / viewDuration) * 100 : 0;
 
   return (
-    <div className="h-64 border-t border-zinc-800 bg-zinc-900/30 flex flex-col overflow-hidden">
+    <div className="h-48 md:h-64 border-t border-zinc-800 bg-zinc-900/30 flex flex-col overflow-hidden">
       <div className="h-8 border-b border-zinc-800/50 flex items-center justify-between px-4 bg-zinc-900/40">
         <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Timeline</span>
         <div className="text-[10px] font-mono text-zinc-400">

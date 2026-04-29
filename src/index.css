@@ -27,6 +27,25 @@
     cursor: not-allowed;
   }
 
+  /* Touch-friendly improvements for mobile */
+  @media (max-width: 768px) {
+    button, a, input, select, textarea, [role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
+
+    /* Smaller min-size for compact UI elements */
+    .compact-touch {
+      min-height: 36px;
+      min-width: 36px;
+    }
+  }
+
+  /* Smooth scrolling on mobile */
+  .overflow-y-auto, .overflow-x-auto, .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
   /* Custom Scrollbar */
   ::-webkit-scrollbar {
     width: 6px;
