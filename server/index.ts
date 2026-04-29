@@ -1907,13 +1907,12 @@ const buildRenderV2FilterGraph = async (
 // which is dramatically faster and lossless.
 
 // Full Copy  (mode='full')   : -c:v copy -c:a copy — fully lossless
-// Hybrid Copy (mode='hybrid'): -c:v copy + audio filter_complex + -c:a aac
-//                              Avoids video encode (~90% of render time) even when audio needs processing
+// Hybrid Copy (mode='hybrid'): audio-only pass (temp) + video stream copy mux
+//                              Avoids video encode (~90% of render time) even when audio needs processing/mix
 // None        (mode='none')  : standard segmented encode pipeline
 type CopyPathResult =
-  | { mode: 'full';   videoPath: string; audioPath: string; duration: number }
-  | { mode: 'hybrid'; videoPath: string; audioPath: string; duration: number;
-      audioProcessing: { gainDb: number; levelControl: string; targetLufs: number; fadeIn: number; fadeOut: number } }
+  | { mode: 'full'; videoPath: string; duration: number; audioFromVideo: boolean; audioPath?: string }
+  | { mode: 'hybrid'; videoPath: string; duration: number; activeAudioSourceCount: number }
   | { mode: 'none'; reason: string };
 
 const checkCopyPathEligibility = (
@@ -1924,18 +1923,21 @@ const checkCopyPathEligibility = (
   }
 ): CopyPathResult => {
   const log = (msg: string) => opts?.onLog?.(`[CopyPath] ${msg}\n`);
+  const fail = (step: string, reason: string): CopyPathResult => {
+    log(`✗ ${step}: ${reason}`);
+    return { mode: 'none', reason: `${step}:${reason}` };
+  };
 
   log('Checking copy-path eligibility...');
 
   // ── 1. Export mode must be video+audio ───────────────────────────────────
   const exportMode = (config.timeline as any).exportMode || 'video+audio';
   if (exportMode !== 'video+audio') {
-    log(`✗ exportMode="${exportMode}" — copy path only supports "video+audio"`);
-    return { mode: 'none', reason: `exportMode=${exportMode}` };
+    return fail('exportMode', `"${exportMode}" (requires "video+audio")`);
   }
-  log(`✓ exportMode = video+audio`);
+  log(`✓ [Check:exportMode] video+audio`);
 
-  // ── 3. Exact track composition: 1 visible muted video + 1 non-muted audio ─
+  // ── 2. Track composition and overlay checks ────────────────────────────────
   const allVideo   = config.items.filter(i => i.type === 'video');
   const allAudio   = config.items.filter(i => i.type === 'audio');
   const allImage   = config.items.filter(i => i.type === 'image'    && i.visible !== false);
@@ -1948,39 +1950,36 @@ const checkCopyPathEligibility = (
   });
 
   const visibleVideos    = allVideo.filter(i => i.visible !== false);
-  const mutedVideos      = visibleVideos.filter(i => i.audioMix?.mute === true);
   const activeAudioItems = allAudio.filter(i => !(i.audioMix?.mute === true));
+  if (visibleVideos.length !== 1) {
+    return fail('videoCount', `need exactly 1 visible video (found ${visibleVideos.length})`);
+  }
+  const videoItem = visibleVideos[0];
+  const videoAudioActive = !(videoItem.audioMix?.mute === true);
+  const activeAudioSourceCount = activeAudioItems.length + (videoAudioActive ? 1 : 0);
 
-  log(`  Video tracks total=${allVideo.length}, visible=${visibleVideos.length}, muted=${mutedVideos.length}`);
+  log(`  Video tracks total=${allVideo.length}, visible=${visibleVideos.length}, videoAudioActive=${videoAudioActive ? 'yes' : 'no'}`);
   log(`  Audio tracks total=${allAudio.length}, active (non-muted)=${activeAudioItems.length}`);
+  log(`  Active audio sources total=${activeAudioSourceCount} (videoAudio=${videoAudioActive ? 1 : 0}, audioTracks=${activeAudioItems.length})`);
   log(`  Image tracks visible=${allImage.length}`);
   log(`  Subtitle tracks visible=${allSubtitle.length}`);
   log(`  Text tracks visible with content=${allText.length}`);
 
-  if (visibleVideos.length !== 1 || mutedVideos.length !== 1) {
-    log(`✗ Need exactly 1 visible+muted video (found visible=${visibleVideos.length}, muted=${mutedVideos.length})`);
-    return { mode: 'none', reason: `video track count mismatch (visible=${visibleVideos.length}, muted=${mutedVideos.length})` };
-  }
-  if (activeAudioItems.length !== 1) {
-    log(`✗ Need exactly 1 active audio track (found ${activeAudioItems.length})`);
-    return { mode: 'none', reason: `audio track count = ${activeAudioItems.length}` };
+  if (activeAudioSourceCount <= 0) {
+    return fail('audioSourceCount', 'no active audio source');
   }
   if (allImage.length > 0) {
-    log(`✗ Has ${allImage.length} visible image track(s) — requires encode`);
-    return { mode: 'none', reason: `${allImage.length} image track(s)` };
+    return fail('overlay:image', `${allImage.length} visible image track(s)`);
   }
   if (allSubtitle.length > 0) {
-    log(`✗ Has ${allSubtitle.length} visible subtitle track(s) — requires encode`);
-    return { mode: 'none', reason: `${allSubtitle.length} subtitle track(s)` };
+    return fail('overlay:subtitle', `${allSubtitle.length} visible subtitle track(s)`);
   }
   if (allText.length > 0) {
-    log(`✗ Has ${allText.length} visible text track(s) — requires encode`);
-    return { mode: 'none', reason: `${allText.length} text track(s)` };
+    return fail('overlay:text', `${allText.length} visible text track(s)`);
   }
-  log(`✓ Track composition OK: 1 muted video + 1 audio, no image/subtitle/text`);
+  log(`✓ [Check:tracks] 1 visible video, ${activeAudioSourceCount} active audio source(s), no image/subtitle/text overlays`);
 
-  // ── 4. Video must have identity transform (no encode-requiring effects) ───
-  const videoItem = mutedVideos[0];
+  // ── 3. Video must have identity transform (no encode-requiring effects) ───
   const t = videoItem.transform;
   const issues: string[] = [];
 
@@ -2003,91 +2002,114 @@ const checkCopyPathEligibility = (
   if (Array.isArray(videoItem.effects) && videoItem.effects.length > 0) issues.push(`${videoItem.effects.length} effect(s)`);
 
   if (issues.length > 0) {
-    log(`✗ Video has non-identity transform: ${issues.join(', ')} — requires full encode`);
-    return { mode: 'none', reason: `video transform: ${issues.join(', ')}` };
+    return fail('videoTransform', issues.join(', '));
   }
-  log(`✓ Video transform is identity (no scale/crop/rotation/mirror/mask/effects)`);
+  log(`✓ [Check:videoTransform] identity (no scale/crop/rotation/mirror/mask/effects)`);
 
-  // ── 5. No timeline trimming or start offset on video ─────────────────────
+  // ── 4. No timeline trimming or start offset on video ─────────────────────
   const vTimeline = videoItem.timeline ?? {};
   const vTrimStart = Math.max(0, vTimeline.trimStart ?? 0);
   const vTrimEnd   = Math.max(0, vTimeline.trimEnd   ?? 0);
   const vStart     = Math.max(0, vTimeline.start      ?? 0);
-  if (vTrimStart > 0.01) { log(`✗ Video trimStart=${vTrimStart}`); return { mode: 'none', reason: `video trimStart=${vTrimStart}` }; }
-  if (vTrimEnd   > 0.01) { log(`✗ Video trimEnd=${vTrimEnd}`);   return { mode: 'none', reason: `video trimEnd=${vTrimEnd}` }; }
-  if (vStart     > 0.01) { log(`✗ Video timeline.start=${vStart}`); return { mode: 'none', reason: `video start=${vStart}` }; }
-  log(`✓ Video timeline: no trim, no start offset`);
+  if (vTrimStart > 0.01) return fail('videoTimeline', `trimStart=${vTrimStart}`);
+  if (vTrimEnd   > 0.01) return fail('videoTimeline', `trimEnd=${vTrimEnd}`);
+  if (vStart     > 0.01) return fail('videoTimeline', `start=${vStart}`);
+  log(`✓ [Check:videoTimeline] no trim, no start offset`);
 
-  // ── 6. No timeline trimming or start offset on audio ─────────────────────
+  // ── 5. No timeline trimming or start offset on contributing audio sources ─
   // Audio trim/delay need precise timeline splicing — blocks even hybrid copy.
-  // Audio gain/LUFS/fade are processed in-filter for hybrid mode (see step 9).
-  const audioItem = activeAudioItems[0];
-  const aTimeline = audioItem.timeline ?? {};
-  const aTrimStart = Math.max(0, aTimeline.trimStart ?? 0);
-  const aTrimEnd   = Math.max(0, aTimeline.trimEnd   ?? 0);
-  const aStart     = Math.max(0, aTimeline.start     ?? 0);
-  if (aTrimStart > 0.01) { log(`✗ Audio trimStart=${aTrimStart}`); return { mode: 'none', reason: `audio trimStart=${aTrimStart}` }; }
-  if (aTrimEnd   > 0.01) { log(`✗ Audio trimEnd=${aTrimEnd}`);   return { mode: 'none', reason: `audio trimEnd=${aTrimEnd}` }; }
-  if (aStart     > 0.01) { log(`✗ Audio timeline.start=${aStart}`); return { mode: 'none', reason: `audio start=${aStart}` }; }
-  log(`✓ Audio timeline: no trim, no start offset`);
+  const audioContributors = [
+    ...(videoAudioActive ? [{ kind: 'video' as const, item: videoItem }] : []),
+    ...activeAudioItems.map(item => ({ kind: 'audio' as const, item }))
+  ];
+  for (const contributor of audioContributors) {
+    const aTimeline = contributor.item.timeline ?? {};
+    const aTrimStart = Math.max(0, aTimeline.trimStart ?? 0);
+    const aTrimEnd   = Math.max(0, aTimeline.trimEnd   ?? 0);
+    const aStart     = Math.max(0, aTimeline.start     ?? 0);
+    const aDelay     = Math.max(0, contributor.item.audioMix?.delay ?? 0);
+    const label = `${contributor.kind}:${contributor.item.id}`;
+    if (aTrimStart > 0.01) return fail('audioTimeline', `${label} trimStart=${aTrimStart}`);
+    if (aTrimEnd   > 0.01) return fail('audioTimeline', `${label} trimEnd=${aTrimEnd}`);
+    if (aStart     > 0.01) return fail('audioTimeline', `${label} start=${aStart}`);
+    if (aDelay     > 0.01) return fail('audioTimeline', `${label} delay=${aDelay}`);
+  }
+  log(`✓ [Check:audioTimeline] ${audioContributors.length} source(s), no trim/start/delay`);
 
-  // ── 7. No segment offset (outputStart must be 0) ─────────────────────────
+  // ── 6. No segment offset (outputStart must be 0) ─────────────────────────
   const outputStartVal = Number.isFinite(opts?.outputStart) ? Number(opts!.outputStart) : 0;
   if (outputStartVal > 0.01) {
-    log(`✗ outputStart=${outputStartVal.toFixed(3)}s — segment seek in copy mode risks keyframe misalignment`);
-    return { mode: 'none', reason: `outputStart=${outputStartVal.toFixed(3)}` };
+    return fail('outputStart', `${outputStartVal.toFixed(3)}s (copy path requires 0)`);
   }
-  log(`✓ outputStart=0 (no segment offset)`);
+  log(`✓ [Check:outputStart] 0`);
 
-  // ── 8. Resolve actual file paths ─────────────────────────────────────────
+  // ── 7. Resolve video path and optional single external audio path ────────
   const videoPathFromRef = resolveRenderInputPath(videoItem.source?.ref, config.inputsMap);
   const videoPath = videoPathFromRef ?? (videoItem.source?.path ? resolveSafePath(videoItem.source.path) : null);
-  if (!videoPath) { log(`✗ Cannot resolve video file path`); return { mode: 'none', reason: 'video path unresolvable' }; }
-  const audioPathFromRef = resolveRenderInputPath(audioItem.source?.ref, config.inputsMap);
-  const audioPath = audioPathFromRef ?? (audioItem.source?.path ? resolveSafePath(audioItem.source.path) : null);
-  if (!audioPath) { log(`✗ Cannot resolve audio file path`); return { mode: 'none', reason: 'audio path unresolvable' }; }
-  log(`✓ Video path: ${videoPath}`);
-  log(`✓ Audio path: ${audioPath}`);
+  if (!videoPath) return fail('videoPath', 'unresolvable');
+  log(`✓ [Check:videoPath] ${videoPath}`);
 
-  // ── 9. Determine output duration ─────────────────────────────────────────
+  let externalSingleAudioPath: string | null = null;
+  if (!videoAudioActive && activeAudioItems.length === 1) {
+    const audioItem = activeAudioItems[0];
+    const audioPathFromRef = resolveRenderInputPath(audioItem.source?.ref, config.inputsMap);
+    externalSingleAudioPath = audioPathFromRef ?? (audioItem.source?.path ? resolveSafePath(audioItem.source.path) : null);
+    if (!externalSingleAudioPath) return fail('audioPath', 'single external audio source unresolvable');
+    log(`✓ [Check:audioPath] ${externalSingleAudioPath}`);
+  }
+
+  // ── 8. Determine output duration ─────────────────────────────────────────
   const timelineDuration = Number.isFinite(config.timeline.duration) && Number(config.timeline.duration) > 0
     ? Number(config.timeline.duration) : null;
   if (!timelineDuration || timelineDuration <= 0) {
-    log(`✗ Cannot determine output duration (timeline.duration=${timelineDuration})`);
-    return { mode: 'none', reason: 'unknown output duration' };
+    return fail('duration', `timeline.duration=${timelineDuration}`);
   }
-  log(`✓ Output duration: ${timelineDuration.toFixed(3)}s`);
+  log(`✓ [Check:duration] ${timelineDuration.toFixed(3)}s`);
 
-  // ── 10. Check audio processing needs → Full Copy or Hybrid Copy ──────────
-  // Audio gain/LUFS/fade do NOT block the copy path — they trigger hybrid mode
-  // where video is still copied losslessly and only audio is re-encoded.
-  const gainDb     = Number(audioItem.audioMix?.gainDb ?? 0);
-  const levelCtrl  = (audioItem.audioMix as any)?.levelControl ?? (config.timeline as any).levelControl ?? 'gain';
-  const targetLufs = Number((audioItem.audioMix as any)?.targetLufs ?? (config.timeline as any).targetLufs ?? -14);
-  const fadeIn     = Math.max(0, audioItem.audioMix?.fadeIn  ?? 0);
-  const fadeOut    = Math.max(0, audioItem.audioMix?.fadeOut ?? 0);
-  const needsAudioEncode = Math.abs(gainDb) > 0.01 || levelCtrl === 'lufs' || fadeIn > 0 || fadeOut > 0;
+  // ── 9. Determine full-copy vs hybrid-copy (audio-only pipeline) ──────────
+  let needsAudioEncode = activeAudioSourceCount !== 1;
+  const audioReasons: string[] = [];
+  if (activeAudioSourceCount !== 1) audioReasons.push(`audioSourceCount=${activeAudioSourceCount}`);
+  for (const contributor of audioContributors) {
+    const mix = contributor.item.audioMix ?? {};
+    const gainDb = Number(mix.gainDb ?? 0);
+    const levelCtrl = (mix as any).levelControl ?? (config.timeline as any).levelControl ?? 'gain';
+    const fadeIn = Math.max(0, mix.fadeIn ?? 0);
+    const fadeOut = Math.max(0, mix.fadeOut ?? 0);
+    if (Math.abs(gainDb) > 0.01) {
+      needsAudioEncode = true;
+      audioReasons.push(`${contributor.item.id}.gainDb=${gainDb}`);
+    }
+    if (levelCtrl === 'lufs') {
+      needsAudioEncode = true;
+      audioReasons.push(`${contributor.item.id}.levelControl=lufs`);
+    }
+    if (fadeIn > 0) {
+      needsAudioEncode = true;
+      audioReasons.push(`${contributor.item.id}.fadeIn=${fadeIn}`);
+    }
+    if (fadeOut > 0) {
+      needsAudioEncode = true;
+      audioReasons.push(`${contributor.item.id}.fadeOut=${fadeOut}`);
+    }
+  }
 
   if (!needsAudioEncode) {
-    log(`✓ Audio: no processing needed (gainDb=0, levelControl=${levelCtrl}, no fade)`);
+    const audioFromVideo = videoAudioActive;
+    log(`✓ [Check:audioProcess] no audio processing required`);
     log(`→ mode=FULL (-c:v copy -c:a copy) — fully lossless, skipping all encode.`);
-    return { mode: 'full', videoPath, audioPath, duration: timelineDuration };
+    return {
+      mode: 'full',
+      videoPath,
+      duration: timelineDuration,
+      audioFromVideo,
+      ...(audioFromVideo ? {} : { audioPath: externalSingleAudioPath ?? undefined })
+    };
   }
 
-  const audioDesc: string[] = [];
-  if (Math.abs(gainDb) > 0.01) audioDesc.push(`gainDb=${gainDb}`);
-  if (levelCtrl === 'lufs')    audioDesc.push(`loudnorm(I=${targetLufs})`);
-  if (fadeIn > 0)              audioDesc.push(`fadeIn=${fadeIn}s`);
-  if (fadeOut > 0)             audioDesc.push(`fadeOut=${fadeOut}s`);
-  log(`  Audio processing needed: ${audioDesc.join(', ')}`);
-  log(`→ mode=HYBRID (-c:v copy + audio encode) — video lossless, audio re-encoded.`);
-  return {
-    mode: 'hybrid',
-    videoPath,
-    audioPath,
-    duration: timelineDuration,
-    audioProcessing: { gainDb, levelControl: levelCtrl, targetLufs, fadeIn, fadeOut }
-  };
+  log(`✓ [Check:audioProcess] requires audio re-encode: ${audioReasons.join(', ')}`);
+  log(`→ mode=HYBRID (audio-only render + video copy mux) — video remains lossless.`);
+  return { mode: 'hybrid', videoPath, duration: timelineDuration, activeAudioSourceCount };
 };
 
 const buildRenderV2FfmpegArgs = async (
@@ -2300,14 +2322,13 @@ const runRenderV2Task = async (
 
     if (copyResult.mode === 'full') {
       // ── Full Copy: both streams lossless ───────────────────────────────
-      const { videoPath, audioPath, duration } = copyResult;
+      const { videoPath, audioPath, duration, audioFromVideo } = copyResult;
       onLog?.(`[CopyPath] mode=FULL — bypassing segment pipeline (fully lossless).\n`);
       const copyArgs = [
         '-y',
         '-i', videoPath,
-        '-i', audioPath,
         '-map', '0:v:0',
-        '-map', '1:a:0',
+        ...(audioFromVideo ? ['-map', '0:a:0'] : ['-i', String(audioPath), '-map', '1:a:0']),
         '-c:v', 'copy',
         '-c:a', 'copy',
         '-t', String(duration),
@@ -2321,50 +2342,67 @@ const runRenderV2Task = async (
     }
 
     if (copyResult.mode === 'hybrid') {
-      // ── Hybrid Copy: video lossless + audio re-encoded with effects ────
-      const { videoPath, audioPath, duration, audioProcessing } = copyResult;
-      const { gainDb, levelControl, targetLufs, fadeIn, fadeOut } = audioProcessing;
-      onLog?.(`[CopyPath] mode=HYBRID — bypassing segment pipeline (video lossless, audio encoded).\n`);
+      // ── Hybrid Copy: audio-only render (temp) + copy-video mux ─────────
+      const { videoPath, duration, activeAudioSourceCount } = copyResult;
+      onLog?.(`[CopyPath] mode=HYBRID — bypassing segment pipeline (video copy, audio rendered separately).\n`);
+      onLog?.(`[CopyPath]   Active audio source count: ${activeAudioSourceCount}\n`);
 
-      // Build audio filter chain for hybrid mode
-      const audioFilters: string[] = [];
-      audioFilters.push(`atrim=start=0:end=${duration}`);
-      audioFilters.push('asetpts=PTS-STARTPTS');
-      if (Math.abs(gainDb) > 0.01) {
-        const factor = Math.pow(10, gainDb / 20);
-        audioFilters.push(`volume=${factor.toFixed(6)}`);
-        onLog?.(`[CopyPath]   Audio gain: ${gainDb >= 0 ? '+' : ''}${gainDb.toFixed(2)} dB → volume factor=${factor.toFixed(6)}\n`);
+      const hybridAudioConfig: RenderConfigV2 = {
+        ...config,
+        timeline: {
+          ...config.timeline,
+          exportMode: 'audio only'
+        }
+      };
+      const hybridAudioTempPath = path.join(tmpDir, 'hybrid-audio.m4a');
+      const { args: hybridAudioArgs, outputDuration: hybridAudioDuration } = await buildRenderV2FfmpegArgs(
+        hybridAudioConfig,
+        hybridAudioTempPath,
+        tmpDir,
+        {
+          debugEnabled: LOG_RENDER_V2_DEBUG,
+          debugLabel: 'copypath-hybrid-audio',
+          onLog,
+          ffmpegPath,
+          lufsCache
+        }
+      );
+      const normalizedHybridAudioArgs = [...hybridAudioArgs];
+      const outIndex = normalizedHybridAudioArgs.lastIndexOf(hybridAudioTempPath);
+      if (outIndex < 0) throw new Error('Hybrid audio temp output path is missing');
+      const audioCodecIndex = normalizedHybridAudioArgs.findIndex((arg, idx) => arg === '-c:a' && idx < outIndex);
+      if (audioCodecIndex >= 0 && audioCodecIndex + 1 < outIndex) {
+        normalizedHybridAudioArgs.splice(audioCodecIndex, 2);
       }
-      if (fadeIn > 0) {
-        audioFilters.push(`afade=t=in:st=0:d=${fadeIn}`);
-        onLog?.(`[CopyPath]   Audio fade-in: ${fadeIn}s\n`);
+      const qAudioIndex = normalizedHybridAudioArgs.findIndex((arg, idx) => arg === '-q:a' && idx < outIndex);
+      if (qAudioIndex >= 0 && qAudioIndex + 1 < outIndex) {
+        normalizedHybridAudioArgs.splice(qAudioIndex, 2);
       }
-      if (fadeOut > 0) {
-        const fadeOutStart = Math.max(0, duration - fadeOut);
-        audioFilters.push(`afade=t=out:st=${fadeOutStart}:d=${fadeOut}`);
-        onLog?.(`[CopyPath]   Audio fade-out: ${fadeOut}s (starts at ${fadeOutStart.toFixed(3)}s)\n`);
+      const vnIndex = normalizedHybridAudioArgs.findIndex((arg, idx) => arg === '-vn' && idx < outIndex);
+      if (vnIndex < 0) {
+        normalizedHybridAudioArgs.splice(outIndex, 0, '-vn');
       }
-      if (levelControl === 'lufs') {
-        const lufsOut = Math.max(-70, Math.min(-5, targetLufs));
-        audioFilters.push(`loudnorm=I=${lufsOut}:TP=-1:LRA=11`);
-        onLog?.(`[CopyPath]   LUFS normalization: I=${lufsOut} TP=-1 LRA=11\n`);
-      }
-      const filterComplex = `[1:a]${audioFilters.join(',')}[aout]`;
-      const hybridArgs = [
+      normalizedHybridAudioArgs.splice(outIndex, 0, '-c:a', 'aac');
+      normalizedHybridAudioArgs.splice(outIndex, 0, '-b:a', '192k', '-movflags', '+faststart');
+
+      onLog?.(`[CopyPath]   Phase 1/2: Render processed audio temp file\n`);
+      await runFfmpegLoggedCommand(ffmpegPath, normalizedHybridAudioArgs, 'render v2 hybrid-audio-temp', onLog, onSpawn);
+
+      const muxArgs = [
         '-y',
         '-i', videoPath,
-        '-i', audioPath,
-        '-filter_complex', filterComplex,
+        '-i', hybridAudioTempPath,
         '-map', '0:v:0',
-        '-map', '[aout]',
+        '-map', '1:a:0',
         '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '192k',
+        '-c:a', 'copy',
         '-t', String(duration),
+        '-movflags', '+faststart',
         outputPath
       ];
-      onLog?.(`[CopyPath] Command: ffmpeg ${hybridArgs.filter(a => a !== '-y').join(' ')}\n`);
-      await runFfmpegLoggedCommand(ffmpegPath, hybridArgs, 'render v2 hybrid-copy', onLog, onSpawn,
+      onLog?.(`[CopyPath]   Phase 2/2: Mux copy-video + processed-audio temp (audioDuration=${Number(hybridAudioDuration).toFixed(3)}s)\n`);
+      onLog?.(`[CopyPath] Command: ffmpeg ${muxArgs.filter(a => a !== '-y').join(' ')}\n`);
+      await runFfmpegLoggedCommand(ffmpegPath, muxArgs, 'render v2 hybrid-mux', onLog, onSpawn,
         seconds => onProgress?.(Math.min(seconds, duration), duration));
       onProgress?.(duration, duration);
       return { outputPath, outputRelativePath: path.relative(MEDIA_VAULT_ROOT, outputPath) };
