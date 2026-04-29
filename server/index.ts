@@ -435,51 +435,6 @@ if (hasLogColumn) {
   db.run('ALTER TABLE jobs_new RENAME TO jobs');
 }
 
-const paramPresetTableInfo = db.exec("PRAGMA table_info('param_presets')");
-const paramPresetColumns = (paramPresetTableInfo[0]?.values ?? []).map((row: any[]) => String(row[1]));
-const hasParamPresetId = paramPresetColumns.includes('id');
-
-if (!hasParamPresetId) {
-  db.run(
-    `CREATE TABLE IF NOT EXISTS param_presets_new (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_type TEXT NOT NULL,
-      params_json TEXT NOT NULL,
-      label TEXT,
-      updated_at TEXT NOT NULL
-    )`
-  );
-  try {
-    db.run(
-      `INSERT INTO param_presets_new (task_type, params_json, label, updated_at)
-       SELECT task_type, params_json, label, updated_at FROM param_presets`
-    );
-  } catch {
-    // ignore if old table does not exist yet
-  }
-  try {
-    db.run(
-      `INSERT INTO param_presets_new (task_type, params_json, label, updated_at)
-       SELECT task_type, params_json, label, updated_at FROM pipeline_defaults`
-    );
-  } catch {
-    // ignore if old table does not exist
-  }
-  db.run('DROP TABLE IF EXISTS param_presets');
-  db.run('DROP TABLE IF EXISTS pipeline_defaults');
-  db.run('ALTER TABLE param_presets_new RENAME TO param_presets');
-} else {
-  db.run(
-    `CREATE TABLE IF NOT EXISTS param_presets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_type TEXT NOT NULL,
-        params_json TEXT NOT NULL,
-        label TEXT,
-        updated_at TEXT NOT NULL
-      )`
-  );
-}
-
 db.run(
   `CREATE TABLE IF NOT EXISTS render_templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -500,34 +455,10 @@ db.run(
 );
 
 try {
-  db.run('CREATE INDEX IF NOT EXISTS idx_param_presets_task_type ON param_presets (task_type)');
-} catch {
-  // ignore
-}
-
-try {
   db.run('CREATE INDEX IF NOT EXISTS idx_task_templates_task_type ON task_templates (task_type)');
 } catch {
   // ignore
 }
-
-const resetParamPresetsTable = () => {
-  db.run('DROP TABLE IF EXISTS param_presets');
-  db.run(
-    `CREATE TABLE IF NOT EXISTS param_presets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_type TEXT NOT NULL,
-      params_json TEXT NOT NULL,
-      label TEXT,
-      updated_at TEXT NOT NULL
-    )`
-  );
-  try {
-    db.run('CREATE INDEX IF NOT EXISTS idx_param_presets_task_type ON param_presets (task_type)');
-  } catch {
-    // ignore
-  }
-};
 
 db.run('DROP TABLE IF EXISTS file_uvr');
 
@@ -5092,96 +5023,6 @@ app.get('/api/jobs/:id/log', async (req, res) => {
   res.type('text/plain');
   const stream = createReadStream(fullPath);
   stream.pipe(res);
-});
-
-app.get('/api/param-presets', async (_req, res) => {
-  try {
-    const result = db.exec('SELECT id, task_type, params_json, label, updated_at FROM param_presets ORDER BY updated_at DESC');
-    const rows = result[0]?.values ?? [];
-    const presets = rows.map((row: any[]) => {
-      const [id, taskType, paramsJson, label, updatedAt] = row;
-      let params: Record<string, any> = {};
-      try {
-        params = JSON.parse(String(paramsJson));
-      } catch {
-        params = {};
-      }
-      return {
-        id,
-        taskType: String(taskType),
-        params,
-        label: label ? String(label) : '',
-        updatedAt
-      };
-    });
-    res.json({ presets });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to load presets';
-    res.status(500).json({ error: message });
-  }
-});
-
-app.post('/api/param-presets', async (req, res) => {
-  const taskType = typeof req.body?.taskType === 'string' ? req.body.taskType.trim() : '';
-  const params = typeof req.body?.params === 'object' && req.body.params ? req.body.params : null;
-  const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
-  const id = Number.isFinite(Number(req.body?.id)) ? Number(req.body.id) : null;
-  if (!taskType || !params) {
-    res.status(400).json({ error: 'Missing taskType or params' });
-    return;
-  }
-  try {
-    if (id) {
-      db.run(
-        `UPDATE param_presets
-         SET task_type = ?, params_json = ?, label = ?, updated_at = ?
-         WHERE id = ?`,
-        [taskType, JSON.stringify(params), label || null, new Date().toISOString(), id]
-      );
-      await persistDb();
-      res.json({ id });
-      return;
-    }
-    db.run(
-      `INSERT INTO param_presets (task_type, params_json, label, updated_at)
-       VALUES (?, ?, ?, ?)`,
-      [taskType, JSON.stringify(params), label || null, new Date().toISOString()]
-    );
-    await persistDb();
-    const idRow = db.exec('SELECT last_insert_rowid() as id');
-    const nextId = idRow[0]?.values?.[0]?.[0] ?? null;
-    res.json({ id: nextId });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to save presets';
-    res.status(500).json({ error: message });
-  }
-});
-
-app.delete('/api/param-presets/:id', async (req, res) => {
-  const id = Number(req.params?.id);
-  if (!Number.isFinite(id)) {
-    res.status(400).json({ error: 'Missing id' });
-    return;
-  }
-  try {
-    db.run('DELETE FROM param_presets WHERE id = ?', [id]);
-    await persistDb();
-    res.json({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to delete presets';
-    res.status(500).json({ error: message });
-  }
-});
-
-app.post('/api/param-presets/reset', async (_req, res) => {
-  try {
-    resetParamPresetsTable();
-    await persistDb();
-    res.json({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to reset presets';
-    res.status(500).json({ error: message });
-  }
 });
 
 app.get('/api/render-templates', async (_req, res) => {

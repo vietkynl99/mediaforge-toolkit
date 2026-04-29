@@ -15,15 +15,6 @@ interface RunPipelineUvrConfigProps {
   saveTaskTemplateCurrent: (taskType: string, selected: any) => void;
   saveTaskTemplate: (taskType: string) => void;
   restoreTaskTemplateCurrent: (taskType: string, selected: any) => void;
-  SHOW_PARAM_PRESETS: boolean;
-  hasParamPresets: (taskType: string) => boolean;
-  runPipelineParamPreset: Record<string, string>;
-  handleParamPresetChange: (taskType: string, value: string) => void;
-  getParamPresetsForType: (taskType: string) => Array<{ id: number; label?: string }>;
-  switchPresetToManual: (taskType: string) => void;
-  getSelectedParamPresetParams: (taskType: string) => Record<string, unknown>;
-  formatDefaultValue: (value: unknown) => string;
-  isParamOverridden: (taskType: string, key: string, currentValue: unknown) => boolean;
   runPipelineBackend: string;
   setRunPipelineBackend: (value: string) => void;
   vrModel: string;
@@ -45,15 +36,6 @@ export const RunPipelineUvrConfig: React.FC<RunPipelineUvrConfigProps> = ({
   saveTaskTemplateCurrent,
   saveTaskTemplate,
   restoreTaskTemplateCurrent,
-  SHOW_PARAM_PRESETS,
-  hasParamPresets,
-  runPipelineParamPreset,
-  handleParamPresetChange,
-  getParamPresetsForType,
-  switchPresetToManual,
-  getSelectedParamPresetParams,
-  formatDefaultValue,
-  isParamOverridden,
   runPipelineBackend,
   setRunPipelineBackend,
   vrModel,
@@ -188,120 +170,44 @@ export const RunPipelineUvrConfig: React.FC<RunPipelineUvrConfigProps> = ({
           </div>
         </div>
       </div>
-      <>
-        {SHOW_PARAM_PRESETS && hasParamPresets('uvr') && (
-          <div className="mb-3 flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-              {runPipelineParamPreset.uvr !== 'custom' && null}
-            </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="flex flex-col gap-2">
+          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Backend</label>
+          <input
+            list="uvr-backends"
+            value={runPipelineBackend}
+            onChange={e => setRunPipelineBackend(e.target.value)}
+            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+            placeholder="vr"
+          />
+          <datalist id="uvr-backends">
+            <option value="vr" />
+            <option value="mdx" />
+            <option value="demucs" />
+          </datalist>
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Model</label>
+          {vrModels.length ? (
             <select
-              value={runPipelineParamPreset.uvr ?? 'custom'}
-              onChange={e => handleParamPresetChange('uvr', e.target.value)}
+              value={vrModel}
+              onChange={e => setVrModel(e.target.value)}
               className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
             >
-              <option value="custom">Manual</option>
-              {getParamPresetsForType('uvr').map(preset => (
-                <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
+              {vrModels.map(model => (
+                <option key={model} value={model}>{model}</option>
               ))}
             </select>
-            {runPipelineParamPreset.uvr !== 'custom' && (
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => switchPresetToManual('uvr')}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    switchPresetToManual('uvr');
-                  }
-                }}
-                title="Switch to manual and load these params"
-                className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-              >
-                <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                  {Object.entries(getSelectedParamPresetParams('uvr')).map(([key, value]) => (
-                    <div key={key} className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-zinc-500">{key}</span>
-                      <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.uvr === 'custom') && (
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                Backend
-                {isParamOverridden('uvr', 'backend', runPipelineBackend) && (
-                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                    Overridden
-                  </span>
-                )}
-              </label>
-              <input
-                list="uvr-backends"
-                value={runPipelineBackend}
-                onChange={e => setRunPipelineBackend(e.target.value)}
-                className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                  isParamOverridden('uvr', 'backend', runPipelineBackend) ? 'border-amber-500/60' : 'border-zinc-800'
-                }`}
-                placeholder="vr"
-              />
-              {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').backend !== undefined && (
-                <div className="text-[10px] text-zinc-500">
-                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').backend)}
-                </div>
-              )}
-              <datalist id="uvr-backends">
-                <option value="vr" />
-                <option value="mdx" />
-                <option value="demucs" />
-              </datalist>
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-[11px] text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                Model
-                {isParamOverridden('uvr', 'model', vrModel) && (
-                  <span className="text-[9px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded-md">
-                    Overridden
-                  </span>
-                )}
-              </label>
-              {vrModels.length ? (
-                <select
-                  value={vrModel}
-                  onChange={e => setVrModel(e.target.value)}
-                  className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                    isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
-                  }`}
-                >
-                  {vrModels.map(model => (
-                    <option key={model} value={model}>{model}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={vrModel}
-                  onChange={e => setVrModel(e.target.value)}
-                  className={`bg-zinc-900 border rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none ${
-                    isParamOverridden('uvr', 'model', vrModel) ? 'border-amber-500/60' : 'border-zinc-800'
-                  }`}
-                  placeholder="MGM_MAIN_v4.pth"
-                />
-              )}
-              {SHOW_PARAM_PRESETS && runPipelineParamPreset.uvr !== 'custom' && getSelectedParamPresetParams('uvr').model !== undefined && (
-                <div className="text-[10px] text-zinc-500">
-                  Loaded: {formatDefaultValue(getSelectedParamPresetParams('uvr').model)}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </>
+          ) : (
+            <input
+              value={vrModel}
+              onChange={e => setVrModel(e.target.value)}
+              className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+              placeholder="MGM_MAIN_v4.pth"
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 };

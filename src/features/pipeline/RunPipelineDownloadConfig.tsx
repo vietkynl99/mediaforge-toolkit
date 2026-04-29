@@ -15,14 +15,6 @@ interface RunPipelineDownloadConfigProps {
   saveTaskTemplateCurrent: (taskType: string, selected: any) => void;
   saveTaskTemplate: (taskType: string) => void;
   restoreTaskTemplateCurrent: (taskType: string, selected: any) => void;
-  SHOW_PARAM_PRESETS: boolean;
-  hasParamPresets: (taskType: string) => boolean;
-  runPipelineParamPreset: Record<string, string>;
-  handleParamPresetChange: (taskType: string, value: string) => void;
-  getParamPresetsForType: (taskType: string) => Array<{ id: number; label?: string }>;
-  switchPresetToManual: (taskType: string) => void;
-  getSelectedParamPresetParams: (taskType: string) => Record<string, unknown>;
-  formatDefaultValue: (value: unknown) => string;
   downloadMode: 'all' | 'subs' | 'media';
   setDownloadMode: (value: 'all' | 'subs' | 'media') => void;
   downloadCookiesFile: File | null;
@@ -48,14 +40,6 @@ export const RunPipelineDownloadConfig: React.FC<RunPipelineDownloadConfigProps>
   saveTaskTemplateCurrent,
   saveTaskTemplate,
   restoreTaskTemplateCurrent,
-  SHOW_PARAM_PRESETS,
-  hasParamPresets,
-  runPipelineParamPreset,
-  handleParamPresetChange,
-  getParamPresetsForType,
-  switchPresetToManual,
-  getSelectedParamPresetParams,
-  formatDefaultValue,
   downloadMode,
   setDownloadMode,
   downloadCookiesFile,
@@ -194,108 +178,58 @@ export const RunPipelineDownloadConfig: React.FC<RunPipelineDownloadConfigProps>
           </div>
         </div>
       </div>
-      <>
-        {SHOW_PARAM_PRESETS && (
-          hasParamPresets('download') ? (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] text-zinc-500 uppercase tracking-widest">Param Source</label>
-                {runPipelineParamPreset.download !== 'custom' && null}
-              </div>
-              <select
-                value={runPipelineParamPreset.download ?? 'custom'}
-                onChange={e => handleParamPresetChange('download', e.target.value)}
-                className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-              >
-                <option value="custom">Manual</option>
-                {getParamPresetsForType('download').map(preset => (
-                  <option key={preset.id} value={`preset:${preset.id}`}>{preset.label || 'Untitled preset'}</option>
-                ))}
-              </select>
-              {runPipelineParamPreset.download !== 'custom' && (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => switchPresetToManual('download')}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      switchPresetToManual('download');
-                    }
-                  }}
-                  title="Switch to manual and load these params"
-                  className="border border-zinc-800 rounded-lg p-2.5 bg-zinc-950/40 cursor-pointer hover:border-lime-500/40 transition-colors"
-                >
-                  <div className="mt-2 grid gap-1 text-[11px] text-zinc-400">
-                    {Object.entries(getSelectedParamPresetParams('download')).map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between gap-2">
-                        <span className="font-mono text-zinc-500">{key}</span>
-                        <span className="truncate text-zinc-300">{formatDefaultValue(value)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-[11px] text-zinc-500">No param presets for Download.</div>
-          )
-        )}
-        {(!SHOW_PARAM_PRESETS || runPipelineParamPreset.download === 'custom') && (
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <select
-              value={downloadMode}
-              onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <select
+          value={downloadMode}
+          onChange={e => setDownloadMode(e.target.value as 'all' | 'subs' | 'media')}
+          className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
+        >
+          <option value="all">Download: All (subs + audio + video)</option>
+          <option value="subs">Download: Subtitles only</option>
+          <option value="media">Download: Audio + Video only</option>
+        </select>
+        <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
+          <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
+          <input
+            type="file"
+            accept=".txt"
+            onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
+            className="hidden"
+          />
+        </label>
+        <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
+          <input
+            type="checkbox"
+            checked={downloadNoPlaylist}
+            onChange={e => setDownloadNoPlaylist(e.target.checked)}
+            className="accent-lime-400"
+          />
+          No playlist
+        </label>
+        {downloadMode !== 'media' ? (
+          <>
+            <input
+              value={downloadSubtitleLang}
+              onChange={e => setDownloadSubtitleLang(e.target.value)}
+              list="ytdlp-sub-langs"
               className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-            >
-              <option value="all">Download: All (subs + audio + video)</option>
-              <option value="subs">Download: Subtitles only</option>
-              <option value="media">Download: Audio + Video only</option>
-            </select>
-            <label className="flex items-center justify-between gap-3 px-2.5 py-1.5 border border-dashed border-zinc-700 rounded-lg text-sm text-zinc-400 hover:border-zinc-500 cursor-pointer">
-              <span>{downloadCookiesFile?.name ?? 'cookies.txt (optional)'}</span>
-              <input
-                type="file"
-                accept=".txt"
-                onChange={e => setDownloadCookiesFile(e.target.files?.[0] ?? null)}
-                className="hidden"
-              />
-            </label>
-            <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
-              <input
-                type="checkbox"
-                checked={downloadNoPlaylist}
-                onChange={e => setDownloadNoPlaylist(e.target.checked)}
-                className="accent-lime-400"
-              />
-              No playlist
-            </label>
-            {downloadMode !== 'media' ? (
-              <>
-                <input
-                  value={downloadSubtitleLang}
-                  onChange={e => setDownloadSubtitleLang(e.target.value)}
-                  list="ytdlp-sub-langs"
-                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                  placeholder="Subtitle language (e.g. ai-zh)"
-                  title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
-                />
-                {downloadAnalyzeListSubs.length > 0 && (
-                  <datalist id="ytdlp-sub-langs">
-                    {downloadAnalyzeListSubs.map((entry: any) => (
-                      <option key={entry.lang} value={entry.lang} />
-                    ))}
-                  </datalist>
-                )}
-              </>
-            ) : (
-              <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
-                Subtitles disabled for media-only.
-              </div>
+              placeholder="Subtitle language (e.g. ai-zh)"
+              title="Leave blank to skip subtitles. Use comma-separated codes (e.g. en,vi,ai-zh)."
+            />
+            {downloadAnalyzeListSubs.length > 0 && (
+              <datalist id="ytdlp-sub-langs">
+                {downloadAnalyzeListSubs.map((entry: any) => (
+                  <option key={entry.lang} value={entry.lang} />
+                ))}
+              </datalist>
             )}
+          </>
+        ) : (
+          <div className="border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500">
+            Subtitles disabled for media-only.
           </div>
         )}
-      </>
+      </div>
     </div>
   );
 };

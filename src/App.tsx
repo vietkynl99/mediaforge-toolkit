@@ -116,7 +116,6 @@ type TaskTemplate = {
   params: Record<string, any>;
 };
 
-const SHOW_PARAM_PRESETS = false;
 const NEW_JOB_POPUP_DRAFT_STORAGE_KEY = 'mediaforge.newJobPopupDraft.v1';
 
 const buildSubtitlePreviewStyle = (preset: SubtitleStylePreset) => {
@@ -189,18 +188,6 @@ export default function App() {
   };
   const [authView, setAuthView] = useState<'login' | 'register'>(getAuthViewFromPath);
   const jobsHandleRef = useRef<JobsHandle | null>(null);
-  const [paramPresetContextMenu, setParamPresetContextMenu] = useState<{
-    open: boolean;
-    x: number;
-    y: number;
-    presetId: number | null;
-  }>({
-    open: false,
-    x: 0,
-    y: 0,
-    presetId: null
-  });
-  const [paramPresetLabelDraft, setParamPresetLabelDraft] = useState('');
   const [pipelineContextMenu, setPipelineContextMenu] = useState<{
     open: boolean;
     x: number;
@@ -368,11 +355,6 @@ export default function App() {
     params?: Array<{ name: string; desc: string; type: string; default?: string | number | boolean }>;
     preview?: string;
   } | null>(null);
-  const [showParamPresetEditor, setShowParamPresetEditor] = useState(false);
-  const [paramPresetEditorMode, setParamPresetEditorMode] = useState<'create' | 'edit'>('create');
-  const [paramPresetEditingId, setParamPresetEditingId] = useState<number | null>(null);
-  const [paramPresetTaskType, setParamPresetTaskType] = useState('');
-  const [paramPresetValues, setParamPresetValues] = useState<Record<string, string | boolean>>({});
   const [previewTtsText, setPreviewTtsText] = useState('Xin chào, hôm nay trời đẹp và mình nói tiếng Việt.');
   const [previewTtsVoice, setPreviewTtsVoice] = useState('vi-VN-HoaiMyNeural');
   const [previewTtsRate, setPreviewTtsRate] = useState('');
@@ -522,13 +504,6 @@ export default function App() {
   };
   const [renderParams, setRenderParams] = useState(DEFAULT_RENDER_PARAMS);
   const runAgainPrefillRef = useRef(false);
-  const [paramPresets, setParamPresets] = useState<Array<{
-    id: number;
-    taskType: string;
-    params: Record<string, any>;
-    label: string;
-    updatedAt?: string;
-  }>>([]);
   const [previewTtsLoading, setPreviewTtsLoading] = useState(false);
   const [previewTtsError, setPreviewTtsError] = useState<string | null>(null);
   const [previewTtsUrl, setPreviewTtsUrl] = useState<string | null>(null);
@@ -550,7 +525,6 @@ export default function App() {
   const [runPipelineProjectId, setRunPipelineProjectId] = useState<string | null>(null);
   const [runPipelineProjectLocked, setRunPipelineProjectLocked] = useState(false);
   const [runPipelineSubmitting, setRunPipelineSubmitting] = useState(false);
-  const [runPipelineParamPreset, setRunPipelineParamPreset] = useState<Record<string, string>>({});
   const [runPipelineBackend, setRunPipelineBackend] = useState('vr');
   const [downloadUrl, setDownloadUrl] = useState('');
   const [downloadProjectName, setDownloadProjectName] = useState('');
@@ -602,7 +576,6 @@ export default function App() {
   const [downloadAnalyzeResult, setDownloadAnalyzeResult] = useState<any>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const paramPresetsLoadedRef = useRef(false);
 
   const TASK_PIPELINE_PREFIX = 'task:';
 
@@ -1409,169 +1382,6 @@ export default function App() {
     { value: 'subs', label: 'Subtitles only' },
     { value: 'media', label: 'Audio + video only' }
   ];
-
-  const getParamPresetsForType = (taskType: string) => (
-    paramPresets
-      .filter(preset => preset.taskType === taskType)
-      .slice()
-      .sort((a, b) => {
-        const labelA = (a.label || '').trim().toLowerCase();
-        const labelB = (b.label || '').trim().toLowerCase();
-        if (!labelA && !labelB) return a.id - b.id;
-        if (!labelA) return 1;
-        if (!labelB) return -1;
-        const cmp = labelA.localeCompare(labelB);
-        return cmp !== 0 ? cmp : a.id - b.id;
-      })
-  );
-
-  const hasParamPresets = (taskType: string) => getParamPresetsForType(taskType).length > 0;
-
-  const getSelectedParamPresetId = (taskType: string) => {
-    const value = runPipelineParamPreset[taskType];
-    if (typeof value === 'string' && value.startsWith('preset:')) {
-      const id = Number(value.slice('preset:'.length));
-      return Number.isFinite(id) ? id : null;
-    }
-    return null;
-  };
-
-  const getSelectedParamPreset = (taskType: string) => {
-    const selectedId = getSelectedParamPresetId(taskType);
-    if (selectedId !== null) {
-      return paramPresets.find(preset => preset.id === selectedId) ?? null;
-    }
-    return getParamPresetsForType(taskType)[0] ?? null;
-  };
-
-  const getSelectedParamPresetLabel = (taskType: string) => {
-    const selected = getSelectedParamPreset(taskType);
-    if (selected?.label) return selected.label;
-    const fallback = availableTasks.find(task => task.type === taskType)?.label ?? taskType;
-    return fallback;
-  };
-
-  const getSelectedParamPresetParams = (taskType: string) => getSelectedParamPreset(taskType)?.params ?? {};
-
-  const formatDefaultValue = (value: any) => {
-    if (typeof value === 'boolean') return value ? 'true' : 'false';
-    if (value === null || value === undefined) return '--';
-    return String(value);
-  };
-
-  const isParamOverridden = (taskType: string, key: string, currentValue: any) => {
-    if (!runPipelineParamPreset[taskType] || runPipelineParamPreset[taskType] === 'custom') return false;
-    const presetParams = getSelectedParamPresetParams(taskType);
-    if (!(key in presetParams)) return false;
-    const normalize = (value: any) => (value === null || value === undefined ? '' : String(value));
-    return normalize(currentValue) !== normalize(presetParams[key]);
-  };
-
-  const normalizePresetValue = (value: any) => (value === null || value === undefined ? '' : String(value));
-
-  const isRenderPresetDirty = React.useMemo(() => {
-    const selectedId = getSelectedParamPresetId('render');
-    if (!selectedId) return false;
-    const presetParams = getSelectedParamPresetParams('render');
-    if (!presetParams || typeof presetParams !== 'object') return false;
-    for (const [key, value] of Object.entries(presetParams)) {
-      if (!key.includes('.')) continue;
-      const [section, field] = key.split('.');
-      if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle' && section !== 'text') continue;
-      const resolvedSection = section === 'subtitle' && RENDER_TEXT_PARAM_FIELDS.has(field) ? 'text' : section;
-      const sectionObj = (renderParams as any)[resolvedSection];
-      if (!sectionObj || !(field in sectionObj)) continue;
-      if (normalizePresetValue(sectionObj[field]) !== normalizePresetValue(value)) return true;
-    }
-    return false;
-  }, [renderParams, runPipelineParamPreset.render, paramPresets]);
-
-  const applyParamPresetParams = (taskType: string) => {
-    const params = getSelectedParamPresetParams(taskType);
-    if (!params || typeof params !== 'object') return;
-    if (taskType === 'uvr') {
-      if (params.backend !== undefined) setRunPipelineBackend(String(params.backend));
-      if (params.model !== undefined) setVrModel(String(params.model));
-      if (params.outputFormat !== undefined) {
-        setVrOutputType(String(params.outputFormat) as 'Mp3' | 'Wav' | 'Flac');
-      }
-      return;
-    }
-    if (taskType === 'tts') {
-      if (params.voice !== undefined) setRunPipelineTtsVoice(String(params.voice));
-      if (params.rate !== undefined) setRunPipelineTtsRate(String(params.rate));
-      if (params.pitch !== undefined) setRunPipelineTtsPitch(String(params.pitch));
-      if (params.overlapMode !== undefined) {
-        const mode = String(params.overlapMode);
-        if (mode === 'overlap' || mode === 'truncate') {
-          setRunPipelineTtsOverlapMode(mode);
-        }
-      }
-      if (params.removeLineBreaks !== undefined) {
-        setRunPipelineTtsRemoveLineBreaks(Boolean(params.removeLineBreaks));
-      }
-      return;
-    }
-    if (taskType === 'download') {
-      if (params.downloadMode !== undefined) {
-        const mode = String(params.downloadMode);
-        if (mode === 'all' || mode === 'subs' || mode === 'media') {
-          setDownloadMode(mode);
-        }
-      }
-      if (params.subLangs !== undefined) setDownloadSubtitleLang(String(params.subLangs));
-      if (params.noPlaylist !== undefined) setDownloadNoPlaylist(Boolean(params.noPlaylist));
-      return;
-    }
-    if (taskType === 'render') {
-      const legacyMask: Record<string, string> = {};
-      let hasNewMaskInsets = false;
-      Object.entries(params).forEach(([key, value]) => {
-        if (!key.includes('.')) return;
-        const [section, field] = key.split('.');
-        if (section !== 'timeline' && section !== 'video' && section !== 'audio' && section !== 'subtitle' && section !== 'text' && section !== 'render') return;
-        if (value === undefined || value === null) return;
-        if (section === 'audio' && (field === 'normalize' || field === 'pan' || field === 'channelMode')) return;
-        if (section === 'audio' && field === 'mute') {
-          updateRenderParam('audio', 'mute', Boolean(value));
-          return;
-        }
-        if (section === 'subtitle' && RENDER_TEXT_PARAM_FIELDS.has(field)) {
-          updateRenderParam('text', field, String(value));
-          return;
-        }
-        if (section === 'video' && (field === 'maskLeft' || field === 'maskRight' || field === 'maskTop' || field === 'maskBottom')) {
-          hasNewMaskInsets = true;
-        }
-        if (section === 'video' && (field === 'maskX' || field === 'maskY' || field === 'maskW' || field === 'maskH')) {
-          legacyMask[field] = String(value);
-          return;
-        }
-        updateRenderParam(section as 'timeline' | 'video' | 'audio' | 'subtitle' | 'text', field, String(value));
-      });
-      if (!hasNewMaskInsets && Object.keys(legacyMask).length > 0) {
-        const x = coerceNumber(legacyMask.maskX, 0) ?? 0;
-        const y = coerceNumber(legacyMask.maskY, 0) ?? 0;
-        const w = coerceNumber(legacyMask.maskW, 100) ?? 100;
-        const h = coerceNumber(legacyMask.maskH, 100) ?? 100;
-        const left = Math.max(0, Math.min(100, x));
-        const top = Math.max(0, Math.min(100, y));
-        const right = Math.max(0, Math.min(100, 100 - x - w));
-        const bottom = Math.max(0, Math.min(100, 100 - y - h));
-        updateRenderParam('video', 'maskLeft', String(left));
-        updateRenderParam('video', 'maskRight', String(right));
-        updateRenderParam('video', 'maskTop', String(top));
-        updateRenderParam('video', 'maskBottom', String(bottom));
-      }
-    }
-  };
-
-  const handleParamPresetChange = (taskType: string, value: string) => {
-    setRunPipelineParamPreset(prev => ({ ...prev, [taskType]: value }));
-    if (value !== 'custom') {
-      applyParamPresetParams(taskType);
-    }
-  };
 
   const getTaskTemplatesForType = (taskType: string) => taskTemplates.filter(template => template.taskType === taskType);
 
@@ -2540,12 +2350,6 @@ export default function App() {
   }, []);
 
 
-  const switchPresetToManual = (taskType: string) => {
-    if (runPipelineParamPreset[taskType] === 'custom') return;
-    applyParamPresetParams(taskType);
-    setRunPipelineParamPreset(prev => ({ ...prev, [taskType]: 'custom' }));
-  };
-
   const resolvePipelineIcon = (pipeline: PipelineSummary) => {
     const type = pipeline.primaryType ?? (pipeline.kind === 'task' ? pipeline.id.slice(TASK_PIPELINE_PREFIX.length) : null);
     const task = type ? availableTasks.find(item => item.type === type) : null;
@@ -2651,65 +2455,6 @@ export default function App() {
       ]
     }
   ]), []);
-
-  const paramPresetCards = paramPresets
-    .map(preset => {
-      const task = availableTasks.find(item => item.type === preset.taskType);
-      const params = preset.params && typeof preset.params === 'object'
-        ? Object.keys(preset.params).filter(key => preset.params[key] !== undefined)
-        : [];
-      return {
-        id: preset.id,
-        type: preset.taskType,
-        label: preset.label || task?.label || preset.taskType,
-        taskLabel: task?.label ?? preset.taskType,
-        icon: task?.icon,
-        params: params.map(name => ({ name }))
-      };
-    })
-    .filter(node => node.params.length > 0);
-
-  const paramPresetContextTarget = paramPresetCards.find(node => node.id === paramPresetContextMenu.presetId) ?? null;
-
-  const paramPresetTask = availableTasks.find(task => task.type === paramPresetTaskType) ?? null;
-
-  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  const getDefaultParamPresetName = (taskLabel: string, taskType: string) => {
-    const matcher = new RegExp(`^${escapeRegExp(taskLabel)}\\s+preset\\s+(\\d+)$`, 'i');
-    let maxIndex = 0;
-    const candidates = paramPresets.filter(preset => preset.taskType === taskType);
-    candidates.forEach(preset => {
-      const label = (preset.label || taskLabel || '').trim();
-      const match = label.match(matcher);
-      if (!match) return;
-      const value = Number(match[1]);
-      if (Number.isFinite(value)) {
-        maxIndex = Math.max(maxIndex, value);
-      }
-    });
-    return `${taskLabel} preset ${maxIndex + 1}`;
-  };
-
-  const buildRenderParamPresetPayload = (): Record<string, string | boolean> => {
-    const out: Record<string, string | boolean> = {};
-    out['timeline.framerate'] = String(renderParams.timeline.framerate);
-    out['timeline.resolution'] = String(renderParams.timeline.resolution);
-    Object.entries(renderParams.video).forEach(([k, v]) => {
-      out[`video.${k}`] = typeof v === 'boolean' ? v : String(v);
-    });
-    Object.entries(renderParams.audio).forEach(([k, v]) => {
-      out[`audio.${k}`] = typeof v === 'boolean' ? v : String(v);
-    });
-    Object.entries(renderParams.subtitle).forEach(([k, v]) => {
-      if (RENDER_TEXT_PARAM_FIELDS.has(k)) return;
-      out[`subtitle.${k}`] = typeof v === 'boolean' ? v : String(v);
-    });
-    Object.entries(renderParams.text).forEach(([k, v]) => {
-      out[`text.${k}`] = typeof v === 'boolean' ? v : String(v);
-    });
-    return out;
-  };
 
   function parseAutoMovePositions(raw: string): Array<{ x: number; y: number }> {
     if (!raw || typeof raw !== 'string') return [];
@@ -3567,54 +3312,6 @@ export default function App() {
     ? 'Default'
     : (renderTemplateSelected?.name ?? 'Template');
 
-  const saveRenderStudioParamPreset = async (mode: 'save' | 'saveAs') => {
-    const defaultName = getDefaultParamPresetName('Render', 'render');
-    const selectedId = getSelectedParamPresetId('render');
-    const selectedPreset = getSelectedParamPreset('render');
-    let label = (selectedPreset?.label ?? '').trim();
-    let targetId: number | null = null;
-
-    if (mode === 'save' && selectedId) {
-      targetId = selectedId;
-      if (!label) label = defaultName;
-    } else {
-      const labelInput = window.prompt('Tên preset:', label || defaultName);
-      if (labelInput === null) return;
-      label = labelInput.trim();
-      if (!label) {
-        showToast('Nhập tên preset.', 'warning');
-        return;
-      }
-    }
-
-    const params = buildRenderParamPresetPayload();
-    setSaveRenderPresetLoading(true);
-    try {
-      const response = await fetch('/api/param-presets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskType: 'render', params, label, ...(targetId ? { id: targetId } : {}) })
-      });
-      if (!response.ok) throw new Error('save failed');
-      const data = await response.json().catch(() => ({}));
-      const savedId = Number(data?.id);
-      await loadParamPresets();
-      if (Number.isFinite(savedId)) {
-        setRunPipelineParamPreset(prev => ({ ...prev, render: `preset:${savedId}` }));
-      }
-      showToast(
-        mode === 'save' && targetId
-          ? 'Đã lưu preset Render.'
-          : 'Đã lưu preset Render mới.',
-        'success'
-      );
-    } catch {
-      showToast('Không lưu được preset.', 'error');
-    } finally {
-      setSaveRenderPresetLoading(false);
-    }
-  };
-
   const migrateRenderPresetToTemplate = () => {
     const config = buildRenderConfigV2();
     if (!config || !Array.isArray(config.items) || config.items.length === 0) {
@@ -3624,152 +3321,6 @@ export default function App() {
     setRenderTemplateEditingId(null);
     openRenderTemplateEditor(config, '');
   };
-
-  const resetParamPresetsDb = () => {
-    openConfirm(
-      {
-        title: 'Reset Param Presets?',
-        description: 'This will delete all saved param presets and create a fresh empty presets database.',
-        confirmLabel: 'Reset',
-        variant: 'danger'
-      },
-      async () => {
-        try {
-          const response = await fetch('/api/param-presets/reset', { method: 'POST' });
-          if (!response.ok) throw new Error('reset failed');
-          await loadParamPresets();
-          showToast('Param presets database reset.', 'success');
-        } catch {
-          showToast('Không thể reset param presets.', 'error');
-        }
-      }
-    );
-  };
-
-  const openParamPresetEditor = (taskType?: string, mode: 'create' | 'edit' = 'create') => {
-    const fallbackType = availableTasks[0]?.type ?? '';
-    setParamPresetEditorMode(mode);
-    setParamPresetTaskType(taskType ?? fallbackType);
-    setParamPresetEditingId(null);
-    setShowParamPresetEditor(true);
-  };
-
-  const openParamPresetEditorForEdit = (presetId: number) => {
-    const target = paramPresets.find(preset => preset.id === presetId);
-    if (!target) return;
-    setParamPresetEditorMode('edit');
-    setParamPresetEditingId(presetId);
-    setParamPresetTaskType(target.taskType);
-    setShowParamPresetEditor(true);
-  };
-
-  const saveParamPreset = async () => {
-    if (!paramPresetTask) return;
-    const params: Record<string, any> = {};
-    (paramPresetTask.params ?? []).forEach(param => {
-      const raw = paramPresetValues[param.name];
-      if (raw === undefined || (typeof raw === 'string' && raw.trim() === '')) return;
-      if (param.type === 'number') {
-        const numeric = Number(raw);
-        if (Number.isFinite(numeric)) {
-          params[param.name] = numeric;
-        }
-        return;
-      }
-      if (param.type === 'boolean') {
-        params[param.name] = Boolean(raw);
-        return;
-      }
-      params[param.name] = raw;
-    });
-    if (Object.keys(params).length === 0) {
-      showToast('Please set at least one param value.', 'error');
-      return;
-    }
-    try {
-      const label = paramPresetLabelDraft.trim() || paramPresetTask.label;
-      const normalizedLabel = label.trim().toLowerCase();
-      const hasDuplicateLabel = paramPresets.some(preset => {
-        if (paramPresetEditingId !== null && preset.id === paramPresetEditingId) return false;
-        return preset.label.trim().toLowerCase() === normalizedLabel;
-      });
-      if (hasDuplicateLabel) {
-        showToast('Param preset name already exists.', 'error');
-        return;
-      }
-      const response = await fetch('/api/param-presets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: paramPresetEditingId ?? undefined,
-          taskType: paramPresetTask.type,
-          params,
-          label
-        })
-      });
-      if (!response.ok) throw new Error('Unable to save');
-      const data = await response.json().catch(() => ({}));
-      const savedId = Number.isFinite(Number(data?.id)) ? Number(data.id) : paramPresetEditingId;
-      if (paramPresetEditorMode === 'create' && savedId) {
-        setRunPipelineParamPreset(prev => {
-          if (prev[paramPresetTask.type] === 'custom') return prev;
-          return { ...prev, [paramPresetTask.type]: `preset:${savedId}` };
-        });
-      }
-      await loadParamPresets();
-      showToast('Param preset saved.', 'success');
-      setShowParamPresetEditor(false);
-    } catch {
-      showToast('Unable to save param preset.', 'error');
-    }
-  };
-
-  const deleteParamPreset = async (presetId: number, taskType: string) => {
-    try {
-      await fetch(`/api/param-presets/${presetId}`, {
-        method: 'DELETE'
-      });
-      setRunPipelineParamPreset(prev => {
-        const selected = prev[taskType];
-        if (selected !== `preset:${presetId}`) return prev;
-        return { ...prev, [taskType]: 'custom' };
-      });
-      showToast('Param preset deleted.', 'success');
-      await loadParamPresets();
-    } catch {
-      showToast('Unable to delete param preset.', 'error');
-    }
-  };
-
-  useEffect(() => {
-    if (!showParamPresetEditor) return;
-    const task = availableTasks.find(item => item.type === paramPresetTaskType) ?? availableTasks[0];
-    if (!task) return;
-    if (paramPresetTaskType !== task.type) {
-      setParamPresetTaskType(task.type);
-    }
-    const editingPreset = paramPresetEditingId
-      ? paramPresets.find(preset => preset.id === paramPresetEditingId)
-      : null;
-    const savedParams = editingPreset?.params ?? {};
-    const nextValues: Record<string, string | boolean> = {};
-    (task.params ?? []).forEach(param => {
-      const savedValue = savedParams[param.name];
-      if (savedValue !== undefined) {
-        nextValues[param.name] = param.type === 'boolean' ? Boolean(savedValue) : String(savedValue);
-      } else if (param.default !== undefined) {
-        nextValues[param.name] = param.type === 'boolean' ? Boolean(param.default) : String(param.default);
-      } else {
-        nextValues[param.name] = param.type === 'boolean' ? false : '';
-      }
-    });
-    setParamPresetValues(nextValues);
-    if (paramPresetEditorMode === 'create') {
-      setParamPresetLabelDraft(getDefaultParamPresetName(task.label, task.type));
-    } else {
-      setParamPresetLabelDraft(editingPreset?.label ?? task.label);
-    }
-  }, [showParamPresetEditor, paramPresetTaskType, paramPresetEditingId, paramPresets, availableTasks, paramPresetEditorMode]);
 
   const handleTaskDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -3878,56 +3429,6 @@ export default function App() {
   }, [showPipelinePreview, pipelinePreviewTask?.preview]);
 
   useEffect(() => {
-    if (!showRunPipeline) return;
-    if (runAgainPrefillRef.current) {
-      runAgainPrefillRef.current = false;
-      return;
-    }
-
-    if (runPipelineHasTts && runPipelineParamPreset.tts !== 'custom') {
-      applyParamPresetParams('tts');
-    }
-
-    if (runPipelineHasUvr && runPipelineParamPreset.uvr !== 'custom') {
-      applyParamPresetParams('uvr');
-    }
-
-    if (runPipelineHasRender && runPipelineParamPreset.render !== 'custom') {
-      applyParamPresetParams('render');
-    }
-
-    if (runPipelineHasDownload && runPipelineParamPreset.download !== 'custom') {
-      applyParamPresetParams('download');
-    }
-  }, [
-    showRunPipeline,
-    runPipelineHasTts,
-    runPipelineHasUvr,
-    runPipelineHasRender,
-    runPipelineHasDownload,
-    runPipelineId,
-    paramPresets,
-    runPipelineParamPreset
-  ]);
-
-  useEffect(() => {
-    if (!showRunPipeline) return;
-    if (runAgainPrefillRef.current) return;
-    setRunPipelineParamPreset(prev => {
-      const next = { ...prev };
-      if (runPipelineHasDownload) next.download = next.download ?? 'custom';
-      else delete next.download;
-      if (runPipelineHasUvr) next.uvr = next.uvr ?? 'custom';
-      else delete next.uvr;
-      if (runPipelineHasTts) next.tts = next.tts ?? 'custom';
-      else delete next.tts;
-      if (runPipelineHasRender) next.render = next.render ?? 'custom';
-      else delete next.render;
-      return next;
-    });
-  }, [showRunPipeline, runPipelineHasDownload, runPipelineHasUvr, runPipelineHasTts, runPipelineHasRender, runPipelineId, paramPresets]);
-
-  useEffect(() => {
     if (!runPipelineHasRender && showRenderStudio) {
       if (typeof window !== 'undefined' && window.location.pathname === RENDER_STUDIO_PATH) {
         return;
@@ -3935,20 +3436,6 @@ export default function App() {
       setRenderStudioOpen(false);
     }
   }, [runPipelineHasRender, showRenderStudio]);
-
-  useEffect(() => {
-    setRunPipelineParamPreset(prev => {
-      if (!paramPresetsLoadedRef.current) return prev;
-      const next = { ...prev };
-      ['download', 'uvr', 'tts', 'render'].forEach(taskType => {
-        if (next[taskType] !== 'custom' && !hasParamPresets(taskType)) {
-          next[taskType] = 'custom';
-        }
-      });
-      return next;
-    });
-  }, [paramPresets]);
-
 
   useEffect(() => {
     if (!pipelinePreviewTask) return;
@@ -4078,51 +3565,6 @@ export default function App() {
         setRunPipelineId(nextPipelines[0]?.id ?? null);
       }
     } catch {
-      paramPresetsLoadedRef.current = true;
-      return;
-    }
-  };
-
-  const loadParamPresets = async () => {
-    try {
-      const response = await fetch('/api/param-presets');
-      if (!response.ok) {
-        paramPresetsLoadedRef.current = true;
-        return;
-      }
-      const data = await response.json();
-      const presets = Array.isArray(data?.presets) ? data.presets : [];
-      const normalizedPresets = presets
-        .map((preset: any) => ({
-          id: Number(preset?.id),
-          taskType: String(preset?.taskType ?? ''),
-          params: preset?.params && typeof preset.params === 'object' ? preset.params : {},
-          label: String(preset?.label ?? ''),
-          updatedAt: preset?.updatedAt
-        }))
-        .filter(preset => Number.isFinite(preset.id) && preset.taskType);
-      setParamPresets(normalizedPresets);
-      paramPresetsLoadedRef.current = true;
-      setRunPipelineParamPreset(prev => {
-        const next = { ...prev };
-        const idsByType = new Map<string, Set<number>>();
-        normalizedPresets.forEach(preset => {
-          const set = idsByType.get(preset.taskType) ?? new Set<number>();
-          set.add(preset.id);
-          idsByType.set(preset.taskType, set);
-        });
-        Object.keys(next).forEach(taskType => {
-          const value = next[taskType];
-          if (typeof value === 'string' && value.startsWith('preset:')) {
-            const id = Number(value.slice('preset:'.length));
-            if (!idsByType.get(taskType)?.has(id)) {
-              next[taskType] = 'custom';
-            }
-          }
-        });
-        return next;
-      });
-    } catch {
       return;
     }
   };
@@ -4130,11 +3572,6 @@ export default function App() {
   useEffect(() => {
     if (!authUser) return;
     loadPipelines();
-  }, [authUser]);
-
-  useEffect(() => {
-    if (!authUser) return;
-    loadParamPresets();
   }, [authUser]);
 
   const openFileContextMenu = (event: React.MouseEvent, file: VaultFile) => {
@@ -6301,14 +5738,6 @@ export default function App() {
       saveTaskTemplateCurrent,
       saveTaskTemplate,
       restoreTaskTemplateCurrent,
-      SHOW_PARAM_PRESETS,
-      hasParamPresets,
-      runPipelineParamPreset,
-      handleParamPresetChange,
-      getParamPresetsForType,
-      switchPresetToManual,
-      getSelectedParamPresetParams,
-      formatDefaultValue,
       downloadMode,
       setDownloadMode,
       downloadCookiesFile,
@@ -6333,15 +5762,6 @@ export default function App() {
       saveTaskTemplateCurrent,
       saveTaskTemplate,
       restoreTaskTemplateCurrent,
-      SHOW_PARAM_PRESETS,
-      hasParamPresets,
-      runPipelineParamPreset,
-      handleParamPresetChange,
-      getParamPresetsForType,
-      switchPresetToManual,
-      getSelectedParamPresetParams,
-      formatDefaultValue,
-      isParamOverridden,
       runPipelineBackend,
       setRunPipelineBackend,
       vrModel,
@@ -6362,15 +5782,6 @@ export default function App() {
       saveTaskTemplateCurrent,
       saveTaskTemplate,
       restoreTaskTemplateCurrent,
-      SHOW_PARAM_PRESETS,
-      hasParamPresets,
-      runPipelineParamPreset,
-      handleParamPresetChange,
-      getParamPresetsForType,
-      switchPresetToManual,
-      getSelectedParamPresetParams,
-      formatDefaultValue,
-      isParamOverridden,
       runPipelineTtsVoice,
       setRunPipelineTtsVoice,
       runPipelineTtsOverlapMode,
@@ -6386,19 +5797,12 @@ export default function App() {
   };
 
   const appContextMenusProps = {
-    showParamPresets: SHOW_PARAM_PRESETS,
     pipelineContextMenu,
     pipelineContextTarget,
     setPipelineContextMenu,
     openPipelinePreview,
     openPipelineEditor,
     deletePipeline,
-    paramPresetContextMenu,
-    paramPresetContextTarget,
-    setParamPresetContextMenu,
-    openParamPresetEditorForEdit,
-    openConfirm,
-    deleteParamPreset,
     fileContextMenu,
     closeFileContextMenu,
     downloadVaultFile
@@ -6505,20 +5909,6 @@ export default function App() {
                       });
                     }}
                     resolvePipelineIcon={resolvePipelineIcon}
-                    showParamPresets={SHOW_PARAM_PRESETS}
-                    paramPresetCards={paramPresetCards}
-                    onResetParamPresets={resetParamPresetsDb}
-                    onCreateParamPreset={() => openParamPresetEditor(undefined, 'create')}
-                    onOpenParamPresetEditor={openParamPresetEditorForEdit}
-                    onParamPresetContextMenu={(event, presetId) => {
-                      event.preventDefault();
-                      setParamPresetContextMenu({
-                        open: true,
-                        x: event.clientX,
-                        y: event.clientY,
-                        presetId
-                      });
-                    }}
                   />
                 </Suspense>
 
@@ -6713,109 +6103,6 @@ export default function App() {
 
 
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {SHOW_PARAM_PRESETS && showParamPresetEditor && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 backdrop-blur-sm">
-                    <div className="absolute inset-0" onClick={() => setShowParamPresetEditor(false)} />
-                    <div className="relative w-[min(520px,92vw)] max-h-[85vh] bg-zinc-900/95 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 shadow-2xl overflow-hidden">
-                      <div>
-                        <div className="text-xs text-zinc-500 uppercase tracking-widest">
-                          {paramPresetEditorMode === 'edit' ? 'Edit Param Preset' : 'Create Param Preset'}
-                        </div>
-                        <div className="mt-1 flex items-center gap-2">
-                          <span className="text-sm font-semibold text-zinc-100">
-                            {paramPresetTask?.label ?? 'Pipeline'}
-                          </span>
-                          <span className="text-[10px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
-                            Pipeline
-                          </span>
-                        </div>
-                        <div className="mt-3 flex flex-col gap-1.5">
-                          <label className="text-xs text-zinc-500 uppercase tracking-widest">Name</label>
-                          <input
-                            value={paramPresetLabelDraft}
-                            onChange={e => setParamPresetLabelDraft(e.target.value)}
-                            className="w-full bg-transparent text-lg font-semibold text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
-                            placeholder="Param preset name"
-                          />
-                        </div>
-                      </div>
-                      {paramPresetEditorMode === 'create' && (
-                        <div className="flex flex-col gap-2">
-                          <label className="text-xs text-zinc-500 uppercase tracking-widest">Pipeline</label>
-                          <select
-                            value={paramPresetTaskType}
-                            onChange={e => setParamPresetTaskType(e.target.value)}
-                            className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-2 text-sm text-zinc-200 focus:outline-none"
-                          >
-                            {availableTasks.map(task => (
-                              <option key={task.type} value={task.type}>{task.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                      <div className="flex flex-col gap-3 max-h-[50vh] overflow-y-auto pr-1">
-                        <div className="text-xs text-zinc-500 uppercase tracking-widest">Params</div>
-                        {paramPresetTask?.params?.length ? (
-                          <div className="flex flex-col gap-2">
-                            {paramPresetTask.params.map(param => (
-                              <div key={param.name} className="flex flex-col gap-1.5">
-                                <label className="text-[11px] text-zinc-500">{param.name}</label>
-                                {param.type === 'boolean' ? (
-                                  <label className="flex items-center gap-2 text-sm text-zinc-200">
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean(paramPresetValues[param.name])}
-                                      onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.checked }))}
-                                      className="accent-lime-400"
-                                    />
-                                  </label>
-                                ) : param.name === 'downloadMode' ? (
-                                  <select
-                                    value={String(paramPresetValues[param.name] ?? 'all')}
-                                    onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.value }))}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                                  >
-                                    {DOWNLOAD_MODE_OPTIONS.map(option => (
-                                      <option key={option.value} value={option.value}>
-                                        {option.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <input
-                                    type={param.type === 'number' ? 'number' : 'text'}
-                                    value={String(paramPresetValues[param.name] ?? '')}
-                                    onChange={e => setParamPresetValues(prev => ({ ...prev, [param.name]: e.target.value }))}
-                                    className="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-sm text-zinc-200 focus:outline-none"
-                                    placeholder={param.default !== undefined ? String(param.default) : ''}
-                                  />
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-sm text-zinc-500">No params for this pipeline.</div>
-                        )}
-                      </div>
-                      <div className="flex items-center justify-end gap-3">
-                        <button
-                          onClick={() => setShowParamPresetEditor(false)}
-                          className="px-4 py-2 text-xs font-semibold border border-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-100 hover:border-zinc-700"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={saveParamPreset}
-                          disabled={!paramPresetTask?.params?.length}
-                          className="px-4 py-2 text-xs font-semibold rounded-lg bg-lime-500 text-zinc-950 hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          Save
-                        </button>
                       </div>
                     </div>
                   </div>
