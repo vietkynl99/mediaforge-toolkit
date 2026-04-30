@@ -19,9 +19,7 @@ import {
   HardDrive,
   FileVideo,
   FileAudio,
-  Type,
-  Languages,
-  Scissors
+  Type
 } from 'lucide-react';
 import type { JobStatus, ProcessingTask, MediaJob } from './types/job';
 export type { JobStatus, ProcessingTask, MediaJob };
@@ -36,10 +34,6 @@ export const TASK_ICONS = {
   download_merge: Link2,
   uvr: FileAudio,
   tts: FileAudio,
-  stt: Type,
-  translate: Languages,
-  edit: Scissors,
-  burn: FileVideo,
   render: FileVideo
 };
 

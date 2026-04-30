@@ -912,10 +912,6 @@ const taskNameMap: Record<string, string> = {
   download_merge: 'Merge Video + Audio',
   uvr: 'Vocal Removal',
   tts: 'Text-to-Speech',
-  stt: 'Speech-to-Text',
-  translate: 'Translation',
-  edit: 'Subtitle Edit',
-  burn: 'Subtitle Burn',
   render: 'Render'
 };
 

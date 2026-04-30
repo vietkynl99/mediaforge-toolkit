@@ -2,7 +2,7 @@ export type JobStatus = 'queued' | 'processing' | 'awaiting_input' | 'completed'
 
 export interface ProcessingTask {
   id: string;
-  type: 'download' | 'download_subs' | 'download_video' | 'download_audio' | 'download_merge' | 'uvr' | 'tts' | 'stt' | 'translate' | 'edit' | 'burn' | 'render';
+  type: 'download' | 'download_subs' | 'download_video' | 'download_audio' | 'download_merge' | 'uvr' | 'tts' | 'render';
   name: string;
   status: 'pending' | 'active' | 'done' | 'error';
   progress: number;

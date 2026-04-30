@@ -15,16 +15,12 @@ const STATUS_COLORS: Record<JobStatus, string> = {
   cancelled: 'bg-zinc-600'
 };
 
-const PIPELINE_TYPES = ['download', 'uvr', 'tts', 'stt', 'translate', 'edit', 'burn', 'render'] as const;
+const PIPELINE_TYPES = ['download', 'uvr', 'tts', 'render'] as const;
 
 const PIPELINE_COLORS: Record<string, string> = {
   download: 'bg-blue-500',
   uvr: 'bg-purple-500',
   tts: 'bg-pink-500',
-  stt: 'bg-cyan-500',
-  translate: 'bg-indigo-500',
-  edit: 'bg-orange-500',
-  burn: 'bg-red-500',
   render: 'bg-lime-500'
 };
 
