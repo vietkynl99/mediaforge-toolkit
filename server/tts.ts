@@ -13,7 +13,6 @@ type TtsRequestBody = {
   voice?: string;
   rate?: number;
   pitch?: number;
-  volume?: number;
   overlapMode?: 'overlap' | 'truncate';
   removeLineBreaks?: boolean;
 };
@@ -80,13 +79,6 @@ const formatRate = (value?: number) => {
   return `${percent >= 0 ? '+' : ''}${percent}%`;
 };
 
-const formatVolume = (value?: number) => {
-  if (value === undefined || value === null) return undefined;
-  if (!Number.isFinite(value) || value <= 0) return undefined;
-  const percent = Math.round((value - 1) * 100);
-  return `${percent >= 0 ? '+' : ''}${percent}%`;
-};
-
 const formatPitch = (value?: number) => {
   if (value === undefined || value === null) return undefined;
   if (!Number.isFinite(value)) return undefined;
@@ -107,7 +99,6 @@ type CueCacheIdentity = {
   cueEndMs: number;
   cueText: string;
   voice: string;
-  volume: string | null;
   removeLineBreaks: boolean;
   outputExt: string;
   engineCommand: string;
@@ -147,7 +138,6 @@ const buildCueCacheIdentity = (
   cue: SubtitleCue,
   cueIndex: number,
   voice: string,
-  volume: string | undefined,
   removeLineBreaks: boolean,
   outputExt: string,
   engineCommand: string
@@ -158,7 +148,6 @@ const buildCueCacheIdentity = (
   cueEndMs: Math.max(0, Math.round(cue.end * 1000)),
   cueText: cue.text,
   voice,
-  volume: volume ?? null,
   removeLineBreaks,
   outputExt,
   engineCommand,
@@ -192,7 +181,6 @@ const sameCueIdentity = (left: CueCacheIdentity, right: CueCacheIdentity) =>
   left.cueEndMs === right.cueEndMs &&
   left.cueText === right.cueText &&
   left.voice === right.voice &&
-  left.volume === right.volume &&
   left.removeLineBreaks === right.removeLineBreaks &&
   left.outputExt === right.outputExt &&
   left.engineCommand === right.engineCommand;
@@ -549,7 +537,6 @@ ttsRouter.post('/', async (req, res) => {
   const cueOutputExt = TTS_CUE_OUTPUT_EXT;
   const rate = formatRate(body.rate);
   const pitch = formatPitch(body.pitch);
-  const volume = formatVolume(body.volume);
   const fxRate = sanitizeRateFactor(body.rate);
   const fxPitch = sanitizePitchSemitones(body.pitch);
   const overlapMode = body.overlapMode === 'overlap' ? 'overlap' : 'truncate';
@@ -621,7 +608,7 @@ ttsRouter.post('/', async (req, res) => {
 
       const processCue = async (i: number) => {
         const cue = subtitleCues[i];
-        const identity = buildCueCacheIdentity(sourceRelativePath, cue, i, voice, volume, removeLineBreaks, cueOutputExt, command);
+        const identity = buildCueCacheIdentity(sourceRelativePath, cue, i, voice, removeLineBreaks, cueOutputExt, command);
         const key = toCueCacheKey(identity);
         const { audioPath, metaPath } = buildCueCachePaths(projectRoot!, i, key, cueOutputExt);
         const existingMeta = await readCueCacheMeta(metaPath);
@@ -648,7 +635,7 @@ ttsRouter.post('/', async (req, res) => {
           audioDurations[i] = await runFfprobeDuration(fxP.audioPath).catch(() => Math.max(0, cue.end - cue.start));
           return;
         }
-        await runEdgeTtsWithRetry(command, ['--text', cue.text, '--voice', voice, '--write-media', audioPath, ...withFlagValue('--volume', volume)]);
+        await runEdgeTtsWithRetry(command, ['--text', cue.text, '--voice', voice, '--write-media', audioPath]);
         const normP = `${audioPath}.norm.wav`;
         await new Promise((res, rej) => { const p = spawn(ffmpegPath, ['-y', '-i', audioPath, '-vn', '-ar', String(TTS_INTERNAL_SAMPLE_RATE), '-ac', String(TTS_INTERNAL_CHANNELS), '-c:a', 'pcm_s16le', normP], { stdio: 'ignore' }); p.on('close', c => c === 0 ? res(0) : rej(new Error('norm failed'))); });
         await fs.rename(normP, audioPath);
@@ -892,7 +879,6 @@ ttsRouter.post('/', async (req, res) => {
       ];
       args.push(...withFlagValue('--rate', rate));
       args.push(...withFlagValue('--pitch', pitch));
-      args.push(...withFlagValue('--volume', volume));
       await runEdgeTtsWithRetry(command, args);
     }
 

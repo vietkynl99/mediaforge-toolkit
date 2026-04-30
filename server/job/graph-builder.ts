@@ -42,7 +42,6 @@ export interface JobInputs {
   ttsVoice?: string;
   ttsRate?: number;
   ttsPitch?: number;
-  ttsVolume?: number;
   ttsOverlapMode?: 'overlap' | 'truncate';
   ttsRemoveLineBreaks?: boolean;
   renderConfigV2?: any;
@@ -100,7 +99,6 @@ export function buildJobGraph(
       if (inputs.ttsVoice) task.params.voice = inputs.ttsVoice;
       if (inputs.ttsRate !== undefined) task.params.rate = inputs.ttsRate;
       if (inputs.ttsPitch !== undefined) task.params.pitch = inputs.ttsPitch;
-      if (inputs.ttsVolume !== undefined) task.params.volume = inputs.ttsVolume;
       if (inputs.ttsOverlapMode) task.params.overlapMode = inputs.ttsOverlapMode;
       if (inputs.ttsRemoveLineBreaks !== undefined) task.params.removeLineBreaks = inputs.ttsRemoveLineBreaks;
     }

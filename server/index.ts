@@ -44,7 +44,6 @@ type VaultFileDTO = {
     voice?: string;
     rate?: number;
     pitch?: number;
-    volume?: number;
     overlapSeconds?: number;
     overlapMode?: 'overlap' | 'truncate';
     removeLineBreaks?: boolean;
@@ -54,7 +53,6 @@ type VaultFileDTO = {
       voice?: string;
       rate?: number;
       pitch?: number;
-      volume?: number;
       overlapSeconds?: number;
       overlapMode?: 'overlap' | 'truncate';
       removeLineBreaks?: boolean;
@@ -769,7 +767,6 @@ const upsertTtsMetadata = (payload: {
   voice?: string;
   rate?: number;
   pitch?: number;
-  volume?: number;
   overlapSeconds?: number;
   overlapMode?: 'overlap' | 'truncate';
   removeLineBreaks?: boolean;
@@ -806,7 +803,6 @@ const upsertTtsMetadata = (payload: {
           voice: payload.voice ?? undefined,
           rate: payload.rate,
           pitch: payload.pitch,
-          volume: payload.volume,
           overlapSeconds: payload.overlapSeconds,
           overlapMode: payload.overlapMode,
           removeLineBreaks: payload.removeLineBreaks,
@@ -818,7 +814,6 @@ const upsertTtsMetadata = (payload: {
         voice: payload.voice ?? undefined,
         rate: payload.rate,
         pitch: payload.pitch,
-        volume: payload.volume,
         overlapSeconds: payload.overlapSeconds,
         overlapMode: payload.overlapMode,
         removeLineBreaks: payload.removeLineBreaks,
@@ -3068,7 +3063,6 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
         voice: (job as any).__ttsVoice as string | undefined,
         rate: (job as any).__ttsRate as number | undefined,
         pitch: (job as any).__ttsPitch as number | undefined,
-        volume: (job as any).__ttsVolume as number | undefined,
         overlapMode: (job as any).__ttsOverlapMode as 'overlap' | 'truncate' | undefined,
         removeLineBreaks: (job as any).__ttsRemoveLineBreaks as boolean | undefined,
         onLog: chunk => appendJobLog(job, chunk),
@@ -3092,7 +3086,6 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
         voice: ttsResult.voice,
         rate: ttsResult.rate,
         pitch: ttsResult.pitch,
-        volume: ttsResult.volume,
         overlapSeconds: ttsResult.overlapSeconds,
         overlapMode: ttsResult.overlapMode,
         removeLineBreaks: ttsResult.removeLineBreaks,
@@ -3461,13 +3454,6 @@ const formatTtsRate = (value?: number) => {
   return `${percent >= 0 ? '+' : ''}${percent}%`;
 };
 
-const formatTtsVolume = (value?: number) => {
-  if (value === undefined || value === null) return undefined;
-  if (!Number.isFinite(value) || value <= 0) return undefined;
-  const percent = Math.round((value - 1) * 100);
-  return `${percent >= 0 ? '+' : ''}${percent}%`;
-};
-
 const formatTtsPitch = (value?: number) => {
   if (value === undefined || value === null) return undefined;
   if (!Number.isFinite(value)) return undefined;
@@ -3482,14 +3468,12 @@ const normalizeTtsOutputSettings = (options?: {
   voice?: string;
   rate?: number;
   pitch?: number;
-  volume?: number;
   overlapMode?: 'overlap' | 'truncate';
   removeLineBreaks?: boolean;
 }): TtsOutputSettings => ({
   voice: options?.voice?.trim() || DEFAULT_TTS_VOICE,
   rate: typeof options?.rate === 'number' && Number.isFinite(options.rate) ? options.rate : undefined,
   pitch: typeof options?.pitch === 'number' && Number.isFinite(options.pitch) ? options.pitch : undefined,
-  volume: typeof options?.volume === 'number' && Number.isFinite(options.volume) ? options.volume : undefined,
   overlapMode: options?.overlapMode === 'overlap' ? 'overlap' : 'truncate',
   removeLineBreaks: options?.removeLineBreaks !== false
 });
@@ -3499,7 +3483,6 @@ const buildTtsOutputSignature = (settings: TtsOutputSettings) => {
     voice: settings.voice,
     rate: settings.rate ?? null,
     pitch: settings.pitch ?? null,
-    volume: settings.volume ?? null,
     overlapMode: settings.overlapMode,
     removeLineBreaks: settings.removeLineBreaks
   };
@@ -3641,7 +3624,6 @@ type TtsTaskResult = {
   voice: string;
   rate?: number;
   pitch?: number;
-  volume?: number;
   overlapSeconds: number;
   overlapMode: 'overlap' | 'truncate';
   removeLineBreaks: boolean;
@@ -3651,7 +3633,6 @@ type TtsOutputSettings = {
   voice: string;
   rate?: number;
   pitch?: number;
-  volume?: number;
   overlapMode: 'overlap' | 'truncate';
   removeLineBreaks: boolean;
 };
@@ -3663,7 +3644,6 @@ type CueCacheIdentity = {
   cueEndMs: number;
   cueText: string;
   voice: string;
-  volume: string | null;
   removeLineBreaks: boolean;
   outputExt: string;
   engineCommand: string;
@@ -3705,7 +3685,6 @@ const buildCueCacheIdentity = (
   cue: SubtitleCue,
   cueIndex: number,
   voice: string,
-  volume: string | undefined,
   removeLineBreaks: boolean,
   outputExt: string,
   engineCommand: string
@@ -3716,7 +3695,6 @@ const buildCueCacheIdentity = (
   cueEndMs: Math.max(0, Math.round(cue.end * 1000)),
   cueText: cue.text,
   voice,
-  volume: volume ?? null,
   removeLineBreaks,
   outputExt,
   engineCommand,
@@ -3750,7 +3728,6 @@ const sameCueIdentity = (left: CueCacheIdentity, right: CueCacheIdentity) =>
   left.cueEndMs === right.cueEndMs &&
   left.cueText === right.cueText &&
   left.voice === right.voice &&
-  left.volume === right.volume &&
   left.removeLineBreaks === right.removeLineBreaks &&
   left.outputExt === right.outputExt &&
   left.engineCommand === right.engineCommand;
@@ -3916,7 +3893,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   voice?: string;
   rate?: number;
   pitch?: number;
-  volume?: number;
   overlapMode?: 'overlap' | 'truncate';
   removeLineBreaks?: boolean;
   onProgress?: (completed: number, total: number) => void;
@@ -3942,7 +3918,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   const { outputName, outputSignature } = buildTtsOutputName(inputFullPath, ttsSettings);
   const outputPath = path.join(outputDir, outputName);
   const voice = ttsSettings.voice;
-  const volume = formatTtsVolume(ttsSettings.volume);
   const fxRate = sanitizeRateFactor(ttsSettings.rate);
   const fxPitch = sanitizePitchSemitones(ttsSettings.pitch);
   const overlapMode = ttsSettings.overlapMode;
@@ -3972,7 +3947,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
       cue,
       i,
       voice,
-      volume,
       removeLineBreaks,
       TTS_CUE_OUTPUT_EXT,
       EDGE_TTS_CMD
@@ -4007,8 +3981,7 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
         '--voice',
         voice,
         '--write-media',
-        audioPath,
-        ...withFlagValue('--volume', volume)
+        audioPath
       ];
       const commandLine = [EDGE_TTS_CMD, ...args].map(formatArg).join(' ');
       options?.onLog?.(`COMMAND (tts cue raw ${i + 1}/${cues.length}): ${commandLine}\n`);
@@ -4419,7 +4392,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
     voice,
     rate: ttsSettings.rate,
     pitch: ttsSettings.pitch,
-    volume: ttsSettings.volume,
     overlapSeconds,
     overlapMode,
     removeLineBreaks
@@ -4554,7 +4526,6 @@ const buildTtsOutputMap = (ttsMeta: Map<string, VaultFileDTO['tts']>) => {
         voice: details?.voice ?? meta.voice,
         rate: details?.rate ?? meta.rate,
         pitch: details?.pitch ?? meta.pitch,
-        volume: details?.volume ?? meta.volume,
         overlapSeconds: details?.overlapSeconds ?? meta.overlapSeconds,
         overlapMode: details?.overlapMode ?? meta.overlapMode,
         removeLineBreaks: details?.removeLineBreaks ?? meta.removeLineBreaks,
@@ -5572,12 +5543,10 @@ app.post('/api/jobs/run', async (req, res) => {
   const ttsVoice = typeof req.body?.voice === 'string' ? req.body.voice.trim() : '';
   const ttsRate = typeof req.body?.rate === 'number' ? req.body.rate : undefined;
   const ttsPitch = typeof req.body?.pitch === 'number' ? req.body.pitch : undefined;
-  const ttsVolume = typeof req.body?.volume === 'number' ? req.body.volume : undefined;
   const requestedTtsSettings = normalizeTtsOutputSettings({
     voice: ttsVoice || undefined,
     rate: ttsRate,
     pitch: ttsPitch,
-    volume: ttsVolume,
     overlapMode: ttsOverlapMode,
     removeLineBreaks: ttsRemoveLineBreaks
   });
@@ -5756,7 +5725,6 @@ app.post('/api/jobs/run', async (req, res) => {
             voice: ttsVoice || undefined,
             rate: ttsRate,
             pitch: ttsPitch,
-            volume: ttsVolume,
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
           },
@@ -5786,7 +5754,6 @@ app.post('/api/jobs/run', async (req, res) => {
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
-      if (ttsVolume !== undefined) (job as any).__ttsVolume = ttsVolume;
     } else {
       if (!inputPath) {
         res.status(400).json({ error: 'Missing inputPath' });
@@ -5894,7 +5861,6 @@ app.post('/api/jobs/run', async (req, res) => {
             voice: ttsVoice || undefined,
             rate: ttsRate,
             pitch: ttsPitch,
-            volume: ttsVolume,
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
           },
@@ -5919,7 +5885,6 @@ app.post('/api/jobs/run', async (req, res) => {
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
-      if (ttsVolume !== undefined) (job as any).__ttsVolume = ttsVolume;
     }
 
     jobs.unshift(job);
