@@ -93,38 +93,43 @@ const EDGE_TTS_MAX_RETRIES = Number(process.env.EDGE_TTS_MAX_RETRIES ?? 5);
 const EDGE_TTS_RETRY_DELAY_MS = 700;
 
 type CueCacheIdentity = {
-  sourceRelativePath: string;
-  cueIndex: number;
-  cueStartMs: number;
-  cueEndMs: number;
   cueText: string;
+};
+
+type CueCacheFolderKey = {
   voice: string;
   removeLineBreaks: boolean;
-  outputExt: string;
-  engineCommand: string;
+};
+
+type CueCacheEntry = {
+  createdAt: string;
+  durationSeconds: number;
 };
 
 type CueCacheMeta = {
-  createdAt: string;
-  audioPath: string;
-  sampleRateHz: number;
-  identity: CueCacheIdentity;
+  folderIdentity: CueCacheFolderKey;
+  entries: Record<string, CueCacheEntry>;
+};
+
+type CueFxCacheFolderKey = {
+  rawFolderHash: string;
+  rate: number;
+  pitch: number;
+  outputExt: string;
 };
 
 type CueFxCacheIdentity = {
   baseCueKey: string;
-  cueIndex: number;
-  rate: number;
-  pitch: number;
-  outputExt: string;
-  engine: 'ffmpeg';
+};
+
+type CueFxCacheEntry = {
+  createdAt: string;
+  durationSeconds: number;
 };
 
 type CueFxCacheMeta = {
-  createdAt: string;
-  audioPath: string;
-  identity: CueFxCacheIdentity;
-  filter: string;
+  folderIdentity: CueFxCacheFolderKey;
+  entries: Record<string, CueFxCacheEntry>;
 };
 
 const fileExists = async (fullPath: string) =>
@@ -133,33 +138,26 @@ const fileExists = async (fullPath: string) =>
 const toCueCacheKey = (identity: CueCacheIdentity) =>
   crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 24);
 
+const toCueFxCacheKey = (identity: CueFxCacheIdentity) =>
+  crypto.createHash('sha256').update(JSON.stringify(identity)).digest('hex').slice(0, 24);
+
+const toCueFolderKey = (folderKey: CueCacheFolderKey) =>
+  crypto.createHash('sha256').update(JSON.stringify(folderKey)).digest('hex').slice(0, 12);
+
 const buildCueCacheIdentity = (
-  sourceRelativePath: string,
-  cue: SubtitleCue,
-  cueIndex: number,
-  voice: string,
-  removeLineBreaks: boolean,
-  outputExt: string,
-  engineCommand: string
+  cue: SubtitleCue
 ): CueCacheIdentity => ({
-  sourceRelativePath,
-  cueIndex,
-  cueStartMs: Math.max(0, Math.round(cue.start * 1000)),
-  cueEndMs: Math.max(0, Math.round(cue.end * 1000)),
   cueText: cue.text,
-  voice,
-  removeLineBreaks,
-  outputExt,
-  engineCommand,
 });
 
-const buildCueCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
-  const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
-  const stem = `cue-${String(cueIndex + 1).padStart(4, '0')}-${key}`;
+const buildCueCachePaths = (projectRoot: string, folderKey: CueCacheFolderKey, key: string, outputExt: string) => {
+  const folderHash = toCueFolderKey(folderKey);
+  const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME, `raw-${folderHash}`);
   return {
     cacheDir,
-    audioPath: path.join(cacheDir, `${stem}.${outputExt}`),
-    metaPath: path.join(cacheDir, `${stem}.json`)
+    audioPath: path.join(cacheDir, `${key}.${outputExt}`),
+    tmpAudioPath: path.join(cacheDir, `${key}.tmp.${outputExt}`),
+    metaPath: path.join(cacheDir, 'meta.json')
   };
 };
 
@@ -167,23 +165,41 @@ const readCueCacheMeta = async (metaPath: string): Promise<CueCacheMeta | null> 
   try {
     const raw = await fs.readFile(metaPath, 'utf-8');
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || !parsed.identity) return null;
+    if (!parsed || typeof parsed !== 'object') return null;
     return parsed as CueCacheMeta;
   } catch {
     return null;
   }
 };
 
+const writeCueCacheMeta = async (metaPath: string, meta: CueCacheMeta) => {
+  await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+};
+
+const initCueCacheMeta = async (
+  metaPath: string,
+  folderIdentity: CueCacheFolderKey
+): Promise<CueCacheMeta> => {
+  const existing = await readCueCacheMeta(metaPath);
+  if (existing) return existing;
+  const meta: CueCacheMeta = { folderIdentity, entries: {} };
+  await writeCueCacheMeta(metaPath, meta);
+  return meta;
+};
+
+const upsertCueCacheEntry = async (
+  metaPath: string,
+  folderIdentity: CueCacheFolderKey,
+  key: string,
+  entry: CueCacheEntry
+) => {
+  const meta = await initCueCacheMeta(metaPath, folderIdentity);
+  meta.entries[key] = entry;
+  await writeCueCacheMeta(metaPath, meta);
+};
+
 const sameCueIdentity = (left: CueCacheIdentity, right: CueCacheIdentity) =>
-  left.sourceRelativePath === right.sourceRelativePath &&
-  left.cueIndex === right.cueIndex &&
-  left.cueStartMs === right.cueStartMs &&
-  left.cueEndMs === right.cueEndMs &&
-  left.cueText === right.cueText &&
-  left.voice === right.voice &&
-  left.removeLineBreaks === right.removeLineBreaks &&
-  left.outputExt === right.outputExt &&
-  left.engineCommand === right.engineCommand;
+  left.cueText === right.cueText;
 
 const sanitizeRateFactor = (value?: number) => {
   if (value === undefined || value === null || !Number.isFinite(value) || value <= 0) return 1;
@@ -239,34 +255,59 @@ const buildCueFxFilter = (rate: number, pitchSemitones: number, sampleRateHz: nu
 
 const MIX_TIMING_EPSILON = 0.0005;
 
-const buildCueFxCachePaths = (projectRoot: string, cueIndex: number, key: string, outputExt: string) => {
-  const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME);
-  const stem = `cue-${String(cueIndex + 1).padStart(4, '0')}-fx-${key}`;
+const toCueFxFolderKey = (folderKey: CueFxCacheFolderKey) =>
+  crypto.createHash('sha256').update(JSON.stringify(folderKey)).digest('hex').slice(0, 12);
+
+const buildCueFxCachePaths = (projectRoot: string, rawFolderHash: string, folderKey: CueFxCacheFolderKey, key: string, outputExt: string) => {
+  const fxFolderHash = toCueFxFolderKey(folderKey);
+  const cacheDir = path.join(projectRoot, TTS_CUE_CACHE_DIRNAME, `fx-${rawFolderHash}-${fxFolderHash}`);
   return {
     cacheDir,
-    audioPath: path.join(cacheDir, `${stem}.${outputExt}`),
-    metaPath: path.join(cacheDir, `${stem}.json`)
+    audioPath: path.join(cacheDir, `${key}.${outputExt}`),
+    tmpAudioPath: path.join(cacheDir, `${key}.tmp.${outputExt}`),
+    metaPath: path.join(cacheDir, 'meta.json')
   };
 };
 
-const readCueFxMeta = async (metaPath: string): Promise<CueFxCacheMeta | null> => {
+const readCueFxCacheMeta = async (metaPath: string): Promise<CueFxCacheMeta | null> => {
   try {
     const raw = await fs.readFile(metaPath, 'utf-8');
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || !parsed.identity) return null;
+    if (!parsed || typeof parsed !== 'object') return null;
     return parsed as CueFxCacheMeta;
   } catch {
     return null;
   }
 };
 
+const writeCueFxCacheMeta = async (metaPath: string, meta: CueFxCacheMeta) => {
+  await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+};
+
+const initCueFxCacheMeta = async (
+  metaPath: string,
+  folderIdentity: CueFxCacheFolderKey
+): Promise<CueFxCacheMeta> => {
+  const existing = await readCueFxCacheMeta(metaPath);
+  if (existing) return existing;
+  const meta: CueFxCacheMeta = { folderIdentity, entries: {} };
+  await writeCueFxCacheMeta(metaPath, meta);
+  return meta;
+};
+
+const upsertCueFxCacheEntry = async (
+  metaPath: string,
+  folderIdentity: CueFxCacheFolderKey,
+  key: string,
+  entry: CueFxCacheEntry
+) => {
+  const meta = await initCueFxCacheMeta(metaPath, folderIdentity);
+  meta.entries[key] = entry;
+  await writeCueFxCacheMeta(metaPath, meta);
+};
+
 const sameCueFxIdentity = (left: CueFxCacheIdentity, right: CueFxCacheIdentity) =>
-  left.baseCueKey === right.baseCueKey &&
-  left.cueIndex === right.cueIndex &&
-  Math.abs(left.rate - right.rate) < 0.000001 &&
-  Math.abs(left.pitch - right.pitch) < 0.000001 &&
-  left.outputExt === right.outputExt &&
-  left.engine === right.engine;
+  left.baseCueKey === right.baseCueKey;
 
 const escapeConcatFilePath = (value: string) => value.replace(/'/g, `'\\''`);
 
@@ -608,52 +649,85 @@ ttsRouter.post('/', async (req, res) => {
 
       const processCue = async (i: number) => {
         const cue = subtitleCues[i];
-        const identity = buildCueCacheIdentity(sourceRelativePath, cue, i, voice, removeLineBreaks, cueOutputExt, command);
+        const identity = buildCueCacheIdentity(cue);
         const key = toCueCacheKey(identity);
-        const { audioPath, metaPath } = buildCueCachePaths(projectRoot!, i, key, cueOutputExt);
-        const existingMeta = await readCueCacheMeta(metaPath);
-        if (await fileExists(audioPath) && !!existingMeta && sameCueIdentity(existingMeta.identity, identity)) {
-          const srate = Number(existingMeta.sampleRateHz) || await runFfprobeSampleRate(audioPath).catch(() => 0);
-          const fxFilter = buildCueFxFilter(fxRate, fxPitch, srate || TTS_INTERNAL_SAMPLE_RATE);
+        const folderKey: CueCacheFolderKey = { voice, removeLineBreaks };
+        const { cacheDir, audioPath, tmpAudioPath, metaPath } = buildCueCachePaths(projectRoot!, folderKey, key, cueOutputExt);
+        await fs.mkdir(cacheDir, { recursive: true });
+        const meta = await readCueCacheMeta(metaPath);
+        const entry = meta?.entries[key];
+        if (await fileExists(audioPath) && !!entry) {
+          const srate = TTS_INTERNAL_SAMPLE_RATE;
+          const fxFilter = buildCueFxFilter(fxRate, fxPitch, srate);
           if (!fxFilter) {
             cuePathsArray[i] = audioPath;
             audioDurations[i] = await runFfprobeDuration(audioPath).catch(() => Math.max(0, cue.end - cue.start));
             return;
           }
-          const fxId = { baseCueKey: key, cueIndex: i, rate: roundFactor(fxRate), pitch: roundFactor(fxPitch), outputExt: cueOutputExt, engine: 'ffmpeg' } as const;
-          const fxK = crypto.createHash('sha256').update(JSON.stringify(fxId)).digest('hex').slice(0, 24);
-          const fxP = buildCueFxCachePaths(projectRoot!, i, fxK, cueOutputExt);
-          const fxM = await readCueFxMeta(fxP.metaPath);
-          if (await fileExists(fxP.audioPath) && !!fxM && sameCueFxIdentity(fxM.identity, fxId) && fxM.filter === fxFilter) {
+          const rawFolderHash = toCueFolderKey(folderKey);
+          const fxFolderKey: CueFxCacheFolderKey = {
+            rawFolderHash,
+            rate: roundFactor(fxRate),
+            pitch: roundFactor(fxPitch),
+            outputExt: cueOutputExt
+          };
+          const fxIdentity: CueFxCacheIdentity = { baseCueKey: key };
+          const fxK = toCueFxCacheKey(fxIdentity);
+          const fxP = buildCueFxCachePaths(projectRoot!, rawFolderHash, fxFolderKey, fxK, cueOutputExt);
+          await fs.mkdir(fxP.cacheDir, { recursive: true });
+          const fxM = await readCueFxCacheMeta(fxP.metaPath);
+          const fxEntry = fxM?.entries[fxK];
+          if (await fileExists(fxP.audioPath) && !!fxEntry) {
             cuePathsArray[i] = fxP.audioPath;
             audioDurations[i] = await runFfprobeDuration(fxP.audioPath).catch(() => Math.max(0, cue.end - cue.start));
             return;
           }
-          await new Promise((res, rej) => { const p = spawn(ffmpegPath, ['-y', '-i', audioPath, '-vn', '-filter:a', fxFilter, '-ar', String(TTS_INTERNAL_SAMPLE_RATE), '-ac', String(TTS_INTERNAL_CHANNELS), '-c:a', 'pcm_s16le', fxP.audioPath], { stdio: 'ignore' }); p.on('close', c => c === 0 ? res(0) : rej(new Error('fx failed'))); });
-          await fs.writeFile(fxP.metaPath, JSON.stringify({ createdAt: new Date().toISOString(), audioPath: path.relative(projectRoot!, fxP.audioPath), identity: fxId, filter: fxFilter }, null, 2));
+          await new Promise((res, rej) => { const p = spawn(ffmpegPath, ['-y', '-i', audioPath, '-vn', '-filter:a', fxFilter, '-ar', String(TTS_INTERNAL_SAMPLE_RATE), '-ac', String(TTS_INTERNAL_CHANNELS), '-c:a', 'pcm_s16le', fxP.tmpAudioPath], { stdio: 'ignore' }); p.on('close', c => c === 0 ? res(0) : rej(new Error('fx failed'))); });
+          await fs.rename(fxP.tmpAudioPath, fxP.audioPath);
+          await upsertCueFxCacheEntry(fxP.metaPath, fxFolderKey, fxK, {
+            createdAt: new Date().toISOString(),
+            durationSeconds: await runFfprobeDuration(fxP.audioPath).catch(() => Math.max(0, cue.end - cue.start))
+          });
           cuePathsArray[i] = fxP.audioPath;
           audioDurations[i] = await runFfprobeDuration(fxP.audioPath).catch(() => Math.max(0, cue.end - cue.start));
           return;
         }
-        await runEdgeTtsWithRetry(command, ['--text', cue.text, '--voice', voice, '--write-media', audioPath]);
-        const normP = `${audioPath}.norm.wav`;
-        await new Promise((res, rej) => { const p = spawn(ffmpegPath, ['-y', '-i', audioPath, '-vn', '-ar', String(TTS_INTERNAL_SAMPLE_RATE), '-ac', String(TTS_INTERNAL_CHANNELS), '-c:a', 'pcm_s16le', normP], { stdio: 'ignore' }); p.on('close', c => c === 0 ? res(0) : rej(new Error('norm failed'))); });
+        await runEdgeTtsWithRetry(command, ['--text', cue.text, '--voice', voice, '--write-media', tmpAudioPath]);
+        const normP = `${tmpAudioPath}.norm.wav`;
+        await new Promise((res, rej) => { const p = spawn(ffmpegPath, ['-y', '-i', tmpAudioPath, '-vn', '-af', 'dynaudnorm=f=500:g=31:p=0.95:m=5', '-ar', String(TTS_INTERNAL_SAMPLE_RATE), '-ac', String(TTS_INTERNAL_CHANNELS), '-c:a', 'pcm_s16le', normP], { stdio: 'ignore' }); p.on('close', c => c === 0 ? res(0) : rej(new Error('norm failed'))); });
         await fs.rename(normP, audioPath);
-        const srate = await runFfprobeSampleRate(audioPath).catch(() => 0);
-        await fs.writeFile(metaPath, JSON.stringify({ createdAt: new Date().toISOString(), audioPath: path.relative(projectRoot!, audioPath), sampleRateHz: srate, identity }, null, 2));
-        const fxFilter = buildCueFxFilter(fxRate, fxPitch, srate || TTS_INTERNAL_SAMPLE_RATE);
+        await fs.rm(tmpAudioPath, { force: true }).catch(() => null);
+        const duration = await runFfprobeDuration(audioPath).catch(() => Math.max(0, cue.end - cue.start));
+        await upsertCueCacheEntry(metaPath, folderKey, key, {
+          createdAt: new Date().toISOString(),
+          durationSeconds: duration
+        });
+        const fxFilter = buildCueFxFilter(fxRate, fxPitch, TTS_INTERNAL_SAMPLE_RATE);
         if (!fxFilter) {
           cuePathsArray[i] = audioPath;
-          audioDurations[i] = await runFfprobeDuration(audioPath).catch(() => Math.max(0, cue.end - cue.start));
+          audioDurations[i] = duration;
           return;
         }
-        const fxId = { baseCueKey: key, cueIndex: i, rate: roundFactor(fxRate), pitch: roundFactor(fxPitch), outputExt: cueOutputExt, engine: 'ffmpeg' } as const;
-        const fxK = crypto.createHash('sha256').update(JSON.stringify(fxId)).digest('hex').slice(0, 24);
-        const fxP = buildCueFxCachePaths(projectRoot!, i, fxK, cueOutputExt);
-        await new Promise((res, rej) => { const p = spawn(ffmpegPath, ['-y', '-i', audioPath, '-vn', '-filter:a', fxFilter, '-ar', String(TTS_INTERNAL_SAMPLE_RATE), '-ac', String(TTS_INTERNAL_CHANNELS), '-c:a', 'pcm_s16le', fxP.audioPath], { stdio: 'ignore' }); p.on('close', c => c === 0 ? res(0) : rej(new Error('fx failed'))); });
-        await fs.writeFile(fxP.metaPath, JSON.stringify({ createdAt: new Date().toISOString(), audioPath: path.relative(projectRoot!, fxP.audioPath), identity: fxId, filter: fxFilter }, null, 2));
+        const rawFolderHash = toCueFolderKey(folderKey);
+        const fxFolderKey: CueFxCacheFolderKey = {
+          rawFolderHash,
+          rate: roundFactor(fxRate),
+          pitch: roundFactor(fxPitch),
+          outputExt: cueOutputExt
+        };
+        const fxIdentity: CueFxCacheIdentity = { baseCueKey: key };
+        const fxK = toCueFxCacheKey(fxIdentity);
+        const fxP = buildCueFxCachePaths(projectRoot!, rawFolderHash, fxFolderKey, fxK, cueOutputExt);
+        await fs.mkdir(fxP.cacheDir, { recursive: true });
+        await new Promise((res, rej) => { const p = spawn(ffmpegPath, ['-y', '-i', audioPath, '-vn', '-filter:a', fxFilter, '-ar', String(TTS_INTERNAL_SAMPLE_RATE), '-ac', String(TTS_INTERNAL_CHANNELS), '-c:a', 'pcm_s16le', fxP.tmpAudioPath], { stdio: 'ignore' }); p.on('close', c => c === 0 ? res(0) : rej(new Error('fx failed'))); });
+        await fs.rename(fxP.tmpAudioPath, fxP.audioPath);
+        const fxDur = await runFfprobeDuration(fxP.audioPath).catch(() => Math.max(0, cue.end - cue.start));
+        await upsertCueFxCacheEntry(fxP.metaPath, fxFolderKey, fxK, {
+          createdAt: new Date().toISOString(),
+          durationSeconds: fxDur
+        });
         cuePathsArray[i] = fxP.audioPath;
-        audioDurations[i] = await runFfprobeDuration(fxP.audioPath).catch(() => Math.max(0, cue.end - cue.start));
+        audioDurations[i] = fxDur;
       };
 
       const workers = Array.from({ length: Math.min(TTS_CUE_CONCURRENCY, subtitleCues.length) }, (_, idx) => (async () => {
