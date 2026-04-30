@@ -428,6 +428,7 @@ export default function App() {
   const newJobDraftLoadedRef = useRef(false);
   const newJobDraftPendingRef = useRef<NewJobPopupDraft | null>(null);
   const newJobDraftAppliedRef = useRef(false);
+  const newJobDraftShouldApplyRef = useRef(false);
   const [downloadTemplateMenuOpen, setDownloadTemplateMenuOpen] = useState(false);
   const [uvrTemplateMenuOpen, setUvrTemplateMenuOpen] = useState(false);
   const [ttsTemplateMenuOpen, setTtsTemplateMenuOpen] = useState(false);
@@ -4085,9 +4086,14 @@ export default function App() {
   useEffect(() => {
     if (!showRunPipeline) {
       newJobDraftAppliedRef.current = false;
+      newJobDraftShouldApplyRef.current = false;
       return;
     }
     if (newJobDraftAppliedRef.current) return;
+    if (!newJobDraftShouldApplyRef.current) {
+      newJobDraftAppliedRef.current = true;
+      return;
+    }
     const draft = newJobDraftPendingRef.current;
     if (!draft) {
       newJobDraftAppliedRef.current = true;
@@ -4124,7 +4130,6 @@ export default function App() {
     const projectReadyForDraft = Boolean(resolvedProject ?? runPipelineProject) || (!vaultLoading && hasLoadedOnce);
 
     if (projectReadyForDraft) {
-      newJobDraftPendingRef.current = null;
       newJobDraftAppliedRef.current = true;
     }
   }, [
@@ -5376,6 +5381,20 @@ export default function App() {
     setRunPipelineProjectLocked(false);
     setRunPipelineProjectId(null);
     resetDownloadForm();
+    // Load draft from localStorage each time
+    try {
+      const raw = window.localStorage.getItem(NEW_JOB_POPUP_DRAFT_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as NewJobPopupDraft;
+        if (parsed && parsed.version === 1) {
+          newJobDraftPendingRef.current = parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    newJobDraftAppliedRef.current = false;
+    newJobDraftShouldApplyRef.current = true;
     setShowRunPipeline(true);
   };
 
