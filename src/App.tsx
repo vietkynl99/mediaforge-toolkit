@@ -5682,7 +5682,18 @@ export default function App() {
     runPipelineHasRender,
     runPipelineProject,
     runPipelineSubmitting,
-    onOpenPreview: () => setRenderStudioOpen(true),
+    onOpenPreview: () => {
+      // L inputs hin ti vo pending inputs  preserve khi m Render Studio
+      // ng race condition vi useEffect reset inputs hoc auto-apply template
+      renderStudioPendingInputsRef.current = {
+        videoId: renderVideoId,
+        audioId: renderAudioId,
+        subtitleId: renderSubtitleId,
+        imageIds: renderImageOrderIds,
+        allIds: renderInputFileIds
+      };
+      setRenderStudioOpen(true);
+    },
     onRun: () => runPipelineJob(),
     runPipelineHasDownload,
     runPipelineHasUvr,
