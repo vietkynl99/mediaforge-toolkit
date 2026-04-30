@@ -105,6 +105,9 @@ const LazyAuthScreen = lazy(() =>
 const LazyAppOverlays = lazy(() =>
   import('./features/app/AppOverlays').then(module => ({ default: module.AppOverlays }))
 );
+const LazySettingsPage = lazy(() =>
+  import('./features/settings/SettingsPage').then(module => ({ default: module.SettingsPage }))
+);
 
 // --- Components ---
 
@@ -6573,6 +6576,12 @@ export default function App() {
                   }}
                   onUpdateStatus={updateProjectStatus}
                 />
+              </Suspense>
+            )}
+
+            {activeTab === 'settings' && (
+              <Suspense key="tab-settings" fallback={<div className="p-8 text-sm text-zinc-500">Loading settings...</div>}>
+                <LazySettingsPage />
               </Suspense>
             )}
           </AnimatePresence>

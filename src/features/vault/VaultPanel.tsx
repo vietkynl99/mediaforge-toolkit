@@ -19,6 +19,7 @@ const STATUS_COLORS: Record<VaultStatus, string> = {
   'in progress': 'bg-blue-500',
   'done': 'bg-lime-500',
   'closed': 'bg-red-500',
+  'error': 'bg-red-600',
 };
 
 const STATUS_LABELS: Record<VaultStatus, string> = {
@@ -26,6 +27,7 @@ const STATUS_LABELS: Record<VaultStatus, string> = {
   'in progress': 'In Progress',
   'done': 'Done',
   'closed': 'Closed',
+  'error': 'Error',
 };
 
 type VaultFileView = VaultFile & {

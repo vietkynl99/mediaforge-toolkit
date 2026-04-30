@@ -1,5 +1,5 @@
 export type VaultFileType = 'video' | 'audio' | 'subtitle' | 'image' | 'output' | 'other';
-export type VaultStatus = 'todo' | 'in progress' | 'done' | 'closed';
+export type VaultStatus = 'todo' | 'in progress' | 'done' | 'closed' | 'error';
 
 export interface VaultFile {
   id: string;

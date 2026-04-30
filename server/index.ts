@@ -12,6 +12,14 @@ import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR
 import { ttsRouter } from './tts.js';
 import { buildAssDocument, parseAssRenderStyle, writeStyledAssFile } from './subtitleAss.js';
 import { RenderConfigV2, RenderItemV2, RenderEffectV2, BlurRegionEffect } from '../shared/types.js';
+import { 
+  initConfigManager, 
+  getConfigManager, 
+  initResourceManager, 
+  getResourceManager,
+  ConcurrencyConfig,
+  DEFAULT_CONCURRENCY_CONFIG 
+} from './job/index.js';
 
 type VaultFileDTO = {
   name: string;
@@ -488,6 +496,21 @@ const persistDb = async () => {
   const data = db.export();
   await fs.writeFile(dbPath, Buffer.from(data));
 };
+
+// Initialize job system
+const configManager = initConfigManager(db, persistDb);
+let concurrencyConfig: ConcurrencyConfig = DEFAULT_CONCURRENCY_CONFIG;
+
+(async () => {
+  try {
+    concurrencyConfig = await configManager.load();
+    initResourceManager(concurrencyConfig);
+    console.log('Job system initialized with concurrency config');
+  } catch (err) {
+    console.error('Failed to initialize job system:', err);
+    initResourceManager(DEFAULT_CONCURRENCY_CONFIG);
+  }
+})();
 
 const AUTH_PBKDF2_ITERATIONS = Number(process.env.AUTH_PBKDF2_ITERATIONS ?? 150000);
 const AUTH_PBKDF2_DIGEST = 'sha256';
@@ -6688,6 +6711,63 @@ app.post('/api/render-preview-v2', async (req, res) => {
     res.setHeader('X-Render-Preview-Error', safe);
   }
   res.send(previewBuf);
+});
+
+// Concurrency Settings API
+app.get('/api/settings/concurrency', async (_req, res) => {
+  try {
+    const config = configManager.get();
+    res.json(config);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load concurrency config' });
+  }
+});
+
+app.put('/api/settings/concurrency', async (req, res) => {
+  try {
+    const newConfig = req.body as Partial<ConcurrencyConfig>;
+    const updated = await configManager.update(newConfig);
+    
+    // Update resource manager at runtime
+    try {
+      const rm = getResourceManager();
+      rm.updateConfig(updated);
+    } catch {
+      // Resource manager not initialized yet
+    }
+    
+    concurrencyConfig = updated;
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save concurrency config' });
+  }
+});
+
+app.post('/api/settings/concurrency/reset', async (_req, res) => {
+  try {
+    const config = await configManager.reset();
+    
+    try {
+      const rm = getResourceManager();
+      rm.updateConfig(config);
+    } catch {
+      // Resource manager not initialized yet
+    }
+    
+    concurrencyConfig = config;
+    res.json(config);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reset concurrency config' });
+  }
+});
+
+app.get('/api/settings/concurrency/status', (_req, res) => {
+  try {
+    const rm = getResourceManager();
+    res.json(rm.getStatus());
+  } catch {
+    res.json({ totalRunning: 0, byResource: {}, byType: {} });
+  }
 });
 
 app.use((_req, res) => {

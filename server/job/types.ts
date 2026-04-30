@@ -1,0 +1,91 @@
+/**
+ * Core types for the DAG-based job scheduling system
+ */
+
+export type TaskStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export type ResourceType = 'cpu' | 'gpu' | 'network';
+
+export interface TaskNode {
+  id: string;
+  type: 'download' | 'uvr' | 'tts' | 'render';
+  name: string;
+  status: TaskStatus;
+  progress: number;
+  dependencies: string[];  // Task IDs must complete before this task
+  dependents: string[];    // Task IDs that depend on this task
+  priority: number;         // Higher = more urgent
+  params: Record<string, any>;
+  outputs?: string[];
+  error?: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface JobGraph {
+  jobId: string;
+  jobName: string;
+  projectName?: string;
+  tasks: Map<string, TaskNode>;
+  rootTasks: string[];   // Tasks with no dependencies
+  leafTasks: string[];   // Tasks with no dependents
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  error?: string;
+}
+
+/**
+ * Concurrency configuration
+ */
+export interface ConcurrencyRule {
+  taskType: string;
+  maxConcurrent: number;      // Max tasks of this type running simultaneously
+  resourceType: ResourceType; // Which resource pool this task consumes
+  priority: number;           // Default priority for this task type
+}
+
+export interface ConcurrencyConfig {
+  rules: ConcurrencyRule[];
+  globalLimits: Record<ResourceType, number>;
+}
+
+export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
+  rules: [
+    { taskType: 'download', maxConcurrent: 4, resourceType: 'network', priority: 4 },
+    { taskType: 'uvr', maxConcurrent: 1, resourceType: 'cpu', priority: 3 },
+    { taskType: 'tts', maxConcurrent: 2, resourceType: 'network', priority: 2 },
+    { taskType: 'render', maxConcurrent: 1, resourceType: 'cpu', priority: 1 },
+  ],
+  globalLimits: {
+    cpu: 8,
+    gpu: 1,
+    network: 4,
+  },
+};
+
+/**
+ * Helper to get rule for a task type
+ */
+export function getRuleForTaskType(config: ConcurrencyConfig, taskType: string): ConcurrencyRule | undefined {
+  // Exact match first
+  let rule = config.rules.find(r => r.taskType === taskType);
+  if (rule) return rule;
+  
+  // Prefix match for composite types (e.g., 'download_subs' matches 'download')
+  const prefix = taskType.split('_')[0];
+  rule = config.rules.find(r => r.taskType === prefix);
+  return rule;
+}
+
+/**
+ * Task executor result
+ */
+export interface TaskResult {
+  success: boolean;
+  outputs: string[];
+  error?: string;
+  log?: string;
+}
