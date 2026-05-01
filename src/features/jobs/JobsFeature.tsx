@@ -10,6 +10,28 @@ const LazyLogsPanel = lazy(() =>
   import('../logs/LogsPanel').then(module => ({ default: module.LogsPanel }))
 );
 
+export type ServerStats = {
+  now: string;
+  systemHealth: {
+    cpu: {
+      usage: number;
+      cores: number;
+    };
+    memory: {
+      usedPercent: number;
+      usedGB: number;
+      totalGB: number;
+    };
+  };
+  efficiency: {
+    avgDurationMs: number;
+  };
+  workload: {
+    activeJobs: number;
+    queuedJobs: number;
+  };
+};
+
 export type JobsHandle = {
   reloadJobs: () => Promise<void>;
 };
@@ -48,6 +70,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
   ref
 ) {
   const [jobs, setJobs] = useState<MediaJob[]>([]);
+  const [serverStats, setServerStats] = useState<ServerStats | null>(null);
   const [jobServerNowMs, setJobServerNowMs] = useState<number | null>(null);
   const previousJobsRef = useRef<MediaJob[]>([]);
   const [jobPage, setJobPage] = useState(1);
@@ -66,6 +89,17 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     y: 0,
     jobId: null
   });
+
+  const loadServerStats = useCallback(async () => {
+    try {
+      const response = await fetch('/api/stats');
+      if (!response.ok) return;
+      const data = await response.json() as ServerStats;
+      setServerStats(data);
+    } catch {
+      return;
+    }
+  }, []);
 
   const loadJobs = useCallback(async (page?: number, search?: string, statuses?: string[], pipelineTypes?: string[]) => {
     try {
@@ -86,10 +120,12 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
         const serverMs = new Date(data.now).getTime();
         if (Number.isFinite(serverMs)) setJobServerNowMs(serverMs);
       }
+      // Also reload stats when jobs are reloaded
+      loadServerStats();
     } catch {
       return;
     }
-  }, [jobPage, jobSearch, selectedStatuses, selectedPipelineTypes]);
+  }, [jobPage, jobSearch, selectedStatuses, selectedPipelineTypes, loadServerStats]);
 
   useImperativeHandle(ref, () => ({
     reloadJobs: () => loadJobs()
@@ -98,9 +134,13 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
   useEffect(() => {
     if (typeof window === 'undefined') return;
     loadJobs();
-    const interval = window.setInterval(() => loadJobs(), 3000);
+    loadServerStats();
+    const interval = window.setInterval(() => {
+      loadJobs();
+      loadServerStats();
+    }, 3000);
     return () => window.clearInterval(interval);
-  }, [loadJobs]);
+  }, [loadJobs, loadServerStats]);
 
   useEffect(() => {
     if (jobPage > totalPages) setJobPage(totalPages);
@@ -254,6 +294,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
         <Suspense fallback={<div className="p-8 text-sm text-zinc-500">Loading dashboard...</div>}>
           <LazyDashboard
             jobs={jobs}
+            serverStats={serverStats}
             jobPage={jobPage}
             totalPages={totalPages}
             onPageChange={(page) => {

@@ -579,6 +579,59 @@ const JOB_LOGS_DIR = path.join(process.cwd(), 'server', 'data', 'logs');
 const jobPersistTimers = new Map<string, NodeJS.Timeout>();
 let persistDbTimer: NodeJS.Timeout | null = null;
 
+// --- System Metrics Helpers ---
+let lastCpuInfo: { idle: number; total: number } | null = null;
+
+const getCpuUsage = (): number => {
+  const cpus = os.cpus();
+  let idle = 0;
+  let total = 0;
+  
+  for (const cpu of cpus) {
+    for (const type in cpu.times) {
+      total += (cpu.times as any)[type];
+    }
+    idle += cpu.times.idle;
+  }
+  
+  if (lastCpuInfo === null) {
+    lastCpuInfo = { idle, total };
+    return 0; // First call, return 0
+  }
+  
+  const idleDiff = idle - lastCpuInfo.idle;
+  const totalDiff = total - lastCpuInfo.total;
+  lastCpuInfo = { idle, total };
+  
+  if (totalDiff === 0) return 0;
+  const usage = Math.round(((totalDiff - idleDiff) / totalDiff) * 100);
+  return Math.max(0, Math.min(100, usage));
+};
+
+const getMemoryUsage = (): { usedPercent: number; usedGB: number; totalGB: number; freeGB: number } => {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  
+  return {
+    usedPercent: Math.round((usedMem / totalMem) * 100),
+    usedGB: Math.round((usedMem / (1024 * 1024 * 1024)) * 100) / 100,
+    totalGB: Math.round((totalMem / (1024 * 1024 * 1024)) * 100) / 100,
+    freeGB: Math.round((freeMem / (1024 * 1024 * 1024)) * 100) / 100
+  };
+};
+
+const getCpuCount = () => os.cpus().length;
+
+// --- Server Stats Cache ---
+// Cache stats to prevent excessive CPU/RAM calculations on every request
+// Minimum interval between recalculations: 5 seconds
+let statsCache: {
+  data: any;
+  timestamp: number;
+} | null = null;
+const STATS_CACHE_MIN_INTERVAL_MS = 5000; // 5 seconds
+
 const formatLocalTimestamp = () =>
   new Intl.DateTimeFormat('vi-VN', {
     year: 'numeric',
@@ -5135,6 +5188,71 @@ app.get('/api/jobs', async (req, res) => {
     };
   });
   res.json({ jobs: jobSummaries, total, page, limit, totalPages, now: new Date().toISOString() });
+});
+
+// Get server statistics for dashboard metrics (system health + job stats)
+// Uses cache with 5-second minimum interval to prevent excessive calculations
+app.get('/api/stats', async (req, res) => {
+  const now = Date.now();
+  
+  // Check if cache is still valid (within 5 seconds)
+  if (statsCache && (now - statsCache.timestamp) < STATS_CACHE_MIN_INTERVAL_MS) {
+    // Return cached data but update the 'now' field to current time
+    // This gives clients accurate timestamp while avoiding recalculation
+    res.json({
+      ...statsCache.data,
+      now: new Date().toISOString()
+    });
+    return;
+  }
+  
+  // Cache is stale or doesn't exist, recalculate
+  const currentTime = new Date();
+  
+  // 1. System Metrics: Real CPU and RAM usage
+  const cpuUsage = getCpuUsage();
+  const memoryUsage = getMemoryUsage();
+  const cpuCount = getCpuCount();
+  
+  // 2. Active Workload: Count jobs by status
+  const activeJobs = jobs.filter(job => job.status === 'processing');
+  const queuedJobs = jobs.filter(job => job.status === 'queued');
+  
+  // 3. Processing Efficiency: Average duration of completed jobs
+  const completedJobs = jobs.filter(job => job.status === 'completed' && job.durationMs);
+  const avgDurationMs = completedJobs.length > 0
+    ? completedJobs.reduce((acc, job) => acc + (job.durationMs || 0), 0) / completedJobs.length
+    : 0;
+  
+  const statsData = {
+    now: currentTime.toISOString(),
+    systemHealth: {
+      cpu: {
+        usage: cpuUsage,
+        cores: cpuCount
+      },
+      memory: {
+        usedPercent: memoryUsage.usedPercent,
+        usedGB: memoryUsage.usedGB,
+        totalGB: memoryUsage.totalGB
+      }
+    },
+    efficiency: {
+      avgDurationMs
+    },
+    workload: {
+      activeJobs: activeJobs.length,
+      queuedJobs: queuedJobs.length
+    }
+  };
+  
+  // Update cache
+  statsCache = {
+    data: statsData,
+    timestamp: now
+  };
+  
+  res.json(statsData);
 });
 
 // Get full job details by ID

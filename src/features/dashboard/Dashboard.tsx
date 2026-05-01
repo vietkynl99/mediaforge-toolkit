@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { RefreshCw, CheckCircle2, Clock, Search, X, ChevronDown, Filter } from 'lucide-react';
+import { RefreshCw, CheckCircle2, Clock, Search, X, ChevronDown, Filter, Zap, Activity, Cpu, Gauge, HardDrive } from 'lucide-react';
 import { MediaJob, JobStatus } from '../../types';
 import { JobRow } from '../jobs/JobRow';
+import type { ServerStats } from '../jobs/JobsFeature';
 
 const JOB_STATUSES: JobStatus[] = ['queued', 'processing', 'awaiting_input', 'completed', 'failed', 'cancelled'];
 
@@ -26,6 +27,7 @@ const PIPELINE_COLORS: Record<string, string> = {
 
 interface DashboardProps {
   jobs: MediaJob[];
+  serverStats: ServerStats | null;
   jobPage: number;
   totalPages: number;
   onPageChange: (page: number) => void;
@@ -42,6 +44,7 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({
   jobs,
+  serverStats,
   jobPage,
   totalPages,
   onPageChange,
@@ -131,10 +134,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
   }, []);
 
   const hasServerNow = Boolean(baseRef.current);
-  const completedJobCount = jobs.filter(job => job.status === 'completed').length;
-  const failedJobCount = jobs.filter(job => job.status === 'failed').length;
-  const settledJobCount = completedJobCount + failedJobCount;
-  const successRate = settledJobCount > 0 ? Math.round((completedJobCount / settledJobCount) * 1000) / 10 : null;
+
+  // --- Use stats from API (real server data) instead of calculating from paginated jobs ---
+  const systemHealth = serverStats?.systemHealth;
+  const efficiency = serverStats?.efficiency;
+  const workload = serverStats?.workload;
+  
+  const formatDurationSimple = (ms: number) => {
+    if (ms <= 0) return '--';
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+  };
 
   return (
     <motion.div 
@@ -146,29 +158,63 @@ export const Dashboard: React.FC<DashboardProps> = ({
     >
       {/* Quick Stats Grid */}
       <div className="grid grid-cols-3 gap-2 md:gap-4 mb-3">
+        {/* System Health */}
         <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
           <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-2 mb-1 md:mb-3">
-            <div className="w-fit p-1 md:p-1.5 bg-blue-500/10 text-blue-400 rounded-lg"><RefreshCw size={12} className="md:size-4" /></div>
-            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Throughput</h3>
+            <div className="w-fit p-1 md:p-1.5 bg-blue-500/10 text-blue-400 rounded-lg"><Cpu size={12} className="md:size-4" /></div>
+            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">System Health</h3>
           </div>
-          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
-          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[8px] md:text-[11px] text-zinc-500">CPU</span>
+              <span className="text-xs md:text-sm font-bold text-zinc-100">{systemHealth?.cpu?.usage ?? 0}%</span>
+            </div>
+            <div className="h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
+              <div 
+                className={`h-full transition-all ${ 
+                  (systemHealth?.cpu?.usage ?? 0) > 80 ? 'bg-red-500' : 
+                  (systemHealth?.cpu?.usage ?? 0) > 60 ? 'bg-amber-500' : 'bg-blue-500'
+                }`}
+                style={{ width: `${systemHealth?.cpu?.usage ?? 0}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-[8px] md:text-[11px] text-zinc-500">RAM</span>
+              <span className="text-xs md:text-sm font-bold text-zinc-100">{systemHealth?.memory?.usedPercent ?? 0}%</span>
+            </div>
+            <div className="h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
+              <div 
+                className={`h-full transition-all ${
+                  (systemHealth?.memory?.usedPercent ?? 0) > 80 ? 'bg-red-500' : 
+                  (systemHealth?.memory?.usedPercent ?? 0) > 60 ? 'bg-amber-500' : 'bg-lime-500'
+                }`}
+                style={{ width: `${systemHealth?.memory?.usedPercent ?? 0}%` }}
+              />
+            </div>
+            <p className="text-[8px] md:text-[11px] text-zinc-500 truncate mt-1">
+              {systemHealth?.memory?.usedGB ?? 0}/{systemHealth?.memory?.totalGB ?? 0} GB • {systemHealth?.cpu?.cores ?? 0} cores
+            </p>
+          </div>
         </div>
+
+        {/* Processing Efficiency */}
         <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
           <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-2 mb-1 md:mb-3">
-            <div className="w-fit p-1 md:p-1.5 bg-lime-500/10 text-lime-400 rounded-lg"><CheckCircle2 size={12} className="md:size-4" /></div>
-            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Success Rate</h3>
+            <div className="w-fit p-1 md:p-1.5 bg-lime-500/10 text-lime-400 rounded-lg"><Gauge size={12} className="md:size-4" /></div>
+            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Efficiency</h3>
           </div>
-          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">{successRate !== null ? `${successRate}%` : '--'}</div>
-          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">{completedJobCount} done, {failedJobCount} fail</p>
+          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">{formatDurationSimple(efficiency?.avgDurationMs ?? 0)}</div>
+          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">Avg. job duration</p>
         </div>
+
+        {/* Active Workload */}
         <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
           <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-2 mb-1 md:mb-3">
-            <div className="w-fit p-1 md:p-1.5 bg-amber-500/10 text-amber-400 rounded-lg"><Clock size={12} className="md:size-4" /></div>
-            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Queue Time</h3>
+            <div className="w-fit p-1 md:p-1.5 bg-amber-500/10 text-amber-400 rounded-lg"><Activity size={12} className="md:size-4" /></div>
+            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Workload</h3>
           </div>
-          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
-          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
+          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">{workload?.activeJobs ?? 0} Running</div>
+          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">{workload?.queuedJobs ?? 0} jobs in queue</p>
         </div>
       </div>
 
