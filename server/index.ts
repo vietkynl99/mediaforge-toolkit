@@ -5111,7 +5111,8 @@ app.get('/api/jobs', async (req, res) => {
       finishedAt: job.finishedAt,
       durationMs: job.durationMs,
       error: truncatedError,
-      logFile
+      logFile,
+      params: job.params
     };
   });
   res.json({ jobs: jobSummaries, total, page, limit, totalPages, now: new Date().toISOString() });

@@ -1927,6 +1927,7 @@ export default function App() {
     if (!showRenderStudio && !showRunPipeline) return;
     if (runPipelineRenderTemplateId === 'custom') return;
     if (!runPipelineProject) return;
+    if (runAgainPrefillRef.current) return; // Don't auto-apply template when running again from job
     const template = renderTemplates.find(t => t.id === runPipelineRenderTemplateId);
     if (!template) return;
     const key = `${runPipelineProject.id}:${template.id}`;
@@ -4090,6 +4091,7 @@ export default function App() {
     if (!showRunPipeline) {
       newJobDraftAppliedRef.current = false;
       newJobDraftShouldApplyRef.current = false;
+      runAgainPrefillRef.current = false; // Reset when popup closes
       return;
     }
     if (newJobDraftAppliedRef.current) return;
@@ -4200,6 +4202,7 @@ export default function App() {
       setDownloadProjectName(prev => prev || runPipelineProject?.name || '');
       return;
     }
+    if (runAgainPrefillRef.current) return; // Don't reset download form when running again from job
     if (!runPipelineProjectId && downloadProjectName.trim()) {
       const match = vaultFolders.find(folder => folder.name.toLowerCase() === downloadProjectName.trim().toLowerCase());
       if (match) {
@@ -4308,6 +4311,7 @@ export default function App() {
   useEffect(() => {
     if (!runPipelineProject || !runPipelineHasRender) return;
     if (runPipelineRenderTemplateId !== 'custom') return;
+    if (runAgainPrefillRef.current) return; // Don't auto-select files when running again from job
     const projectId = runPipelineProject.id;
     const projectChanged = lastRenderProjectIdRef.current !== projectId;
     lastRenderProjectIdRef.current = projectId;
