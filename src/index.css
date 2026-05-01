@@ -41,7 +41,7 @@
     }
 
     /* Badge/button nhỏ - không cần touch target lớn */
-    .compact-badge {
+    .compact-badge, input[type="checkbox"], input[type="radio"] {
       min-height: auto;
       min-width: auto;
     }

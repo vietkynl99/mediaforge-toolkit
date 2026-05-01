@@ -233,12 +233,12 @@ export const RunPipelineTtsConfig: React.FC<RunPipelineTtsConfigProps> = ({
             <span className="text-xs text-zinc-500">st</span>
           </div>
         </div>
-        <label className="flex items-center gap-2 text-xs text-zinc-300">
+        <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
           <input
             type="checkbox"
             checked={runPipelineTtsRemoveLineBreaks}
             onChange={e => setRunPipelineTtsRemoveLineBreaks(e.target.checked)}
-            className="accent-lime-400"
+            className="accent-lime-400 w-3.5 h-3.5"
           />
           <span>Remove line breaks</span>
         </label>

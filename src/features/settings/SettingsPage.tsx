@@ -220,40 +220,43 @@ export function SettingsPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-zinc-800">
-                <th className="text-left text-[11px] text-zinc-500 uppercase tracking-wider px-4 py-3">Task Type</th>
-                <th className="text-left text-[11px] text-zinc-500 uppercase tracking-wider px-4 py-3">Resource</th>
-                <th className="text-center text-[11px] text-zinc-500 uppercase tracking-wider px-4 py-3">Max Concurrent</th>
-                <th className="text-center text-[11px] text-zinc-500 uppercase tracking-wider px-4 py-3">Priority</th>
+                <th className="text-left text-[9px] md:text-[10px] text-zinc-500 uppercase tracking-wider px-2 md:px-4 py-3">Task Type</th>
+                <th className="text-left text-[9px] md:text-[10px] text-zinc-500 uppercase tracking-wider px-2 md:px-4 py-3">Resource</th>
+                <th className="text-center text-[9px] md:text-[10px] text-zinc-500 uppercase tracking-wider px-2 md:px-4 py-3">Max</th>
+                <th className="text-center text-[9px] md:text-[10px] text-zinc-500 uppercase tracking-wider px-2 md:px-4 py-3">Pri</th>
               </tr>
             </thead>
             <tbody>
               {config.rules.map(rule => (
                 <tr key={rule.taskType} className="border-b border-zinc-800/50 last:border-0 hover:bg-zinc-800/20">
-                  <td className="px-4 py-3 text-sm text-zinc-200">
-                    {TASK_TYPE_LABELS[rule.taskType] || rule.taskType}
+                  <td className="px-2 md:px-4 py-3 text-xs md:text-sm text-zinc-200">
+                    <span className="md:hidden">{rule.taskType.charAt(0).toUpperCase() + rule.taskType.slice(1)}</span>
+                    <span className="hidden md:inline">{TASK_TYPE_LABELS[rule.taskType] || rule.taskType}</span>
                   </td>
-                  <td className="px-4 py-3 text-sm text-zinc-400 flex items-center gap-1.5">
-                    {RESOURCE_ICONS[rule.resourceType]}
-                    {RESOURCE_LABELS[rule.resourceType] || rule.resourceType}
+                  <td className="px-2 md:px-4 py-3 text-xs md:text-sm text-zinc-400">
+                    <div className="flex items-center gap-1 md:gap-1.5 whitespace-nowrap">
+                      {RESOURCE_ICONS[rule.resourceType]}
+                      <span>{RESOURCE_LABELS[rule.resourceType] || rule.resourceType}</span>
+                    </div>
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-2 md:px-4 py-3 text-center">
                     <input
                       type="number"
                       min={1}
                       max={32}
                       value={rule.maxConcurrent}
                       onChange={e => updateRule(rule.taskType, 'maxConcurrent', parseInt(e.target.value) || 1)}
-                      className="w-16 px-2 py-1 text-sm text-center text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+                      className="w-10 md:w-16 px-1 py-1 text-xs md:text-sm text-center text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
                     />
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-2 md:px-4 py-3 text-center">
                     <input
                       type="number"
                       min={1}
                       max={100}
                       value={rule.priority}
                       onChange={e => updateRule(rule.taskType, 'priority', parseInt(e.target.value) || 1)}
-                      className="w-16 px-2 py-1 text-sm text-center text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+                      className="w-10 md:w-16 px-1 py-1 text-xs md:text-sm text-center text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
                     />
                   </td>
                 </tr>

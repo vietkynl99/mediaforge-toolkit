@@ -197,12 +197,12 @@ export const RunPipelineDownloadConfig: React.FC<RunPipelineDownloadConfigProps>
             className="hidden"
           />
         </label>
-        <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300">
+        <label className="flex items-center gap-2 px-2.5 py-1.5 border border-zinc-800 rounded-lg text-xs text-zinc-300 cursor-pointer">
           <input
             type="checkbox"
             checked={downloadNoPlaylist}
             onChange={e => setDownloadNoPlaylist(e.target.checked)}
-            className="accent-lime-400"
+            className="accent-lime-400 w-3.5 h-3.5"
           />
           No playlist
         </label>

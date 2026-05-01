@@ -71,7 +71,7 @@ export const RunPipelineModal: React.FC<RunPipelineModalProps> = ({
               <button
                 onClick={onRun}
                 disabled={runPipelineSubmitting}
-                className="px-3 py-1.5 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                className="px-4 py-1 bg-lime-500 text-zinc-950 rounded-lg text-xs font-semibold hover:bg-lime-400 transition-colors disabled:opacity-60 disabled:cursor-not-allowed min-h-0 min-w-0"
               >
                 {runPipelineSubmitting ? 'Queuing...' : 'Run'}
               </button>
