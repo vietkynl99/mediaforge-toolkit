@@ -223,11 +223,13 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
                 const totalVideoDuration = meta?.totalVideoDuration ?? '0s';
                 
                 return (
-                  <button
+                  <div
                     key={folder.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onSelectProject(folder.id)}
                     onContextMenu={event => onOpenContextMenu(event, folder)}
-                    className={`text-left p-3 rounded-xl border transition-colors ${
+                    className={`text-left p-3 rounded-xl border transition-colors cursor-pointer ${
                       isActive ? 'border-lime-500/40 bg-lime-500/10' : 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700'
                     }`}
                   >
@@ -320,7 +322,7 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
                         </div>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
