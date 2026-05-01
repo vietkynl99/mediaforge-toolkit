@@ -8,7 +8,8 @@ import {
   Activity,
   Cpu,
   HardDrive,
-  X
+  X,
+  LogOut
 } from 'lucide-react';
 
 interface AppSidebarProps {
@@ -16,6 +17,7 @@ interface AppSidebarProps {
   setCollapsed: (next: boolean) => void;
   activeTab: string;
   onNavigateTab: (tab: 'dashboard' | 'forge' | 'vault' | 'settings' | 'logs') => void;
+  onLogout: () => void;
   isMobile?: boolean;
   onClose?: () => void;
 }
@@ -49,6 +51,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   setCollapsed,
   activeTab,
   onNavigateTab,
+  onLogout,
   isMobile = false,
   onClose
 }) => {
@@ -85,25 +88,17 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           collapsed={collapsed}
         />
         <SidebarItem
-          icon={Hammer}
-          label="Pipeline Forge"
-          active={activeTab === 'forge'}
-          onClick={() => onNavigateTab('forge')}
-          collapsed={collapsed}
-        />
-        <SidebarItem
           icon={Database}
           label="Media Vault"
           active={activeTab === 'vault'}
           onClick={() => onNavigateTab('vault')}
           collapsed={collapsed}
         />
-        <div className="my-4 border-t border-zinc-800/50" />
         <SidebarItem
-          icon={Settings}
-          label="Settings"
-          active={activeTab === 'settings'}
-          onClick={() => onNavigateTab('settings')}
+          icon={Hammer}
+          label="Pipeline Forge"
+          active={activeTab === 'forge'}
+          onClick={() => onNavigateTab('forge')}
           collapsed={collapsed}
         />
         <SidebarItem
@@ -113,6 +108,23 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           onClick={() => onNavigateTab('logs')}
           collapsed={collapsed}
         />
+        
+        <div className="mt-auto flex flex-col gap-1">
+          <div className="my-2 border-t border-zinc-800/50" />
+          <SidebarItem
+            icon={Settings}
+            label="Settings"
+            active={activeTab === 'settings'}
+            onClick={() => onNavigateTab('settings')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={LogOut}
+            label="Logout"
+            onClick={onLogout}
+            collapsed={collapsed}
+          />
+        </div>
       </nav>
     </aside>
   );

@@ -5845,6 +5845,7 @@ export default function App() {
             setCollapsed={setSidebarCollapsed}
             activeTab={activeTab}
             onNavigateTab={navigateTab}
+            onLogout={handleLogout}
             isMobile={false}
           />
         </div>
@@ -5869,7 +5870,8 @@ export default function App() {
               navigateTab(tab);
               setMobileSidebarOpen(false);
             }}
-            isMobile={true}
+            onLogout={handleLogout}
+            isMobile
             onClose={() => setMobileSidebarOpen(false)}
           />
         </Suspense>
@@ -5879,7 +5881,6 @@ export default function App() {
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         <AppHeader
           onNewJob={openNewJob}
-          onLogout={handleLogout}
           onToggleMobileSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
         />
 

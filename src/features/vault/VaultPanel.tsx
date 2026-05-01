@@ -184,25 +184,25 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] gap-6 flex-1 min-h-0">
         {/* Folder Navigation */}
         <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 min-h-0 min-w-0">
-          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-400">
+          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg pl-3 pr-0.5 lg:pr-3 h-8 text-xs text-zinc-400">
             <Search size={14} />
             <input
               value={folderQuery}
               onChange={e => setFolderQuery(e.target.value)}
               placeholder="Search"
-              className="bg-transparent focus:outline-none"
+              className="bg-transparent focus:outline-none w-full"
             />
-            <div className="ml-auto flex items-center gap-2">
+            <div className="flex items-center gap-1 -mr-1.5 lg:mr-0">
               <button
                 onClick={onImport}
-                className="px-2 py-1 rounded-md border border-zinc-800 text-zinc-400 hover:text-zinc-100 hover:border-lime-500/40"
+                className="p-1 lg:px-2 lg:py-1 rounded-md text-zinc-400 border border-zinc-800 lg:border-zinc-800 hover:text-zinc-100 !hover:border-lime-500/40 lg:!hover:border-lime-500/40"
                 title="Import files"
               >
                 <Upload size={14} />
               </button>
               <button
                 onClick={onRefresh}
-                className="text-zinc-400 hover:text-zinc-100 transition-colors"
+                className="p-1 lg:px-2 lg:py-1 text-zinc-400 hover:text-zinc-100 transition-colors"
                 title="Rescan folders"
               >
                 <RefreshCw size={14} className={loading ? 'animate-spin-soft' : ''} />
@@ -259,7 +259,7 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
                                   e.stopPropagation();
                                   setOpenStatusFolderId(openStatusFolderId === folder.id ? null : folder.id);
                                 }}
-                                className={`flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${STATUS_COLORS[folder.status]} text-white shrink-0 hover:opacity-80 transition-opacity whitespace-nowrap`}
+                                className={`flex items-center gap-1 text-[9px] leading-none font-bold uppercase tracking-wider px-2 h-4 rounded compact-badge ${STATUS_COLORS[folder.status]} text-white shrink-0 hover:opacity-80 transition-opacity whitespace-nowrap`}
                               >
                                 {STATUS_LABELS[folder.status]}
                                 <ChevronDown size={10} className={`transition-transform ${openStatusFolderId === folder.id ? 'rotate-180' : ''}`} />

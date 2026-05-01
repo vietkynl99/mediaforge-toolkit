@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { FileVideo, Download, FileAudio, Type, Languages } from 'lucide-react';
+import { FileVideo, Download, FileAudio, Type, Languages, Plus } from 'lucide-react';
 import { PipelineSummary, TaskTemplate, RenderTemplate, SavedTaskTemplate } from '../../types';
 
 interface PipelineForgeProps {
@@ -68,15 +68,15 @@ export const PipelineForge: React.FC<PipelineForgeProps> = ({
         }}
         role="button"
         tabIndex={0}
-        className="group text-left p-3 md:p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
+        className="group text-left p-2.5 md:p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer"
       >
-        <div className="flex items-start gap-3 min-w-0 flex-1">
-          <div className="h-8 w-8 md:h-9 md:w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center shrink-0">
-            <PipelineIcon size={16} className="text-zinc-200 md:w-[18px] md:h-[18px]" />
+        <div className="flex items-start gap-2.5 md:gap-3 min-w-0 flex-1">
+          <div className="h-7 w-7 md:h-9 md:w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center shrink-0">
+            <PipelineIcon size={14} className="text-zinc-200 md:w-[18px] md:h-[18px]" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs md:text-sm font-semibold text-zinc-100 truncate">{pipeline.name}</div>
-            <div className="mt-1 md:mt-2 text-[10px] md:text-xs text-zinc-500">
+            <div className="text-[11px] md:text-sm font-semibold text-zinc-100 truncate">{pipeline.name}</div>
+            <div className="mt-0.5 md:mt-2 text-[9px] md:text-xs text-zinc-500">
               {pipeline.updatedAt === 'Built-in'
                 ? 'Built-in'
                 : `${pipeline.steps} steps • ${pipeline.updatedAt}`}
@@ -130,18 +130,18 @@ export const PipelineForge: React.FC<PipelineForgeProps> = ({
         role="button"
         tabIndex={0}
         title={tooltip}
-        className="group text-left p-3 md:p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer overflow-hidden"
+        className="group text-left p-2.5 md:p-4 rounded-lg border border-zinc-800 bg-zinc-900/60 hover:border-lime-500/40 transition-colors flex items-start justify-between gap-3 cursor-pointer overflow-hidden"
       >
-        <div className="flex items-start gap-3 min-w-0 flex-1">
-          <div className="h-8 w-8 md:h-9 md:w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center shrink-0">
-            <Icon size={16} className="text-zinc-200 md:w-[18px] md:h-[18px]" />
+        <div className="flex items-start gap-2.5 md:gap-3 min-w-0 flex-1">
+          <div className="h-7 w-7 md:h-9 md:w-9 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center shrink-0">
+            <Icon size={14} className="text-zinc-200 md:w-[18px] md:h-[18px]" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs md:text-sm font-semibold text-zinc-100 truncate">{name}</div>
-            <div className="mt-1 text-[10px] md:text-xs text-zinc-500">
+            <div className="text-[11px] md:text-sm font-semibold text-zinc-100 truncate">{name}</div>
+            <div className="mt-0.5 text-[9px] md:text-xs text-zinc-500">
               Task: {taskType}
             </div>
-            <div className="text-[10px] text-zinc-500">
+            <div className="text-[9px] text-zinc-500">
               Modified: {formatRelativeTime(updatedAt)}
             </div>
           </div>
@@ -158,11 +158,11 @@ export const PipelineForge: React.FC<PipelineForgeProps> = ({
       initial={false}
       animate={false as any}
       exit={false as any}
-      className="p-3 md:p-8 h-full flex flex-col"
+      className="p-2 md:p-8 h-full flex flex-col"
     >
-      <div className="mb-4 md:mb-8">
-        <h2 className="text-xl md:text-2xl font-bold text-zinc-100">Pipeline Forge</h2>
-        <p className="text-xs md:text-sm text-zinc-500">Construct a multi-step processing sequence</p>
+      <div className="mb-3 md:mb-8">
+        <h2 className="text-lg md:text-2xl font-bold text-zinc-100">Pipeline Forge</h2>
+        <p className="text-[10px] md:text-sm text-zinc-500">Construct a multi-step processing sequence</p>
       </div>
 
       {/* Two-column layout */}
@@ -175,9 +175,11 @@ export const PipelineForge: React.FC<PipelineForgeProps> = ({
               <span className="text-[10px] text-zinc-500">{taskPipelines.length + savedPipelines.length} total</span>
               <button
                 onClick={onCreateNewPipeline}
-                className="px-1.5 md:px-3 py-0.5 md:py-1 text-[10px] font-semibold bg-lime-500 text-zinc-950 rounded hover:bg-lime-400 transition-colors"
+                className="h-6 w-6 md:h-auto md:w-auto md:px-3 md:py-1 flex items-center justify-center bg-lime-500 text-zinc-950 rounded hover:bg-lime-400 transition-colors compact-badge"
+                title="Create New Pipeline"
               >
-                + New
+                <Plus size={14} className="md:hidden" />
+                <span className="hidden md:inline text-[10px] font-semibold">+ New</span>
               </button>
             </div>
           </div>

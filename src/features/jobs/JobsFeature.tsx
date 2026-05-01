@@ -191,12 +191,24 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     return jobs.find(job => job.id === jobContextMenu.jobId) ?? null;
   }, [jobs, jobContextMenu.jobId]);
 
-  const openJobContextMenu = useCallback((event: React.MouseEvent, targetJob: MediaJob) => {
+  const openJobContextMenu = useCallback((event: React.MouseEvent | React.TouchEvent, targetJob: MediaJob) => {
     event.preventDefault();
+    
+    let clientX = 0;
+    let clientY = 0;
+    
+    if ('clientX' in event) {
+      clientX = event.clientX;
+      clientY = event.clientY;
+    } else if ('touches' in event && event.touches.length > 0) {
+      clientX = event.touches[0].clientX;
+      clientY = event.touches[0].clientY;
+    }
+
     setJobContextMenu({
       open: true,
-      x: event.clientX,
-      y: event.clientY,
+      x: clientX,
+      y: clientY,
       jobId: targetJob.id
     });
   }, []);

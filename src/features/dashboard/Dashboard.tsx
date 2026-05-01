@@ -30,7 +30,7 @@ interface DashboardProps {
   totalPages: number;
   onPageChange: (page: number) => void;
   serverNowMs: number | null;
-  onJobContextMenu: (event: React.MouseEvent, job: MediaJob) => void;
+  onJobContextMenu: (event: React.MouseEvent | React.TouchEvent, job: MediaJob) => void;
   search: string;
   onSearchChange: (value: string) => void;
   onSearch: () => void;
@@ -142,37 +142,37 @@ export const Dashboard: React.FC<DashboardProps> = ({
       initial={false}
       animate={false as any}
       exit={false as any}
-      className="p-4 md:p-8"
+      className="p-2 md:p-8"
     >
       {/* Quick Stats Grid */}
-      <div className="grid grid-cols-3 gap-2 md:gap-4 mb-2">
+      <div className="grid grid-cols-3 gap-2 md:gap-4 mb-3">
         <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-          <div className="flex items-center gap-1.5 md:gap-2 mb-2 md:mb-3">
-            <div className="p-1 md:p-1.5 bg-blue-500/10 text-blue-400 rounded-lg"><RefreshCw size={14} className="md:size-4" /></div>
-            <h3 className="text-xs md:text-sm font-semibold text-zinc-200 truncate">Throughput</h3>
+          <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-2 mb-1 md:mb-3">
+            <div className="w-fit p-1 md:p-1.5 bg-blue-500/10 text-blue-400 rounded-lg"><RefreshCw size={12} className="md:size-4" /></div>
+            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Throughput</h3>
           </div>
-          <div className="text-lg md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
-          <p className="text-[9px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
+          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
+          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
         </div>
         <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-          <div className="flex items-center gap-1.5 md:gap-2 mb-2 md:mb-3">
-            <div className="p-1 md:p-1.5 bg-lime-500/10 text-lime-400 rounded-lg"><CheckCircle2 size={14} className="md:size-4" /></div>
-            <h3 className="text-xs md:text-sm font-semibold text-zinc-200 truncate">Success Rate</h3>
+          <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-2 mb-1 md:mb-3">
+            <div className="w-fit p-1 md:p-1.5 bg-lime-500/10 text-lime-400 rounded-lg"><CheckCircle2 size={12} className="md:size-4" /></div>
+            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Success Rate</h3>
           </div>
-          <div className="text-lg md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">{successRate !== null ? `${successRate}%` : '--'}</div>
-          <p className="text-[9px] md:text-[11px] text-zinc-500 truncate">{completedJobCount} done, {failedJobCount} fail</p>
+          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">{successRate !== null ? `${successRate}%` : '--'}</div>
+          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">{completedJobCount} done, {failedJobCount} fail</p>
         </div>
         <div className="p-2 md:p-4 bg-zinc-900/30 border border-zinc-800 rounded-xl">
-          <div className="flex items-center gap-1.5 md:gap-2 mb-2 md:mb-3">
-            <div className="p-1 md:p-1.5 bg-amber-500/10 text-amber-400 rounded-lg"><Clock size={14} className="md:size-4" /></div>
-            <h3 className="text-xs md:text-sm font-semibold text-zinc-200 truncate">Queue Time</h3>
+          <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-2 mb-1 md:mb-3">
+            <div className="w-fit p-1 md:p-1.5 bg-amber-500/10 text-amber-400 rounded-lg"><Clock size={12} className="md:size-4" /></div>
+            <h3 className="text-[10px] md:text-sm font-semibold text-zinc-200 truncate">Queue Time</h3>
           </div>
-          <div className="text-lg md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
-          <p className="text-[9px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
+          <div className="text-base md:text-2xl font-bold text-zinc-100 mb-0.5 md:mb-1">--</div>
+          <p className="text-[8px] md:text-[11px] text-zinc-500 truncate">No telemetry</p>
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-3 text-xs text-zinc-500 mb-2">
+      <div className="flex items-center justify-between gap-3 text-xs text-zinc-500 mb-3">
         {/* Search */}
         <div ref={searchContainerRef} className="flex items-center gap-2">
           {isSearchOpen ? (
@@ -194,7 +194,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   }
                 }}
                 placeholder="Search jobs..."
-                className="px-3 h-full bg-zinc-900 border border-zinc-700 rounded-md text-zinc-300 text-sm w-48 sm:w-64 focus:outline-none focus:border-zinc-500 placeholder:text-zinc-600 leading-none"
+                className="px-2 h-full bg-zinc-900 border border-zinc-700 rounded-md text-zinc-300 text-[11px] md:text-sm w-32 sm:w-64 focus:outline-none focus:border-zinc-500 placeholder:text-zinc-600 leading-none"
                 autoFocus
               />
               <button
@@ -208,7 +208,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 className="h-7 w-7 flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-md transition-colors"
                 title="Close search"
               >
-                <X size={16} />
+                <X size={14} />
               </button>
             </motion.div>
           ) : (
@@ -225,7 +225,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               }`}
               title="Search jobs"
             >
-              <Search size={18} />
+              <Search size={16} />
             </button>
           )}
           {search && !isSearchOpen && (
@@ -279,24 +279,35 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
-                className="absolute z-50 mt-1 top-8 right-0 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[140px]"
+                className="absolute z-50 mt-1 top-8 right-0 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[160px] whitespace-nowrap"
               >
                 {JOB_STATUSES.map(status => (
                   <label
                     key={status}
                     className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer text-sm"
                   >
-                    <input
-                      type="checkbox"
-                      checked={selectedStatuses.includes(status)}
-                      onChange={() => {
-                        const newStatuses = selectedStatuses.includes(status)
-                          ? selectedStatuses.filter(s => s !== status)
-                          : [...selectedStatuses, status];
-                        onStatusChange(newStatuses);
-                      }}
-                      className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
-                    />
+                    <div className="relative flex items-center justify-center w-4 h-4 shrink-0 overflow-hidden">
+                      <input
+                        type="checkbox"
+                        checked={selectedStatuses.includes(status)}
+                        onChange={() => {
+                          const newStatuses = selectedStatuses.includes(status)
+                            ? selectedStatuses.filter(s => s !== status)
+                            : [...selectedStatuses, status];
+                          onStatusChange(newStatuses);
+                        }}
+                        className="peer absolute inset-0 w-full h-full !appearance-none checked:!bg-blue-500 rounded border border-zinc-600 bg-zinc-800 focus:ring-0 focus:ring-offset-0 transition-colors cursor-pointer z-10"
+                      />
+                      <svg 
+                        className="relative w-2.5 h-2.5 text-white opacity-0 peer-checked:opacity-100 pointer-events-none transition-opacity z-20" 
+                        fill="none" 
+                        viewBox="0 0 24 24" 
+                        stroke="currentColor" 
+                        strokeWidth={4}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
                     <span className="capitalize text-zinc-300">{status.replace('_', ' ')}</span>
                   </label>
                 ))}
@@ -326,7 +337,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   ? selectedPipelineTypes.length <= 1
                     ? selectedPipelineTypes[0].slice(0, 4)
                     : `${selectedPipelineTypes.length}`
-                  : 'Pipeline'}
+                  : 'All'}
               </span>
               <ChevronDown size={14} className={`transition-transform ${isPipelineOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -343,17 +354,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     key={type}
                     className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer text-sm"
                   >
-                    <input
-                      type="checkbox"
-                      checked={selectedPipelineTypes.includes(type)}
-                      onChange={() => {
-                        const newTypes = selectedPipelineTypes.includes(type)
-                          ? selectedPipelineTypes.filter(t => t !== type)
-                          : [...selectedPipelineTypes, type];
-                        onPipelineTypeChange(newTypes);
-                      }}
-                      className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-0 focus:ring-offset-0"
-                    />
+                    <div className="relative flex items-center justify-center w-4 h-4 shrink-0 overflow-hidden">
+                      <input
+                        type="checkbox"
+                        checked={selectedPipelineTypes.includes(type)}
+                        onChange={() => {
+                          const newTypes = selectedPipelineTypes.includes(type)
+                            ? selectedPipelineTypes.filter(t => t !== type)
+                            : [...selectedPipelineTypes, type];
+                          onPipelineTypeChange(newTypes);
+                        }}
+                        className="peer absolute inset-0 w-full h-full !appearance-none checked:!bg-blue-500 rounded border border-zinc-600 bg-zinc-800 focus:ring-0 focus:ring-offset-0 transition-colors cursor-pointer z-10"
+                      />
+                      <svg 
+                        className="relative w-2.5 h-2.5 text-white opacity-0 peer-checked:opacity-100 pointer-events-none transition-opacity z-20" 
+                        fill="none" 
+                        viewBox="0 0 24 24" 
+                        stroke="currentColor" 
+                        strokeWidth={4}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
                     <span className="capitalize text-zinc-300">{type}</span>
                   </label>
                 ))}
@@ -367,18 +389,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <span className="sm:hidden">
             {clampedJobPage}/{totalPages}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
           <button
             onClick={() => onPageChange(Math.max(1, clampedJobPage - 1))}
             disabled={clampedJobPage === 1}
-            className="px-2 py-1 border border-zinc-800 rounded-md text-zinc-400 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-1.5 py-1 border border-zinc-800 rounded-md text-[10px] md:text-xs text-zinc-400 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Prev
           </button>
           <button
             onClick={() => onPageChange(clampedJobPage + 1)}
             disabled={clampedJobPage >= totalPages}
-            className="px-2 py-1 border border-zinc-800 rounded-md text-zinc-400 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-1.5 py-1 border border-zinc-800 rounded-md text-[10px] md:text-xs text-zinc-400 hover:text-zinc-100 hover:border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Next
           </button>
@@ -389,8 +411,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* Job List Table */}
       <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <div className="min-w-[600px] sm:min-w-[800px]">
-            <div className="grid grid-cols-[24px_70px_minmax(0,1fr)_100px_90px_90px_70px] sm:grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] gap-2 sm:gap-4 px-3 sm:px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+          <div className="min-w-[680px] sm:min-w-[800px]">
+            <div className="grid grid-cols-[24px_70px_minmax(150px,1fr)_100px_90px_90px_70px] sm:grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] gap-2 sm:gap-4 px-3 sm:px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
               <span className="text-right pr-0.5">#</span>
               <span>Created</span>
               <span>Job Details</span>

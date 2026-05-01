@@ -11,23 +11,25 @@ import {
 } from 'lucide-react';
 import { MediaJob, TASK_ICONS, JobStatus } from '../../types';
 import { formatLocalDateTime, formatDurationMs, formatRelativeTime } from '../../utils/format';
+import { useLongPress } from '../../hooks/useLongPress';
 
 const StatusBadge = ({ status }: { status: JobStatus }) => {
   const configs = {
-    queued: { icon: Clock, color: 'text-zinc-400 bg-zinc-400/10', label: 'Queued' },
-    processing: { icon: RefreshCw, color: 'text-blue-400 bg-blue-400/10', label: 'Processing' },
-    awaiting_input: { icon: AlertCircle, color: 'text-amber-400 bg-amber-400/10', label: 'Awaiting Review' },
-    completed: { icon: CheckCircle2, color: 'text-lime-400 bg-lime-400/10', label: 'Completed' },
-    failed: { icon: AlertCircle, color: 'text-red-400 bg-red-400/10', label: 'Failed' },
-    cancelled: { icon: Pause, color: 'text-zinc-400 bg-zinc-400/10', label: 'Cancelled' },
+    queued: { icon: Clock, color: 'text-zinc-400 bg-zinc-400/10', label: 'Queued', shortLabel: 'Queued' },
+    processing: { icon: RefreshCw, color: 'text-blue-400 bg-blue-400/10', label: 'Processing', shortLabel: 'Proc' },
+    awaiting_input: { icon: AlertCircle, color: 'text-amber-400 bg-amber-400/10', label: 'Awaiting Review', shortLabel: 'Review' },
+    completed: { icon: CheckCircle2, color: 'text-lime-400 bg-lime-400/10', label: 'Completed', shortLabel: 'Done' },
+    failed: { icon: AlertCircle, color: 'text-red-400 bg-red-400/10', label: 'Failed', shortLabel: 'Fail' },
+    cancelled: { icon: Pause, color: 'text-zinc-400 bg-zinc-400/10', label: 'Cancelled', shortLabel: 'Cancel' },
   };
   const config = configs[status];
   const Icon = config.icon;
 
   return (
-    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
-      <Icon size={12} className={status === 'processing' ? 'animate-spin-soft' : ''} />
-      {config.label}
+    <div className={`flex items-center gap-1.5 px-1.5 md:px-2 py-1 rounded-md text-[9px] md:text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
+      <Icon size={10} className={`${status === 'processing' ? 'animate-spin-soft' : ''} md:size-3`} />
+      <span className="hidden md:inline">{config.label}</span>
+      <span className="md:hidden">{config.shortLabel}</span>
     </div>
   );
 };
@@ -35,12 +37,19 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
 interface JobRowProps {
   job: MediaJob;
   index: number;
-  onContextMenu: (event: React.MouseEvent<HTMLDivElement>, job: MediaJob) => void;
+  onContextMenu: (event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>, job: MediaJob) => void;
   nowMs: number | null;
   hasServerNow: boolean;
 }
 
 export const JobRow = React.memo(function JobRow({ job, index, onContextMenu, nowMs, hasServerNow }: JobRowProps) {
+  const longPressProps = useLongPress((e) => {
+    // Only handle touch events for long press
+    if ('touches' in e) {
+      onContextMenu(e as unknown as React.TouchEvent<HTMLDivElement>, job);
+    }
+  });
+
   const elapsedMs = (() => {
     if (job.startedAt) {
       const start = new Date(job.startedAt).getTime();
@@ -57,8 +66,9 @@ export const JobRow = React.memo(function JobRow({ job, index, onContextMenu, no
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="grid grid-cols-[24px_70px_minmax(0,1fr)_100px_90px_90px_70px] sm:grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] items-center gap-2 sm:gap-4 p-3 sm:p-4 border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors group"
+      className="grid grid-cols-[24px_70px_minmax(150px,1fr)_100px_90px_90px_70px] sm:grid-cols-[28px_130px_minmax(0,1fr)_130px_120px_110px_80px] items-center gap-2 sm:gap-4 p-3 sm:p-4 border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors group select-none"
       onContextMenu={(event) => onContextMenu(event, job)}
+      {...longPressProps}
     >
       <div className="text-xs text-zinc-600 font-mono text-right pr-0.5">
         {index}
@@ -68,13 +78,13 @@ export const JobRow = React.memo(function JobRow({ job, index, onContextMenu, no
         {formatRelativeTime(job.createdAt)}
       </div>
 
-      <div className="flex min-w-0 flex-col gap-1 overflow-hidden">
+      <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-zinc-100 truncate">
+          <span className="text-[11px] md:text-sm font-semibold text-zinc-100 truncate">
             {job.projectName || 'Unknown Project'}
           </span>
         </div>
-        <span className="text-xs text-zinc-500 truncate">
+        <span className="text-[10px] md:text-xs text-zinc-500 truncate">
           {job.fileName} • {job.fileSize}
         </span>
       </div>

@@ -39,6 +39,12 @@
       min-height: 36px;
       min-width: 36px;
     }
+
+    /* Badge/button nhỏ - không cần touch target lớn */
+    .compact-badge {
+      min-height: auto;
+      min-width: auto;
+    }
   }
 
   /* Smooth scrolling on mobile */
