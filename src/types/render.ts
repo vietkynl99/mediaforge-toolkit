@@ -206,7 +206,8 @@ export const DEFAULT_RENDER_PARAMS = {
     fadeOut: '0',
     targetLufs: '-14',
     gainDb: '0',
-    mute: false
+    mute: false,
+    muteSegments: []
   },
   audio: {
     levelControl: 'lufs',
@@ -214,7 +215,8 @@ export const DEFAULT_RENDER_PARAMS = {
     gainDb: '0',
     mute: false,
     fadeIn: '0',
-    fadeOut: '0'
+    fadeOut: '0',
+    muteSegments: []
   },
   subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
   text: { ...DEFAULT_RENDER_SUBTITLE_ASS }

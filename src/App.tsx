@@ -401,6 +401,7 @@ export default function App() {
     targetLufs?: string;
     gainDb?: string;
     mute?: boolean;
+    muteSegments?: { start: number; end: number }[];
   }>>({});
   const [renderTrackLabels, setRenderTrackLabels] = useState<Record<string, string>>({});
   const [renderTrackVisible, setRenderTrackVisible] = useState<Record<string, boolean>>({});
@@ -2648,7 +2649,8 @@ export default function App() {
             levelControl: renderParams.timeline.levelControl as any,
             targetLufs: coerceNumber(renderParams.video.targetLufs, -14),
             gainDb: coerceNumber(renderParams.video.gainDb, 0),
-            mute: Boolean(renderParams.video.mute)
+            mute: Boolean(renderParams.video.mute),
+            muteSegments: renderParams.video.muteSegments ?? []
           };
         }
       }
@@ -2659,7 +2661,8 @@ export default function App() {
           levelControl: renderParams.timeline.levelControl as any,
           targetLufs: coerceNumber(audioTransform?.targetLufs ?? renderParams.audio.targetLufs, -14),
           gainDb: coerceNumber(audioTransform?.gainDb ?? renderParams.audio.gainDb, 0),
-          mute: Boolean(audioTransform?.mute ?? renderParams.audio.mute)
+          mute: Boolean(audioTransform?.mute ?? renderParams.audio.mute),
+          muteSegments: audioTransform?.muteSegments ?? []
         };
       }
 
@@ -2894,7 +2897,8 @@ export default function App() {
           levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
           targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.video.targetLufs, -14),
           gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.video.gainDb, 0),
-          mute: Boolean(DEFAULT_RENDER_PARAMS.video.mute)
+          mute: Boolean(DEFAULT_RENDER_PARAMS.video.mute),
+          muteSegments: []
         }
       });
     }
@@ -2912,7 +2916,8 @@ export default function App() {
           levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
           targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.audio.targetLufs, -14),
           gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.audio.gainDb, 0),
-          mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute)
+          mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute),
+          muteSegments: []
         }
       });
     }
@@ -3113,7 +3118,8 @@ export default function App() {
           mirror: transform.mirror ?? prev.video.mirror,
           targetLufs: String(firstVideoItem.audioMix?.targetLufs ?? prev.video.targetLufs),
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
-          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
+          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute),
+          muteSegments: firstVideoItem.audioMix?.muteSegments ?? []
         }
       }));
     }
@@ -3168,7 +3174,8 @@ export default function App() {
             ...(next[targetId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
             targetLufs: String(audioMix.targetLufs ?? next[targetId]?.targetLufs ?? '-14'),
             gainDb: String(audioMix.gainDb ?? next[targetId]?.gainDb ?? '0'),
-            mute: Boolean(audioMix.mute ?? next[targetId]?.mute ?? false)
+            mute: Boolean(audioMix.mute ?? next[targetId]?.mute ?? false),
+            muteSegments: audioMix.muteSegments ?? []
           };
         });
         return next;

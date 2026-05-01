@@ -46,12 +46,38 @@ export const parseResolution = (value: string | null | undefined, fallback = { w
 
 export const parseDurationToSeconds = (value?: string) => {
   if (!value) return 0;
-  const parts = value.split(':').map(Number);
+  const trimmed = value.trim();
+  // Handle plain number with optional decimal (e.g., "30", "30.5")
+  if (/^-?\d+\.?\d*$/.test(trimmed)) {
+    const num = parseFloat(trimmed);
+    return Number.isFinite(num) && num >= 0 ? num : 0;
+  }
+  // Handle time format (e.g., "1:30", "2:01:30")
+  const parts = trimmed.split(':').map(p => parseFloat(p));
   if (parts.some(p => !Number.isFinite(p))) return 0;
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   if (parts.length === 2) return parts[0] * 60 + parts[1];
   if (parts.length === 1) return parts[0];
   return 0;
+};
+
+/**
+ * Format seconds to human-readable time string.
+ * - < 60s: shows as decimal (e.g., "30.5")
+ * - >= 60s: shows as MM:SS or HH:MM:SS
+ */
+export const formatSecondsToTime = (seconds?: number): string => {
+  if (seconds === undefined || seconds === null || seconds < 0) return '0';
+  if (seconds < 60) {
+    // Show as decimal for sub-minute values
+    return seconds % 1 === 0 ? String(Math.floor(seconds)) : seconds.toFixed(1);
+  }
+  const total = Math.floor(seconds);
+  const hrs = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hrs > 0) return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
 };
 
 export const formatDuration = (seconds?: number) => {

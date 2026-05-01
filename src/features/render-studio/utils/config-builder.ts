@@ -58,7 +58,8 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
         levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
         targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.video.targetLufs, -14),
         gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.video.gainDb, 0),
-        mute: Boolean(DEFAULT_RENDER_PARAMS.video.mute)
+        mute: Boolean(DEFAULT_RENDER_PARAMS.video.mute),
+        muteSegments: []
       }
     });
   }
@@ -76,7 +77,8 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
         levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
         targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.audio.targetLufs, -14),
         gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.audio.gainDb, 0),
-        mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute)
+        mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute),
+        muteSegments: []
       }
     });
   }
@@ -171,11 +173,23 @@ export const normalizeTemplateForComparison = (config: RenderConfigV2): RenderCo
 
   let items = (config.items ?? []).map(item => {
     const typeKey = String(item.type || '');
-    if ((typeCounts[typeKey] ?? 0) <= 1 && item.layer !== undefined) {
-      const { layer: _layer, ...rest } = item;
-      return rest as RenderConfigV2['items'][number];
+    let normalizedItem = { ...item };
+    
+    // Remove layer if only 1 item of this type
+    if ((typeCounts[typeKey] ?? 0) <= 1 && normalizedItem.layer !== undefined) {
+      const { layer: _layer, ...rest } = normalizedItem;
+      normalizedItem = rest as RenderConfigV2['items'][number];
     }
-    return item;
+    
+    // Normalize muteSegments: ensure it's always present
+    if (normalizedItem.audioMix) {
+      normalizedItem.audioMix = {
+        ...normalizedItem.audioMix,
+        muteSegments: normalizedItem.audioMix.muteSegments ?? []
+      };
+    }
+    
+    return normalizedItem;
   });
 
   items = items.sort((a, b) => {
@@ -522,22 +536,26 @@ export function buildRenderConfigV2(params: RenderConfigParams): RenderConfigV2 
       if (file.type === 'video') {
         const videoBlurEffects = buildBlurEffectsFromRaw(renderVideoTransforms[file.id]?.blurEffects);
         if (videoBlurEffects && videoBlurEffects.length > 0) baseItem.effects = videoBlurEffects;
+        const videoMuteSegments = renderParams.video.muteSegments ?? [];
         baseItem.audioMix = {
           levelControl: renderParams.timeline.levelControl as any,
           targetLufs: coerceNumber(renderParams.video.targetLufs, -14),
           gainDb: coerceNumber(renderParams.video.gainDb, 0),
-          mute: Boolean(renderParams.video.mute)
+          mute: Boolean(renderParams.video.mute),
+          muteSegments: videoMuteSegments
         };
       }
     }
 
     if (file.type === 'audio') {
       const audioTransform = renderAudioTransforms[file.id];
+      const audioMuteSegments = audioTransform?.muteSegments ?? [];
       baseItem.audioMix = {
         levelControl: renderParams.timeline.levelControl as any,
         targetLufs: coerceNumber(audioTransform?.targetLufs ?? renderParams.audio.targetLufs, -14),
         gainDb: coerceNumber(audioTransform?.gainDb ?? renderParams.audio.gainDb, 0),
-        mute: Boolean(audioTransform?.mute ?? renderParams.audio.mute)
+        mute: Boolean(audioTransform?.mute ?? renderParams.audio.mute),
+        muteSegments: audioMuteSegments
       };
     }
 

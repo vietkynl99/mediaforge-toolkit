@@ -1849,6 +1849,18 @@ const buildRenderV2FilterGraph = async (
       addFilter(`afade=t=out:st=${fadeOutStart}:d=${fadeOut}`);
     }
 
+    // Mute segments - apply volume=0 during specified time ranges
+    const muteSegments = item.audioMix?.muteSegments;
+    if (muteSegments && muteSegments.length > 0) {
+      // Build enable expression using or() function: or(between(t,start1,end1),between(t,start2,end2),...)
+      const betweenExprs = muteSegments.map(seg => `between(t,${seg.start},${seg.end})`);
+      const enableExpr = betweenExprs.length === 1 
+        ? betweenExprs[0] 
+        : betweenExprs.reduce((acc, expr) => `or(${acc},${expr})`);
+      addFilter(`volume=0:enable='${enableExpr}'`);
+      audioLog(`    → mute segments: ${muteSegments.map(s => `[${s.start}-${s.end}]`).join(', ')}`);
+    }
+
     return `${chain}${outputLabel}`;
   };
 
@@ -2090,6 +2102,7 @@ const checkCopyPathEligibility = (
     const levelCtrl = (mix as any).levelControl ?? (config.timeline as any).levelControl ?? 'gain';
     const fadeIn = Math.max(0, mix.fadeIn ?? 0);
     const fadeOut = Math.max(0, mix.fadeOut ?? 0);
+    const muteSegments = mix.muteSegments ?? [];
     if (Math.abs(gainDb) > 0.01) {
       needsAudioEncode = true;
       audioReasons.push(`${contributor.item.id}.gainDb=${gainDb}`);
@@ -2105,6 +2118,10 @@ const checkCopyPathEligibility = (
     if (fadeOut > 0) {
       needsAudioEncode = true;
       audioReasons.push(`${contributor.item.id}.fadeOut=${fadeOut}`);
+    }
+    if (muteSegments.length > 0) {
+      needsAudioEncode = true;
+      audioReasons.push(`${contributor.item.id}.muteSegments=${muteSegments.length}`);
     }
   }
 

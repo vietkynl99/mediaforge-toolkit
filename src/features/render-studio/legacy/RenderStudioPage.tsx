@@ -1,7 +1,7 @@
 import React from 'react';
-import { Eye, EyeOff, File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload, Volume2, VolumeX, X } from 'lucide-react';
+import { Eye, EyeOff, File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload, Volume2, VolumeX, X, Plus, Pencil, Trash2 } from 'lucide-react';
 import { parseSubtitleCues } from '../../app/appData';
-import { parseDurationToSeconds } from '../../../utils/helpers';
+import { parseDurationToSeconds, formatSecondsToTime } from '../../../utils/helpers';
 import { RenderStudioPageProvider } from './RenderStudioPageContext';
 import { RenderStudioHeaderBar } from './components/RenderStudioHeaderBar';
 import { RenderStudioRenderConfirmDialog } from './components/RenderStudioRenderConfirmDialog';
@@ -10,6 +10,61 @@ import { InspectorTemplatePanel } from './components/inspector/InspectorTemplate
 import { InspectorSelectionSummary } from './components/inspector/InspectorSelectionSummary';
 
 type RenderStudioPageProps = Record<string, any>;
+
+// Validate time format - returns true if valid
+const isValidTimeFormat = (value: string): boolean => {
+  if (!value || value.trim() === '') return true; // Empty is valid (will use default)
+  const trimmed = value.trim();
+  // Check if only contains numbers and colons
+  if (!/^[\d:]+$/.test(trimmed)) return false;
+  
+  const parts = trimmed.split(':').map(Number);
+  if (parts.some(p => !Number.isFinite(p))) return false;
+  
+  // Validate ranges
+  if (parts.length === 3) {
+    // HH:MM:SS - hours can be any, minutes and seconds must be 0-59
+    if (parts[1] < 0 || parts[1] > 59) return false;
+    if (parts[2] < 0 || parts[2] > 59) return false;
+  } else if (parts.length === 2) {
+    // MM:SS - minutes can be any, seconds must be 0-59
+    if (parts[1] < 0 || parts[1] > 59) return false;
+  } else if (parts.length === 1) {
+    // Plain seconds - any non-negative number is valid
+    if (parts[0] < 0) return false;
+  } else {
+    return false;
+  }
+  
+  return true;
+};
+
+// Format time input to HH:MM:SS or MM:SS format
+const formatTimeInput = (value: string): string => {
+  const seconds = parseDurationToSeconds(value);
+  if (seconds <= 0) return '0';
+  
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const decimal = seconds % 1;
+  
+  if (hrs > 0) {
+    // Show as HH:MM:SS
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  // Show as MM:SS
+  if (mins > 0 || secs > 0) {
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  }
+  // Show as decimal seconds for sub-second values
+  return decimal > 0 ? seconds.toFixed(1) : '0';
+};
+
+// Clamp seconds to max duration
+const clampToDuration = (seconds: number, maxDuration: number): number => {
+  return Math.min(Math.max(0, seconds), maxDuration);
+};
 
 const DEFAULT_RENDER_RESOLUTION_PRESETS = [
   { value: '1920x1080', label: '1920x1080 (1080p)' },
@@ -249,6 +304,22 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
   const [customRenderStart, setCustomRenderStart] = React.useState('00:00:00.0');
   const [customRenderEnd, setCustomRenderEnd] = React.useState('');
   const [templateSaveConfirmOpen, setTemplateSaveConfirmOpen] = React.useState(false);
+  
+  // Track invalid mute segments for validation
+  const [invalidMuteSegments, setInvalidMuteSegments] = React.useState<{
+    video: Set<number>;  // indices of invalid segments
+    audio: Record<string, Set<number>>;  // audioId -> indices of invalid segments
+  }>({ video: new Set(), audio: {} });
+  
+  // Track current input values to persist invalid state
+  const [muteSegmentInputValues, setMuteSegmentInputValues] = React.useState<{
+    video: Array<{ start: string; end: string }>;
+    audio: Record<string, Array<{ start: string; end: string }>>;
+  }>({ video: [], audio: {} });
+  
+  // Check if there are any invalid mute segments
+  const hasInvalidMuteSegments = invalidMuteSegments.video.size > 0 || 
+    Object.values(invalidMuteSegments.audio).some(set => set.size > 0);
   const singleTextStartDraft = `${renderParamsDraft?.text?.singleTextStart ?? ''}`;
   const singleTextEndDraft = `${renderParamsDraft?.text?.singleTextEnd ?? ''}`;
   const singleTextEndFallback = renderTimelineDuration > 0
@@ -572,6 +643,7 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
       hasTemplateChanges,
       requestSaveTemplateConfirm,
       templateDiffRows,
+      hasInvalidMuteSegments,
       formatDiffValue,
       getTemplateDiffTrackLabel
     }
@@ -2441,6 +2513,284 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                       placeholder="e.g. cinematic-01"
                                     />
                                   </div>
+
+                                  {/* Mute Segments for Video Audio */}
+                                  <div className="mt-3">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Mute Segments</label>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const currentSegments = renderParamsDraft.video.muteSegments ?? [];
+                                          const newSegment = { start: 0, end: 5 };
+                                          updateRenderParamDraft('video', 'muteSegments', [...currentSegments, newSegment]);
+                                          updateRenderParam('video', 'muteSegments', [...currentSegments, newSegment]);
+                                        }}
+                                        className="flex items-center gap-1 text-[10px] text-lime-400 hover:text-lime-300"
+                                      >
+                                        <Plus size={12} />
+                                        <span>Add segment</span>
+                                      </button>
+                                    </div>
+                                    
+                                    {(() => {
+                                      const segments = renderParamsDraft.video.muteSegments ?? [];
+                                      if (segments.length === 0) {
+                                        return (
+                                          <div className="text-[10px] text-zinc-600 italic">
+                                            No mute segments. Click "Add segment" to create one.
+                                          </div>
+                                        );
+                                      }
+                                      return (
+                                        <div className="flex flex-col gap-1">
+                                          {/* Header */}
+                                          <div className="grid grid-cols-[20px_1fr_1fr_20px] gap-2 text-[9px] text-zinc-500 uppercase tracking-wider pb-1 border-b border-zinc-800">
+                                            <div className="text-center">#</div>
+                                            <div className="text-center">Start</div>
+                                            <div className="text-center">End</div>
+                                            <div></div>
+                                          </div>
+                                          {/* Rows */}
+                                          {segments.map((seg: { start: number; end: number }, idx: number) => {
+                                            const isInvalid = invalidMuteSegments.video.has(idx);
+                                            // Use tracked input value or formatted default
+                                            const startValue = muteSegmentInputValues.video[idx]?.start ?? formatTimeInput(String(seg.start));
+                                            const endValue = muteSegmentInputValues.video[idx]?.end ?? formatTimeInput(String(seg.end));
+                                            return (
+                                              <div key={idx} className="grid grid-cols-[20px_1fr_1fr_20px] gap-2 items-center">
+                                                <div className="text-[10px] text-zinc-400 text-center">{idx + 1}</div>
+                                                <input
+                                                  type="text"
+                                                  placeholder="0"
+                                                  value={startValue}
+                                                  onChange={e => {
+                                                    const val = e.target.value;
+                                                    setMuteSegmentInputValues(prev => {
+                                                      const updated = [...(prev.video ?? [])];
+                                                      updated[idx] = { ...updated[idx], start: val };
+                                                      return { ...prev, video: updated };
+                                                    });
+                                                  }}
+                                                  onKeyDown={e => {
+                                                    // Only allow numbers, colons, and control keys
+                                                    if (!/[\d:]/.test(e.key) && 
+                                                        !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter'].includes(e.key)) {
+                                                      e.preventDefault();
+                                                    }
+                                                    // Format on Enter
+                                                    if (e.key === 'Enter') {
+                                                      const val = startValue;
+                                                      if (isValidTimeFormat(val)) {
+                                                        const formatted = formatTimeInput(val);
+                                                        setMuteSegmentInputValues(prev => {
+                                                          const updated = [...(prev.video ?? [])];
+                                                          updated[idx] = { ...updated[idx], start: formatted };
+                                                          return { ...prev, video: updated };
+                                                        });
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video].filter(i => i !== idx))
+                                                        }));
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video, idx])
+                                                        }));
+                                                      }
+                                                      (e.target as HTMLInputElement).blur();
+                                                    }
+                                                  }}
+                                                  onBlur={e => {
+                                                    const val = startValue;
+                                                    if (isValidTimeFormat(val)) {
+                                                      let newStart = parseDurationToSeconds(val);
+                                                      // Clamp to timeline duration
+                                                      const maxDuration = renderTimelineDuration > 0 ? renderTimelineDuration : (renderVideoDuration ?? 999999);
+                                                      newStart = clampToDuration(newStart, maxDuration);
+                                                      
+                                                      const newSegments = [...segments];
+                                                      newSegments[idx] = { ...newSegments[idx], start: newStart };
+                                                      updateRenderParamDraft('video', 'muteSegments', newSegments);
+                                                      updateRenderParam('video', 'muteSegments', newSegments);
+                                                      
+                                                      // Check if start >= end AND end format is valid
+                                                      const endFormatValid = isValidTimeFormat(endValue);
+                                                      const currentEnd = parseDurationToSeconds(endValue);
+                                                      const isInvalidRange = endFormatValid && newStart >= currentEnd;
+                                                      
+                                                      const formatted = formatTimeInput(String(newStart));
+                                                      setMuteSegmentInputValues(prev => {
+                                                        const updated = [...(prev.video ?? [])];
+                                                        updated[idx] = { ...updated[idx], start: formatted };
+                                                        return { ...prev, video: updated };
+                                                      });
+                                                      
+                                                      // Invalid if: range is invalid OR end format is invalid
+                                                      if (isInvalidRange || !endFormatValid) {
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video, idx])
+                                                        }));
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video].filter(i => i !== idx))
+                                                        }));
+                                                      }
+                                                    } else if (val.trim() !== '') {
+                                                      setInvalidMuteSegments(prev => ({
+                                                        ...prev,
+                                                        video: new Set([...prev.video, idx])
+                                                      }));
+                                                    }
+                                                  }}
+                                                  onFocus={holdPreview}
+                                                  className={`bg-zinc-900 border rounded px-1 py-0.5 text-[10px] text-zinc-200 text-center focus:outline-none focus:ring-1 w-full min-w-0 ${
+                                                    isInvalid 
+                                                      ? 'border-red-500 focus:ring-red-500/40' 
+                                                      : 'border-zinc-800 focus:ring-lime-500/40'
+                                                  }`}
+                                                />
+                                                <input
+                                                  type="text"
+                                                  placeholder="0"
+                                                  value={endValue}
+                                                  onChange={e => {
+                                                    const val = e.target.value;
+                                                    setMuteSegmentInputValues(prev => {
+                                                      const updated = [...(prev.video ?? [])];
+                                                      updated[idx] = { ...updated[idx], end: val };
+                                                      return { ...prev, video: updated };
+                                                    });
+                                                  }}
+                                                  onKeyDown={e => {
+                                                    if (!/[\d:]/.test(e.key) && 
+                                                        !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter'].includes(e.key)) {
+                                                      e.preventDefault();
+                                                    }
+                                                    if (e.key === 'Enter') {
+                                                      const val = endValue;
+                                                      if (isValidTimeFormat(val)) {
+                                                        const formatted = formatTimeInput(val);
+                                                        setMuteSegmentInputValues(prev => {
+                                                          const updated = [...(prev.video ?? [])];
+                                                          updated[idx] = { ...updated[idx], end: formatted };
+                                                          return { ...prev, video: updated };
+                                                        });
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video].filter(i => i !== idx))
+                                                        }));
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video, idx])
+                                                        }));
+                                                      }
+                                                      (e.target as HTMLInputElement).blur();
+                                                    }
+                                                  }}
+                                                  onBlur={e => {
+                                                    const val = endValue;
+                                                    if (isValidTimeFormat(val)) {
+                                                      let newEnd = parseDurationToSeconds(val);
+                                                      // Clamp to timeline duration
+                                                      const maxDuration = renderTimelineDuration > 0 ? renderTimelineDuration : (renderVideoDuration ?? 999999);
+                                                      newEnd = clampToDuration(newEnd, maxDuration);
+                                                      
+                                                      const newSegments = [...segments];
+                                                      newSegments[idx] = { ...newSegments[idx], end: newEnd };
+                                                      updateRenderParamDraft('video', 'muteSegments', newSegments);
+                                                      updateRenderParam('video', 'muteSegments', newSegments);
+                                                      
+                                                      // Check if start >= end AND start format is valid
+                                                      const startFormatValid = isValidTimeFormat(startValue);
+                                                      const currentStart = parseDurationToSeconds(startValue);
+                                                      const isInvalidRange = startFormatValid && currentStart >= newEnd;
+                                                      
+                                                      const formatted = formatTimeInput(String(newEnd));
+                                                      setMuteSegmentInputValues(prev => {
+                                                        const updated = [...(prev.video ?? [])];
+                                                        updated[idx] = { ...updated[idx], end: formatted };
+                                                        return { ...prev, video: updated };
+                                                      });
+                                                      
+                                                      // Invalid if: range is invalid OR start format is invalid
+                                                      if (isInvalidRange || !startFormatValid) {
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video, idx])
+                                                        }));
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => ({
+                                                          ...prev,
+                                                          video: new Set([...prev.video].filter(i => i !== idx))
+                                                        }));
+                                                      }
+                                                    } else if (val.trim() !== '') {
+                                                      setInvalidMuteSegments(prev => ({
+                                                        ...prev,
+                                                        video: new Set([...prev.video, idx])
+                                                      }));
+                                                    }
+                                                  }}
+                                                  onFocus={holdPreview}
+                                                  className={`bg-zinc-900 border rounded px-1 py-0.5 text-[10px] text-zinc-200 text-center focus:outline-none focus:ring-1 w-full min-w-0 ${
+                                                    isInvalid 
+                                                      ? 'border-red-500 focus:ring-red-500/40' 
+                                                      : 'border-zinc-800 focus:ring-lime-500/40'
+                                                  }`}
+                                                />
+                                              <div className="flex items-center justify-center">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const newSegments = segments.filter((_: any, i: number) => i !== idx);
+                                                      updateRenderParamDraft('video', 'muteSegments', newSegments);
+                                                      updateRenderParam('video', 'muteSegments', newSegments);
+                                                      
+                                                      // Re-index invalid state: shift indices > idx down by 1
+                                                      setInvalidMuteSegments(prev => {
+                                                        const oldSet = prev.video;
+                                                        const newSet = new Set<number>();
+                                                        oldSet.forEach(i => {
+                                                          if (i < idx) newSet.add(i);
+                                                          else if (i > idx) newSet.add(i - 1);
+                                                          // i === idx is skipped (deleted)
+                                                        });
+                                                        
+                                                        // Re-validate remaining segments for start >= end
+                                                        const maxDuration = renderTimelineDuration > 0 ? renderTimelineDuration : (renderVideoDuration ?? 999999);
+                                                        newSegments.forEach((seg, newIdx) => {
+                                                          if (seg.start >= seg.end || seg.start > maxDuration || seg.end > maxDuration) {
+                                                            newSet.add(newIdx);
+                                                          }
+                                                        });
+                                                        
+                                                        return { ...prev, video: newSet };
+                                                      });
+                                                      
+                                                      // Clear input values for this segment and re-index
+                                                      setMuteSegmentInputValues(prev => {
+                                                        const updated = [...(prev.video ?? [])];
+                                                        updated.splice(idx, 1);
+                                                        return { ...prev, video: updated };
+                                                      });
+                                                    }}
+                                                    className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400"
+                                                    title="Delete"
+                                                  >
+                                                    <Trash2 size={10} />
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
                                 </>
                               ) : (
                                 <div className="text-[11px] text-zinc-500">No video selected.</div>
@@ -2533,6 +2883,313 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                                         </div>
                                       )}
                                     </div>
+                                  </div>
+
+                                  {/* Mute Segments */}
+                                  <div className="mt-3">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <label className="text-[10px] text-zinc-500 uppercase tracking-widest">Mute Segments</label>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const currentSegments = renderAudioTransforms?.[renderAudioId]?.muteSegments ?? [];
+                                          const newSegment = { start: 0, end: 5 };
+                                          setRenderAudioTransforms((prev: any) => ({
+                                            ...prev,
+                                            [renderAudioId]: {
+                                              ...(prev?.[renderAudioId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+                                              muteSegments: [...currentSegments, newSegment]
+                                            }
+                                          }));
+                                        }}
+                                        className="flex items-center gap-1 text-[10px] text-lime-400 hover:text-lime-300"
+                                      >
+                                        <Plus size={12} />
+                                        <span>Add segment</span>
+                                      </button>
+                                    </div>
+                                    
+                                    {(() => {
+                                      const segments = renderAudioTransforms?.[renderAudioId]?.muteSegments ?? [];
+                                      if (segments.length === 0) {
+                                        return (
+                                          <div className="text-[10px] text-zinc-600 italic">
+                                            No mute segments. Click "Add segment" to create one.
+                                          </div>
+                                        );
+                                      }
+                                      return (
+                                        <div className="flex flex-col gap-1">
+                                          {/* Header */}
+                                          <div className="grid grid-cols-[20px_1fr_1fr_20px] gap-2 text-[9px] text-zinc-500 uppercase tracking-wider pb-1 border-b border-zinc-800">
+                                            <div className="text-center">#</div>
+                                            <div className="text-center">Start</div>
+                                            <div className="text-center">End</div>
+                                            <div></div>
+                                          </div>
+                                          {/* Rows */}
+                                          {segments.map((seg: { start: number; end: number }, idx: number) => {
+                                            const audioInvalidSet = invalidMuteSegments.audio[renderAudioId] ?? new Set();
+                                            const isInvalid = audioInvalidSet.has(idx);
+                                            // Use tracked input value or formatted default
+                                            const audioInputValues = muteSegmentInputValues.audio[renderAudioId] ?? [];
+                                            const startValue = audioInputValues[idx]?.start ?? formatTimeInput(String(seg.start));
+                                            const endValue = audioInputValues[idx]?.end ?? formatTimeInput(String(seg.end));
+                                            return (
+                                              <div key={idx} className="grid grid-cols-[20px_1fr_1fr_20px] gap-2 items-center">
+                                                <div className="text-[10px] text-zinc-400 text-center">{idx + 1}</div>
+                                                <input
+                                                  type="text"
+                                                  placeholder="0"
+                                                  value={startValue}
+                                                  onChange={e => {
+                                                    const val = e.target.value;
+                                                    setMuteSegmentInputValues(prev => {
+                                                      const audioVals = [...(prev.audio[renderAudioId] ?? [])];
+                                                      audioVals[idx] = { ...audioVals[idx], start: val };
+                                                      return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioVals } };
+                                                    });
+                                                  }}
+                                                  onKeyDown={e => {
+                                                    if (!/[\d:]/.test(e.key) && 
+                                                        !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter'].includes(e.key)) {
+                                                      e.preventDefault();
+                                                    }
+                                                    if (e.key === 'Enter') {
+                                                      const val = startValue;
+                                                      if (isValidTimeFormat(val)) {
+                                                        const formatted = formatTimeInput(val);
+                                                        setMuteSegmentInputValues(prev => {
+                                                          const audioVals = [...(prev.audio[renderAudioId] ?? [])];
+                                                          audioVals[idx] = { ...audioVals[idx], start: formatted };
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioVals } };
+                                                        });
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.delete(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.add(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      }
+                                                      (e.target as HTMLInputElement).blur();
+                                                    }
+                                                  }}
+                                                  onBlur={e => {
+                                                    const val = startValue;
+                                                    if (isValidTimeFormat(val)) {
+                                                      let newStart = parseDurationToSeconds(val);
+                                                      // Clamp to timeline duration
+                                                      const maxDuration = renderTimelineDuration > 0 ? renderTimelineDuration : (renderAudioDuration ?? 999999);
+                                                      newStart = clampToDuration(newStart, maxDuration);
+                                                      
+                                                      const newSegments = [...segments];
+                                                      newSegments[idx] = { ...newSegments[idx], start: newStart };
+                                                      setRenderAudioTransforms((prev: any) => ({
+                                                        ...prev,
+                                                        [renderAudioId]: {
+                                                          ...(prev?.[renderAudioId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+                                                          muteSegments: newSegments
+                                                        }
+                                                      }));
+                                                      
+                                                      // Check if start >= end AND end format is valid
+                                                      const endFormatValid = isValidTimeFormat(endValue);
+                                                      const currentEnd = parseDurationToSeconds(endValue);
+                                                      const isInvalidRange = endFormatValid && newStart >= currentEnd;
+                                                      
+                                                      const formatted = formatTimeInput(String(newStart));
+                                                      setMuteSegmentInputValues(prev => {
+                                                        const audioVals = [...(prev.audio[renderAudioId] ?? [])];
+                                                        audioVals[idx] = { ...audioVals[idx], start: formatted };
+                                                        return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioVals } };
+                                                      });
+                                                      
+                                                      // Invalid if: range is invalid OR end format is invalid
+                                                      if (isInvalidRange || !endFormatValid) {
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.add(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.delete(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      }
+                                                    } else if (val.trim() !== '') {
+                                                      setInvalidMuteSegments(prev => {
+                                                        const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                        audioSet.add(idx);
+                                                        return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                      });
+                                                    }
+                                                  }}
+                                                  onFocus={holdPreview}
+                                                  className={`bg-zinc-900 border rounded px-1 py-0.5 text-[10px] text-zinc-200 text-center focus:outline-none focus:ring-1 w-full min-w-0 ${
+                                                    isInvalid 
+                                                      ? 'border-red-500 focus:ring-red-500/40' 
+                                                      : 'border-zinc-800 focus:ring-lime-500/40'
+                                                  }`}
+                                                />
+                                                <input
+                                                  type="text"
+                                                  placeholder="0"
+                                                  value={endValue}
+                                                  onChange={e => {
+                                                    const val = e.target.value;
+                                                    setMuteSegmentInputValues(prev => {
+                                                      const audioVals = [...(prev.audio[renderAudioId] ?? [])];
+                                                      audioVals[idx] = { ...audioVals[idx], end: val };
+                                                      return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioVals } };
+                                                    });
+                                                  }}
+                                                  onKeyDown={e => {
+                                                    if (!/[\d:]/.test(e.key) && 
+                                                        !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter'].includes(e.key)) {
+                                                      e.preventDefault();
+                                                    }
+                                                    if (e.key === 'Enter') {
+                                                      const val = endValue;
+                                                      if (isValidTimeFormat(val)) {
+                                                        const formatted = formatTimeInput(val);
+                                                        setMuteSegmentInputValues(prev => {
+                                                          const audioVals = [...(prev.audio[renderAudioId] ?? [])];
+                                                          audioVals[idx] = { ...audioVals[idx], end: formatted };
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioVals } };
+                                                        });
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.delete(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.add(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      }
+                                                      (e.target as HTMLInputElement).blur();
+                                                    }
+                                                  }}
+                                                  onBlur={e => {
+                                                    const val = endValue;
+                                                    if (isValidTimeFormat(val)) {
+                                                      let newEnd = parseDurationToSeconds(val);
+                                                      // Clamp to timeline duration
+                                                      const maxDuration = renderTimelineDuration > 0 ? renderTimelineDuration : (renderAudioDuration ?? 999999);
+                                                      newEnd = clampToDuration(newEnd, maxDuration);
+                                                      
+                                                      const newSegments = [...segments];
+                                                      newSegments[idx] = { ...newSegments[idx], end: newEnd };
+                                                      setRenderAudioTransforms((prev: any) => ({
+                                                        ...prev,
+                                                        [renderAudioId]: {
+                                                          ...(prev?.[renderAudioId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+                                                          muteSegments: newSegments
+                                                        }
+                                                      }));
+                                                      
+                                                      // Check if start >= end AND start format is valid
+                                                      const startFormatValid = isValidTimeFormat(startValue);
+                                                      const currentStart = parseDurationToSeconds(startValue);
+                                                      const isInvalidRange = startFormatValid && currentStart >= newEnd;
+                                                      
+                                                      const formatted = formatTimeInput(String(newEnd));
+                                                      setMuteSegmentInputValues(prev => {
+                                                        const audioVals = [...(prev.audio[renderAudioId] ?? [])];
+                                                        audioVals[idx] = { ...audioVals[idx], end: formatted };
+                                                        return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioVals } };
+                                                      });
+                                                      
+                                                      // Invalid if: range is invalid OR start format is invalid
+                                                      if (isInvalidRange || !startFormatValid) {
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.add(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      } else {
+                                                        setInvalidMuteSegments(prev => {
+                                                          const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                          audioSet.delete(idx);
+                                                          return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                        });
+                                                      }
+                                                    } else if (val.trim() !== '') {
+                                                      setInvalidMuteSegments(prev => {
+                                                        const audioSet = new Set(prev.audio[renderAudioId] ?? []);
+                                                        audioSet.add(idx);
+                                                        return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioSet } };
+                                                      });
+                                                    }
+                                                  }}
+                                                  onFocus={holdPreview}
+                                                  className={`bg-zinc-900 border rounded px-1 py-0.5 text-[10px] text-zinc-200 text-center focus:outline-none focus:ring-1 w-full min-w-0 ${
+                                                    isInvalid 
+                                                      ? 'border-red-500 focus:ring-red-500/40' 
+                                                      : 'border-zinc-800 focus:ring-lime-500/40'
+                                                  }`}
+                                                />
+                                              <div className="flex items-center justify-center">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const newSegments = segments.filter((_: any, i: number) => i !== idx);
+                                                      setRenderAudioTransforms((prev: any) => ({
+                                                        ...prev,
+                                                        [renderAudioId]: {
+                                                          ...(prev?.[renderAudioId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
+                                                          muteSegments: newSegments
+                                                        }
+                                                      }));
+                                                      
+                                                      // Re-index invalid state: shift indices > idx down by 1
+                                                      setInvalidMuteSegments(prev => {
+                                                        const oldSet = prev.audio[renderAudioId] ?? new Set();
+                                                        const newSet = new Set<number>();
+                                                        oldSet.forEach(i => {
+                                                          if (i < idx) newSet.add(i);
+                                                          else if (i > idx) newSet.add(i - 1);
+                                                        });
+                                                        
+                                                        // Re-validate remaining segments
+                                                        const maxDuration = renderTimelineDuration > 0 ? renderTimelineDuration : (renderAudioDuration ?? 999999);
+                                                        newSegments.forEach((seg, newIdx) => {
+                                                          if (seg.start >= seg.end || seg.start > maxDuration || seg.end > maxDuration) {
+                                                            newSet.add(newIdx);
+                                                          }
+                                                        });
+                                                        
+                                                        return { ...prev, audio: { ...prev.audio, [renderAudioId]: newSet } };
+                                                      });
+                                                      
+                                                      // Clear input values for this segment and re-index
+                                                      setMuteSegmentInputValues(prev => {
+                                                        const audioVals = [...(prev.audio[renderAudioId] ?? [])];
+                                                        audioVals.splice(idx, 1);
+                                                        return { ...prev, audio: { ...prev.audio, [renderAudioId]: audioVals } };
+                                                      });
+                                                    }}
+                                                    className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400"
+                                                    title="Delete"
+                                                  >
+                                                    <Trash2 size={10} />
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 </>
                               ) : (

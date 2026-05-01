@@ -366,7 +366,7 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
     });
   }, []);
 
-  const updateRenderAudioTransform = useCallback((fileId: string | null, patch: Partial<{ targetLufs: string; gainDb: string; mute: boolean }>) => {
+  const updateRenderAudioTransform = useCallback((fileId: string | null, patch: Partial<{ targetLufs: string; gainDb: string; mute: boolean; muteSegments: { start: number; end: number }[] }>) => {
     if (!fileId) return;
     setRenderAudioTransforms(prev => ({
       ...prev,
@@ -588,7 +588,8 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
           maskBottom: maskBottom !== undefined ? String(maskBottom) : prev.video.maskBottom,
           mirror: transform.mirror ?? prev.video.mirror,
           gainDb: String(firstVideoItem.audioMix?.gainDb ?? prev.video.gainDb),
-          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute)
+          mute: Boolean(firstVideoItem.audioMix?.mute ?? prev.video.mute),
+          muteSegments: firstVideoItem.audioMix?.muteSegments ?? []
         }
       }));
     }
@@ -625,7 +626,8 @@ export function useRenderStudio(project: VaultFolder | null, initialTemplates: R
             ...(next[targetId] ?? { targetLufs: '-14', gainDb: '0', mute: false }),
             targetLufs: String(audioMix.targetLufs ?? next[targetId]?.targetLufs ?? '-14'),
             gainDb: String(audioMix.gainDb ?? next[targetId]?.gainDb ?? '0'),
-            mute: Boolean(audioMix.mute ?? next[targetId]?.mute ?? false)
+            mute: Boolean(audioMix.mute ?? next[targetId]?.mute ?? false),
+            muteSegments: audioMix.muteSegments ?? []
           };
         });
         return next;

@@ -45,6 +45,12 @@ export type RenderItemV2 = {
     targetLufs?: number;
     gainDb?: number;
     mute?: boolean;
+    /**
+     * List of time segments where audio should be muted.
+     * Each segment has start and end times in seconds.
+     * During these segments, audio volume is set to 0.
+     */
+    muteSegments?: { start: number; end: number }[];
     fadeIn?: number;
     fadeOut?: number;
     delay?: number;
