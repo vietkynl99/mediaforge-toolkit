@@ -2400,7 +2400,9 @@ const runRenderV2Task = async (
       normalizedHybridAudioArgs.splice(outIndex, 0, '-b:a', '192k', '-movflags', '+faststart');
 
       onLog?.(`[CopyPath]   Phase 1/2: Render processed audio temp file\n`);
-      await runFfmpegLoggedCommand(ffmpegPath, normalizedHybridAudioArgs, 'render v2 hybrid-audio-temp', onLog, onSpawn);
+      const hybridAudioDurationValue = Number(hybridAudioDuration) || duration;
+      await runFfmpegLoggedCommand(ffmpegPath, normalizedHybridAudioArgs, 'render v2 hybrid-audio-temp', onLog, onSpawn,
+        seconds => onProgress?.(Math.min(seconds, hybridAudioDurationValue), duration));
 
       const muxArgs = [
         '-y',
