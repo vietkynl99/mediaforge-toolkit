@@ -50,7 +50,7 @@ export const InspectorTemplatePanel: React.FC = () => {
             }}
             className="min-h-[36px] flex-1 min-w-[12rem] rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-lime-500/40"
           >
-            <option value="custom">Custom</option>
+            <option value="custom">{isCustomTemplate && hasTemplateChanges ? '*Custom' : 'Custom'}</option>
             {renderTemplates.map((template: any) => {
               const isSelected = runPipelineRenderTemplateId === template.id;
               const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
@@ -74,18 +74,6 @@ export const InspectorTemplatePanel: React.FC = () => {
             </button>
             {templateMenuOpen && (
               <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTemplateMenuOpen?.(false);
-                    resetRenderToDefault?.();
-                  }}
-                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                    isCustomTemplate ? 'rounded-lg' : 'rounded-t-lg'
-                  }`}
-                >
-                  Reset to default
-                </button>
                 {(isRenderTemplateDirty || hasTemplateChanges) && (
                   <button
                     type="button"
@@ -93,7 +81,7 @@ export const InspectorTemplatePanel: React.FC = () => {
                       setTemplateMenuOpen?.(false);
                       setTemplateDiffOpen?.(true);
                     }}
-                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                    className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${!isCustomTemplate && !isRenderTemplateDirty && !hasTemplateChanges ? '' : 'rounded-t-lg'}`}
                   >
                     Show changes
                   </button>
@@ -111,43 +99,46 @@ export const InspectorTemplatePanel: React.FC = () => {
                     Save
                   </button>
                 )}
+                {((isCustomTemplate && hasTemplateChanges) || (!isCustomTemplate && isRenderTemplateDirty)) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTemplateMenuOpen?.(false);
+                      saveRenderTemplateQuick?.();
+                    }}
+                    className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors`}
+                  >
+                    Save As
+                  </button>
+                )}
+                {((isCustomTemplate && hasTemplateChanges) || (!isCustomTemplate && isRenderTemplateDirty)) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTemplateMenuOpen?.(false);
+                      if (isCustomTemplate) {
+                        resetRenderToDefault?.();
+                      } else if (selectedTemplate) {
+                        restoreRenderTemplateCurrent?.(selectedTemplate);
+                      }
+                    }}
+                    className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${isCustomTemplate ? 'rounded-b-lg' : ''}`}
+                  >
+                    Restore
+                  </button>
+                )}
                 {!isCustomTemplate && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTemplateMenuOpen?.(false);
-                        saveRenderTemplateQuick?.();
-                      }}
-                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                    >
-                      Save As
-                    </button>
-                    {isRenderTemplateDirty && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!selectedTemplate) return;
-                          setTemplateMenuOpen?.(false);
-                          restoreRenderTemplateCurrent?.(selectedTemplate);
-                        }}
-                        className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                      >
-                        Restore
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!selectedTemplate) return;
-                        setTemplateMenuOpen?.(false);
-                        deleteRenderTemplateWithConfirm?.(selectedTemplate.id, selectedTemplate.name);
-                      }}
-                      className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                    >
-                      Delete
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!selectedTemplate) return;
+                      setTemplateMenuOpen?.(false);
+                      deleteRenderTemplateWithConfirm?.(selectedTemplate.id, selectedTemplate.name);
+                    }}
+                    className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                  >
+                    Delete
+                  </button>
                 )}
               </div>
             )}

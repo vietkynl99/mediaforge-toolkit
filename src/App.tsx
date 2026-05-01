@@ -26,7 +26,7 @@ import {
   Save,
   Menu,
 } from 'lucide-react';
-import { MediaJob } from './types';
+import { MediaJob, DEFAULT_RENDER_PARAMS } from './types';
 import { AppHeader } from './components/AppHeader';
 import { JobsFeature, type JobsHandle } from './features/jobs/JobsFeature';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -459,53 +459,6 @@ export default function App() {
     scrollLeft: 0,
     moved: false
   });
-  const DEFAULT_RENDER_PARAMS = {
-    timeline: {
-      framerate: '30',
-      resolution: '1920x1080',
-      levelControl: 'gain',
-      targetLufs: '-14',
-      exportMode: 'video+audio'
-    },
-    video: {
-      trimStart: '',
-      trimEnd: '',
-      speed: '1',
-      volume: '100',
-      fit: 'contain',
-      positionX: '50',
-      positionY: '50',
-      scale: '100',
-      rotation: '0',
-      opacity: '100',
-      colorLut: '',
-      cropX: '0',
-      cropY: '0',
-      cropW: '100',
-      cropH: '100',
-      maskType: 'none',
-      maskLeft: '0',
-      maskRight: '0',
-      maskTop: '0',
-      maskBottom: '0',
-      mirror: 'none',
-      fadeIn: '0',
-      fadeOut: '0',
-      targetLufs: '-14',
-      gainDb: '0',
-      mute: false
-    },
-    audio: {
-      levelControl: 'lufs',
-      targetLufs: '-14',
-      gainDb: '0',
-      mute: false,
-      fadeIn: '0',
-      fadeOut: '0'
-    },
-    subtitle: { ...DEFAULT_RENDER_SUBTITLE_ASS },
-    text: { ...DEFAULT_RENDER_SUBTITLE_ASS }
-  };
   const [renderParams, setRenderParams] = useState(DEFAULT_RENDER_PARAMS);
   const runAgainPrefillRef = useRef(false);
   const [previewTtsLoading, setPreviewTtsLoading] = useState(false);
@@ -651,9 +604,9 @@ export default function App() {
 
   const selectProjectDefaults = () => {
     const files = runPipelineProject?.files ?? [];
-    const firstVideo = files.find(file => file.type === 'video');
-    const firstAudio = files.find(file => file.type === 'audio');
-    const firstSubtitle = files.find(file => file.type === 'subtitle');
+    const firstVideo = files.find(file => file.type === 'video' && file.relativePath);
+    const firstAudio = files.find(file => file.type === 'audio' && file.relativePath);
+    const firstSubtitle = files.find(file => file.type === 'subtitle' && file.relativePath);
     setRenderVideoId(firstVideo?.id ?? null);
     setRenderAudioId(firstAudio?.id ?? null);
     setRenderSubtitleId(firstSubtitle?.id ?? null);
@@ -2918,6 +2871,7 @@ export default function App() {
         id: 'video-1',
         name: firstVideo.name || 'video',
         type: 'video',
+        visible: true,
         source: { ref: 'video' },
         timeline: { start: 0 },
         layer: 10,
@@ -2935,6 +2889,12 @@ export default function App() {
             h: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropH, 100)
           },
           mirror: DEFAULT_RENDER_PARAMS.video.mirror as 'none' | 'horizontal' | 'vertical' | 'both' | undefined ?? 'none'
+        },
+        audioMix: {
+          levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
+          targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.video.targetLufs, -14),
+          gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.video.gainDb, 0),
+          mute: Boolean(DEFAULT_RENDER_PARAMS.video.mute)
         }
       });
     }
@@ -2949,7 +2909,7 @@ export default function App() {
         timeline: { start: 0 },
         layer: 0,
         audioMix: {
-          levelControl: DEFAULT_RENDER_PARAMS.audio.levelControl as any,
+          levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
           targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.audio.targetLufs, -14),
           gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.audio.gainDb, 0),
           mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute)
@@ -2963,6 +2923,7 @@ export default function App() {
         id: 'subtitle-1',
         name: firstSubtitle.name || 'subtitle',
         type: 'subtitle',
+        visible: true,
         source: { ref: 'subtitle' },
         timeline: { start: 0 },
         layer: 0,
@@ -3316,6 +3277,10 @@ export default function App() {
   const renderTemplateDiffBaselineLabel = runPipelineRenderTemplateId === 'custom'
     ? 'Default'
     : (renderTemplateSelected?.name ?? 'Template');
+  const hasTemplateChanges = React.useMemo(() => {
+    if (!renderTemplateDiffCurrentConfig || !renderTemplateDiffBaselineConfig) return false;
+    return JSON.stringify(renderTemplateDiffCurrentConfig) !== JSON.stringify(renderTemplateDiffBaselineConfig);
+  }, [renderTemplateDiffCurrentConfig, renderTemplateDiffBaselineConfig]);
 
   const migrateRenderPresetToTemplate = () => {
     const config = buildRenderConfigV2();
@@ -5562,6 +5527,7 @@ export default function App() {
       renderTemplates,
       runPipelineRenderTemplateId,
       handleRenderTemplateChange,
+      resetRenderToDefault,
       saveRenderTemplateQuick,
       saveRenderTemplateCurrent,
       restoreRenderTemplateCurrent,
@@ -5759,6 +5725,7 @@ export default function App() {
       selectedRenderTemplate,
       deleteRenderTemplateWithConfirm,
       isRenderTemplateDirty,
+      hasTemplateChanges,
       newJobRenderTemplateMenuCloseRef,
       setNewJobRenderTemplateMenuOpen,
       newJobRenderTemplateMenuOpen,

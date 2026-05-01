@@ -176,7 +176,7 @@ export const DEFAULT_RENDER_PARAMS = {
   timeline: {
     framerate: '30',
     resolution: '1920x1080',
-    levelControl: 'gain',
+    levelControl: 'lufs',
     targetLufs: '-14',
     exportMode: 'video+audio'
   },

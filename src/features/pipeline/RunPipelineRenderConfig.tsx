@@ -9,6 +9,7 @@ interface RunPipelineRenderConfigProps {
   selectedRenderTemplate: any;
   deleteRenderTemplateWithConfirm: (id: string, name: string) => void;
   isRenderTemplateDirty: boolean;
+  hasTemplateChanges: boolean;
   newJobRenderTemplateMenuCloseRef: React.MutableRefObject<number | null>;
   setNewJobRenderTemplateMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   newJobRenderTemplateMenuOpen: boolean;
@@ -28,6 +29,7 @@ export const RunPipelineRenderConfig: React.FC<RunPipelineRenderConfigProps> = (
   selectedRenderTemplate,
   deleteRenderTemplateWithConfirm,
   isRenderTemplateDirty,
+  hasTemplateChanges,
   newJobRenderTemplateMenuCloseRef,
   setNewJobRenderTemplateMenuOpen,
   newJobRenderTemplateMenuOpen,
@@ -56,7 +58,7 @@ export const RunPipelineRenderConfig: React.FC<RunPipelineRenderConfigProps> = (
             }}
             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none w-44 sm:w-56"
           >
-            <option value="custom">Custom</option>
+            <option value="custom">{isCustomRenderTemplate && hasTemplateChanges ? '*Custom' : 'Custom'}</option>
             {renderTemplates.map(template => {
               const isSelected = runPipelineRenderTemplateId === template.id;
               const label = isSelected && isRenderTemplateDirty ? `*${template.name}` : template.name;
@@ -101,18 +103,6 @@ export const RunPipelineRenderConfig: React.FC<RunPipelineRenderConfigProps> = (
             </button>
             {newJobRenderTemplateMenuOpen && (
               <div className="absolute right-0 top-full mt-1 w-28 rounded-lg border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/40 z-20">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewJobRenderTemplateMenuOpen(false);
-                    resetRenderToDefault();
-                  }}
-                  className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${
-                    isCustomRenderTemplate ? 'rounded-lg' : 'rounded-t-lg'
-                  }`}
-                >
-                  Reset to default
-                </button>
                 {!isCustomRenderTemplate && isRenderTemplateDirty && (
                   <button
                     type="button"
@@ -121,48 +111,51 @@ export const RunPipelineRenderConfig: React.FC<RunPipelineRenderConfigProps> = (
                       setNewJobRenderTemplateMenuOpen(false);
                       saveRenderTemplateCurrent(selectedRenderTemplate);
                     }}
-                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
+                    className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors rounded-t-lg"
                   >
                     Save
                   </button>
                 )}
+                {((isCustomRenderTemplate && hasTemplateChanges) || (!isCustomRenderTemplate && isRenderTemplateDirty)) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewJobRenderTemplateMenuOpen(false);
+                      saveRenderTemplateQuick();
+                    }}
+                    className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${!isCustomRenderTemplate && !isRenderTemplateDirty ? 'rounded-t-lg' : ''}`}
+                  >
+                    Save As
+                  </button>
+                )}
+                {((isCustomRenderTemplate && hasTemplateChanges) || (!isCustomRenderTemplate && isRenderTemplateDirty)) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewJobRenderTemplateMenuOpen(false);
+                      if (isCustomRenderTemplate) {
+                        resetRenderToDefault();
+                      } else if (selectedRenderTemplate) {
+                        restoreRenderTemplateCurrent(selectedRenderTemplate);
+                      }
+                    }}
+                    className={`w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors ${isCustomRenderTemplate ? 'rounded-b-lg' : ''}`}
+                  >
+                    Restore
+                  </button>
+                )}
                 {!isCustomRenderTemplate && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNewJobRenderTemplateMenuOpen(false);
-                        saveRenderTemplateQuick();
-                      }}
-                      className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                    >
-                      Save As
-                    </button>
-                    {isRenderTemplateDirty && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!selectedRenderTemplate) return;
-                          setNewJobRenderTemplateMenuOpen(false);
-                          restoreRenderTemplateCurrent(selectedRenderTemplate);
-                        }}
-                        className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800/90 hover:text-zinc-50 transition-colors"
-                      >
-                        Restore
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!selectedRenderTemplate) return;
-                        setNewJobRenderTemplateMenuOpen(false);
-                        deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
-                      }}
-                      className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
-                    >
-                      Delete
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!selectedRenderTemplate) return;
+                      setNewJobRenderTemplateMenuOpen(false);
+                      deleteRenderTemplateWithConfirm(selectedRenderTemplate.id, selectedRenderTemplate.name);
+                    }}
+                    className="w-full px-3 py-2 text-left text-xs rounded-b-lg transition-colors text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                  >
+                    Delete
+                  </button>
                 )}
               </div>
             )}

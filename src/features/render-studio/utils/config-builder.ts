@@ -35,6 +35,7 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
       id: 'video-1',
       name: firstVideo.name || 'video',
       type: 'video',
+      visible: true,
       source: { ref: 'video' },
       timeline: { start: 0 },
       layer: 10,
@@ -52,6 +53,12 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
           h: coerceNumber(DEFAULT_RENDER_PARAMS.video.cropH, 100)
         },
         mirror: DEFAULT_RENDER_PARAMS.video.mirror as 'none' | 'horizontal' | 'vertical' | 'both' | undefined ?? 'none'
+      },
+      audioMix: {
+        levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
+        targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.video.targetLufs, -14),
+        gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.video.gainDb, 0),
+        mute: Boolean(DEFAULT_RENDER_PARAMS.video.mute)
       }
     });
   }
@@ -66,7 +73,7 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
       timeline: { start: 0 },
       layer: 0,
       audioMix: {
-        levelControl: 'gain',
+        levelControl: DEFAULT_RENDER_PARAMS.timeline.levelControl as any,
         targetLufs: coerceNumber(DEFAULT_RENDER_PARAMS.audio.targetLufs, -14),
         gainDb: coerceNumber(DEFAULT_RENDER_PARAMS.audio.gainDb, 0),
         mute: Boolean(DEFAULT_RENDER_PARAMS.audio.mute)
@@ -80,9 +87,10 @@ export const buildDefaultRenderTemplateConfig = (files: VaultFile[]): RenderConf
       id: 'subtitle-1',
       name: firstSubtitle.name || 'subtitle',
       type: 'subtitle',
+      visible: true,
       source: { ref: 'subtitle' },
       timeline: { start: 0 },
-      layer: 20,
+      layer: 0,
       subtitleStyle: {
         fontName: DEFAULT_RENDER_PARAMS.subtitle.fontName || 'Arial',
         fontSize: coerceNumber(DEFAULT_RENDER_PARAMS.subtitle.fontSize, 48),
