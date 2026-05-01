@@ -29,7 +29,7 @@ const TTS_CUE_CONCURRENCY = Math.max(
 const DEFAULT_VOICE = 'vi-VN-HoaiMyNeural';
 const DEFAULT_OUTPUT_EXT = 'mp3';
 const TTS_CUE_OUTPUT_EXT = 'wav';
-const TTS_INTERNAL_SAMPLE_RATE = 24000;
+const TTS_INTERNAL_SAMPLE_RATE = 48000;
 const TTS_INTERNAL_CHANNELS = 1;
 const TTS_MIX_SEGMENT_SECONDS = Math.max(
   120,
