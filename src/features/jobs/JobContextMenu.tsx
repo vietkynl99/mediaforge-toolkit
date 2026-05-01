@@ -23,6 +23,9 @@ interface JobContextMenuProps {
   deleteJob: (id: string) => void;
 }
 
+const MENU_HEIGHT_ESTIMATE = 180;
+const MENU_WIDTH = 160;
+
 export function JobContextMenu({
   menu,
   job,
@@ -39,11 +42,29 @@ export function JobContextMenu({
 }: JobContextMenuProps) {
   if (!menu.open || !job) return null;
 
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  let adjustedX = menu.x;
+  let adjustedY = menu.y;
+
+  if (menu.x + MENU_WIDTH > viewportWidth) {
+    adjustedX = viewportWidth - MENU_WIDTH - 8;
+  }
+
+  if (menu.y + MENU_HEIGHT_ESTIMATE > viewportHeight) {
+    const overflow = (menu.y + MENU_HEIGHT_ESTIMATE) - viewportHeight;
+    adjustedY = menu.y - overflow - 8;
+  }
+
+  adjustedX = Math.max(8, adjustedX);
+  adjustedY = Math.max(8, adjustedY);
+
   return (
     <div className="fixed inset-0 z-[55]" onClick={() => setMenu(prev => ({ ...prev, open: false }))}>
       <div
         className="absolute rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl p-1 min-w-[160px]"
-        style={{ top: menu.y, left: menu.x }}
+        style={{ top: adjustedY, left: adjustedX }}
         onClick={(event) => event.stopPropagation()}
       >
         {job.projectName?.trim() && (
