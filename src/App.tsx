@@ -244,6 +244,7 @@ export default function App() {
   const [vaultFolderQuery, setVaultFolderQuery] = useState('');
   const [vaultQuery, setVaultQuery] = useState('');
   const [vaultTypeFilter, setVaultTypeFilter] = useState<'all' | VaultFileType>('all');
+  const [selectedVaultStatuses, setSelectedVaultStatuses] = useState<VaultStatus[]>([]);
   const [vaultSort, setVaultSort] = useState<'recent' | 'name' | 'size'>('recent');
   const [vaultGroupCollapsed, setVaultGroupCollapsed] = useState<Record<VaultFileType, boolean>>({
     video: false,
@@ -6554,6 +6555,8 @@ export default function App() {
                     setShowFolderPanel(true);
                   }}
                   onUpdateStatus={updateProjectStatus}
+                  selectedStatuses={selectedVaultStatuses}
+                  onStatusChange={setSelectedVaultStatuses}
                 />
               </Suspense>
             )}

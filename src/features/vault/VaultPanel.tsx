@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { 
   Search, 
@@ -8,7 +8,9 @@ import {
   FileAudio, 
   Type, 
   File,
-  ChevronDown
+  ChevronDown,
+  Filter,
+  X
 } from 'lucide-react';
 import { VaultFolder, VaultFile, VaultStatus } from '../../types';
 import { parseDurationToSeconds, formatDuration } from '../../utils/helpers';
@@ -29,6 +31,8 @@ const STATUS_LABELS: Record<VaultStatus, string> = {
   'closed': 'Closed',
   'error': 'Error',
 };
+
+const VAULT_STATUSES: VaultStatus[] = ['todo', 'in progress', 'done', 'closed', 'error'];
 
 type VaultFileView = VaultFile & {
   language?: string;
@@ -56,6 +60,8 @@ interface VaultPanelProps {
   onRunPipeline: (folder: VaultFolderView) => void;
   onOpenProjectPanel: (folder: VaultFolderView) => void;
   onUpdateStatus?: (folder: VaultFolderView, status: VaultStatus) => void;
+  selectedStatuses?: VaultStatus[];
+  onStatusChange?: (statuses: VaultStatus[]) => void;
 }
 
 export const VaultPanel: React.FC<VaultPanelProps> = ({
@@ -72,10 +78,14 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
   onOpenFileContextMenu,
   onRunPipeline,
   onOpenProjectPanel,
-  onUpdateStatus
+  onUpdateStatus,
+  selectedStatuses = [],
+  onStatusChange
 }) => {
   const [openStatusFolderId, setOpenStatusFolderId] = useState<string | null>(null);
   const [folderQuery, setFolderQuery] = useState('');
+  const [isStatusFilterOpen, setIsStatusFilterOpen] = useState(false);
+  const statusFilterRef = useRef<HTMLDivElement>(null);
 
   const statusRef = React.useRef<HTMLDivElement>(null);
 
@@ -83,6 +93,9 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
     const handleClickOutside = (event: MouseEvent) => {
       if (statusRef.current && !statusRef.current.contains(event.target as Node)) {
         setOpenStatusFolderId(null);
+      }
+      if (statusFilterRef.current && !statusFilterRef.current.contains(event.target as Node)) {
+        setIsStatusFilterOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -92,10 +105,21 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
   const deferredFolderQuery = useDeferredValue(folderQuery);
 
   const filteredFolders = useMemo(() => {
+    let result = folders;
+    
+    // Filter by search query
     const query = deferredFolderQuery.trim().toLowerCase();
-    if (!query) return folders;
-    return folders.filter(folder => folder.name.toLowerCase().includes(query));
-  }, [folders, deferredFolderQuery]);
+    if (query) {
+      result = result.filter(folder => folder.name.toLowerCase().includes(query));
+    }
+    
+    // Filter by selected statuses
+    if (selectedStatuses.length > 0) {
+      result = result.filter(folder => selectedStatuses.includes(folder.status ?? 'todo'));
+    }
+    
+    return result;
+  }, [folders, deferredFolderQuery, selectedStatuses]);
 
   const folderMetaById = useMemo(() => {
     const map = new Map<string, {
@@ -184,30 +208,112 @@ export const VaultPanel: React.FC<VaultPanelProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] gap-6 flex-1 min-h-0">
         {/* Folder Navigation */}
         <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-4 min-h-0 min-w-0">
-          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg pl-3 pr-0.5 lg:pr-3 h-8 text-xs text-zinc-400">
-            <Search size={14} />
-            <input
-              value={folderQuery}
-              onChange={e => setFolderQuery(e.target.value)}
-              placeholder="Search"
-              className="bg-transparent focus:outline-none w-full"
-            />
-            <div className="flex items-center gap-1 -mr-1.5 lg:mr-0">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg pl-3 pr-0.5 lg:pr-3 h-8 text-xs text-zinc-400">
+              <Search size={14} />
+              <input
+                value={folderQuery}
+                onChange={e => setFolderQuery(e.target.value)}
+                placeholder="Search"
+                className="bg-transparent focus:outline-none w-full"
+              />
+              {folderQuery && (
+                <button
+                  onClick={() => setFolderQuery('')}
+                  className="p-0.5 text-zinc-500 hover:text-zinc-300 rounded transition-colors"
+                  title="Clear search"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-1">
               <button
                 onClick={onImport}
-                className="p-1 lg:px-2 lg:py-1 rounded-md text-zinc-400 border border-zinc-800 lg:border-zinc-800 hover:text-zinc-100 !hover:border-lime-500/40 lg:!hover:border-lime-500/40"
+                className="h-8 w-8 flex items-center justify-center rounded-lg text-zinc-400 border border-zinc-800 hover:text-zinc-100 hover:border-lime-500/40 transition-colors"
                 title="Import files"
               >
                 <Upload size={14} />
               </button>
               <button
                 onClick={onRefresh}
-                className="p-1 lg:px-2 lg:py-1 text-zinc-400 hover:text-zinc-100 transition-colors"
+                className="h-8 w-8 flex items-center justify-center rounded-lg text-zinc-400 border border-zinc-800 hover:text-zinc-100 hover:border-zinc-600 transition-colors"
                 title="Rescan folders"
               >
                 <RefreshCw size={14} className={loading ? 'animate-spin-soft' : ''} />
               </button>
             </div>
+            
+            {/* Status Filter Dropdown */}
+            {onStatusChange && (
+              <div ref={statusFilterRef} className="relative flex items-center">
+                <button
+                  onClick={() => setIsStatusFilterOpen(!isStatusFilterOpen)}
+                  className={`h-8 px-2 flex items-center gap-1.5 rounded-lg text-xs transition-colors border ${
+                    selectedStatuses.length > 0
+                      ? 'bg-blue-500/10 border-blue-500/30 text-blue-400 hover:bg-blue-500/20'
+                      : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:text-zinc-300 hover:border-zinc-600'
+                  }`}
+                  title="Filter by status"
+                >
+                  <Filter size={14} />
+                  <span className="hidden sm:inline max-w-[100px] truncate">
+                    {selectedStatuses.length > 0
+                      ? selectedStatuses.map(s => STATUS_LABELS[s]).join(', ')
+                      : 'Status'}
+                  </span>
+                  <span className="sm:hidden">
+                    {selectedStatuses.length > 0
+                      ? selectedStatuses.length <= 1
+                        ? STATUS_LABELS[selectedStatuses[0]].slice(0, 4)
+                        : `${selectedStatuses.length}`
+                      : 'All'}
+                  </span>
+                  <ChevronDown size={14} className={`transition-transform ${isStatusFilterOpen ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {isStatusFilterOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    className="absolute z-50 mt-1 top-full right-0 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[140px] whitespace-nowrap"
+                  >
+                    {VAULT_STATUSES.map(status => (
+                      <label
+                        key={status}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800/50 cursor-pointer text-sm"
+                      >
+                        <div className="relative flex items-center justify-center w-4 h-4 shrink-0 overflow-hidden">
+                          <input
+                            type="checkbox"
+                            checked={selectedStatuses.includes(status)}
+                            onChange={() => {
+                              const newStatuses = selectedStatuses.includes(status)
+                                ? selectedStatuses.filter(s => s !== status)
+                                : [...selectedStatuses, status];
+                              onStatusChange(newStatuses);
+                            }}
+                            className="peer absolute inset-0 w-full h-full !appearance-none checked:!bg-blue-500 rounded border border-zinc-600 bg-zinc-800 focus:ring-0 focus:ring-offset-0 transition-colors cursor-pointer z-10"
+                          />
+                          <svg 
+                            className="relative w-2.5 h-2.5 text-white opacity-0 peer-checked:opacity-100 pointer-events-none transition-opacity z-20" 
+                            fill="none" 
+                            viewBox="0 0 24 24" 
+                            stroke="currentColor" 
+                            strokeWidth={4}
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                        <span className="text-zinc-300">{STATUS_LABELS[status]}</span>
+                      </label>
+                    ))}
+                  </motion.div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto pr-1">
