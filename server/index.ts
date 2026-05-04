@@ -98,6 +98,73 @@ const writeProjectMeta = async (folderPath: string, meta: ProjectMeta): Promise<
   await fs.writeFile(metaPath, JSON.stringify(meta, null, 2));
 };
 
+// Download state management for resumable downloads
+type DownloadState = {
+  url: string;
+  downloadMode: 'all' | 'subs' | 'media';
+  subLangs?: string;
+  // Track completion status of each phase
+  subsCompleted: boolean;       // Phase 1: subtitle download completed
+  subsFiles: string[];          // Subtitle files copied to sourceDir
+  mediaCompleted: boolean;      // Phase 4: merge completed (final video)
+  mediaFile?: string;           // Final merged video file copied to sourceDir
+  lastUpdated: string;
+};
+
+const DOWNLOAD_STATE_FILE = 'download-state.json';
+
+const readDownloadState = async (downloadDir: string): Promise<DownloadState | null> => {
+  try {
+    const statePath = path.join(downloadDir, DOWNLOAD_STATE_FILE);
+    const content = await fs.readFile(statePath, 'utf-8');
+    return JSON.parse(content) as DownloadState;
+  } catch {
+    return null;
+  }
+};
+
+const writeDownloadState = async (downloadDir: string, state: DownloadState): Promise<void> => {
+  const statePath = path.join(downloadDir, DOWNLOAD_STATE_FILE);
+  state.lastUpdated = new Date().toISOString();
+  await fs.writeFile(statePath, JSON.stringify(state, null, 2));
+};
+
+// Check if a file exists in sourceDir
+const fileExistsInSource = async (sourceDir: string, filename: string): Promise<boolean> => {
+  try {
+    const filePath = path.join(sourceDir, filename);
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+};
+
+// Check if all subtitle files from state exist in sourceDir
+const subsExistInSource = async (sourceDir: string, subsFiles: string[]): Promise<boolean> => {
+  if (!subsFiles || subsFiles.length === 0) return false;
+  for (const f of subsFiles) {
+    if (!(await fileExistsInSource(sourceDir, f))) return false;
+  }
+  return true;
+};
+
+// Move files from downloadDir to sourceDir
+const moveFilesToSource = async (downloadDir: string, sourceDir: string, filenames: string[]): Promise<string[]> => {
+  const moved: string[] = [];
+  for (const name of filenames) {
+    const srcPath = path.join(downloadDir, name);
+    const destPath = path.join(sourceDir, name);
+    try {
+      await fs.rename(srcPath, destPath);
+      moved.push(name);
+    } catch {
+      // Ignore errors for individual files
+    }
+  }
+  return moved;
+};
+
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
 const AUDIO_EXT = new Set(['.wav', '.mp3', '.aac', '.flac', '.ogg', '.m4a']);
 const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub', '.sktproject']);
@@ -2797,18 +2864,17 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const abortController = new AbortController();
       (job as any).__abortController = abortController;
       const sourceDir = (job as any).__downloadSourceDir as string | undefined;
+      const downloadRuntimeDir = (job as any).__downloadRuntimeDir as string | undefined;
       const url = (job as any).__downloadUrl as string | undefined;
       const cookiesFile = (job as any).__downloadCookiesFile as string | null | undefined;
       const noPlaylist = (job as any).__downloadNoPlaylist as boolean | undefined;
       const subLangs = (job as any).__downloadSubLangs as string | undefined;
-      if (!sourceDir || !url) {
+      if (!sourceDir || !downloadRuntimeDir || !url) {
         throw new Error('Missing download parameters');
       }
-      const before = new Set<string>((await fs.readdir(sourceDir, { withFileTypes: true }))
-        .filter(entry => entry.isFile())
-        .map(entry => entry.name));
       const downloadResult = await runYtDlpTask(
         url,
+        downloadRuntimeDir,
         sourceDir,
         cookiesFile ?? undefined,
         noPlaylist ?? true,
@@ -5847,13 +5913,50 @@ app.post('/api/jobs/run', async (req, res) => {
             return false;
           }
         };
-        const alreadyHasOutputs = await hasFiles(sourceDir) || await hasFiles(outputDir);
-        if (alreadyHasOutputs) {
+        
+        // Check download state for resumable downloads
+        const existingState = await readDownloadState(downloadRuntimeDir);
+        const hasExistingDownloadState = existingState !== null;
+        
+        // Check if download is fully complete (both subs and media completed and files exist)
+        let isDownloadFullyComplete = false;
+        if (hasExistingDownloadState && existingState) {
+          const subsComplete = existingState.subsCompleted && 
+            existingState.subsFiles.length > 0 && 
+            await subsExistInSource(sourceDir, existingState.subsFiles);
+          const mediaComplete = existingState.mediaCompleted && 
+            existingState.mediaFile && 
+            await fileExistsInSource(sourceDir, existingState.mediaFile);
+          
+          // For 'all' mode: both subs and media must be complete
+          // For 'subs' mode: only subs must be complete
+          // For 'media' mode: only media must be complete
+          if (downloadMode === 'all') {
+            isDownloadFullyComplete = subsComplete && mediaComplete;
+          } else if (downloadMode === 'subs') {
+            isDownloadFullyComplete = subsComplete;
+          } else if (downloadMode === 'media') {
+            isDownloadFullyComplete = mediaComplete;
+          }
+        }
+        
+        // If download is fully complete, treat as existing project
+        if (isDownloadFullyComplete) {
           if (!overwrite && !continueIfExists) {
-            res.status(409).json({ error: 'Project outputs already exist.', kind: 'download' });
+            res.status(409).json({ error: 'Download already completed. Project outputs already exist.', kind: 'download' });
             return;
           }
-          // Clean old outputs when overwrite is requested
+        } else {
+          // Download is not complete - check if there are other outputs (UVR, etc.)
+          const hasUvrOutputs = await hasFiles(outputDir);
+          if (hasUvrOutputs && !overwrite && !continueIfExists) {
+            res.status(409).json({ error: 'Project has existing outputs (UVR, etc.).', kind: 'download' });
+            return;
+          }
+        }
+        
+        // Clean old outputs when overwrite is requested
+        if (overwrite) {
           const hasUvr = tasks.some(task => task.type === 'uvr');
           if (hasUvr) {
             try {
@@ -5956,6 +6059,7 @@ app.post('/api/jobs/run', async (req, res) => {
 
       (job as any).__downloadUrl = downloadUrl;
       (job as any).__downloadSourceDir = sourceDir;
+      (job as any).__downloadRuntimeDir = downloadRuntimeDir;
       (job as any).__downloadCookiesFile = cookiesFile;
       (job as any).__downloadNoPlaylist = downloadNoPlaylist;
       (job as any).__downloadSubLangs = downloadSubLangs;
@@ -6206,7 +6310,8 @@ app.post('/api/tasks/ytdlp/analyze', async (req, res) => {
 
 const runYtDlpTask = async (
   url: string,
-  outputDir: string,
+  downloadDir: string,
+  sourceDir: string,
   cookiesFile?: string,
   noPlaylist = true,
   subLangs?: string,
@@ -6216,12 +6321,29 @@ const runYtDlpTask = async (
 ) => {
   const normalizedLangs = subLangs?.trim();
   const wantsSubs = Boolean(normalizedLangs);
+  
+  // Load or create download state
+  let state = await readDownloadState(downloadDir);
+  const isNewState = !state || state.url !== url || state.downloadMode !== downloadMode;
+  if (isNewState) {
+    state = {
+      url,
+      downloadMode,
+      subLangs: normalizedLangs,
+      subsCompleted: false,
+      subsFiles: [],
+      mediaCompleted: false,
+      lastUpdated: new Date().toISOString()
+    };
+    await writeDownloadState(downloadDir, state);
+  }
+
   const baseArgs = [
     ...(noPlaylist ? ['--no-playlist'] : []),
     '--no-warnings',
     '--newline',
     ...(cookiesFile ? ['--cookies', cookiesFile] : []),
-    '-o', path.join(outputDir, '%(id)s %(title).60s.%(ext)s'),
+    '-o', path.join(downloadDir, '%(id)s %(title).60s.%(ext)s'),
     url
   ];
 
@@ -6272,41 +6394,113 @@ const runYtDlpTask = async (
     });
   };
 
-  const subsArgs = [
-    ...(wantsSubs ? ['--write-subs', '--sub-langs', normalizedLangs!] : ['--write-subs', '--write-auto-subs']),
-    '--sub-format', 'srt',
-    '--convert-subs', 'srt',
-    '--skip-download',
-    ...baseArgs
-  ];
-
-  const mediaArgs = [
-    ...baseArgs
-  ];
-
   const listFiles = async () => {
-    const entries = await fs.readdir(outputDir, { withFileTypes: true });
-    return entries.filter(entry => entry.isFile()).map(entry => entry.name);
+    const entries = await fs.readdir(downloadDir, { withFileTypes: true });
+    return entries.filter(entry => entry.isFile() && entry.name !== DOWNLOAD_STATE_FILE).map(entry => entry.name);
   };
 
-  const beforeSubs = new Set<string>(await listFiles());
+  const isSubtitleFile = (filename: string) => {
+    const ext = path.extname(filename).toLowerCase();
+    return SUB_EXT.has(ext);
+  };
+
+  const isVideoFile = (filename: string) => {
+    const ext = path.extname(filename).toLowerCase();
+    return VIDEO_EXT.has(ext);
+  };
+
   let subsLog = '';
-  let afterSubs = await listFiles();
   let subsFiles: string[] = [];
+  
+  // Phase 1: Download subtitles
+  // Skip if: subsCompleted is true AND all subs files exist in sourceDir
+  const shouldSkipSubs = downloadMode !== 'media' && 
+    state.subsCompleted && 
+    state.subsFiles.length > 0 && 
+    await subsExistInSource(sourceDir, state.subsFiles);
+  
   if (downloadMode !== 'media') {
-    subsLog = await runWithArgs(subsArgs, 'subs-only');
-    afterSubs = await listFiles();
-    subsFiles = afterSubs.filter(name => !beforeSubs.has(name));
+    if (shouldSkipSubs) {
+      onData?.(`[SKIP] Subtitles already completed and files exist in source directory\n`);
+      subsFiles = state.subsFiles;
+    } else {
+      const beforeSubs = new Set<string>(await listFiles());
+      const subsArgs = [
+        ...(wantsSubs ? ['--write-subs', '--sub-langs', normalizedLangs!] : ['--write-subs', '--write-auto-subs']),
+        '--sub-format', 'srt',
+        '--convert-subs', 'srt',
+        '--skip-download',
+        ...baseArgs
+      ];
+      subsLog = await runWithArgs(subsArgs, 'subs-only');
+      const afterSubs = await listFiles();
+      const newSubsFiles = afterSubs.filter(name => !beforeSubs.has(name) && isSubtitleFile(name));
+      
+      // Move subtitle files to sourceDir on success
+      if (newSubsFiles.length > 0) {
+        const moved = await moveFilesToSource(downloadDir, sourceDir, newSubsFiles);
+        if (moved.length > 0) {
+          state.subsCompleted = true;
+          state.subsFiles = moved;
+          await writeDownloadState(downloadDir, state);
+          onData?.(`[MOVE] Moved ${moved.length} subtitle file(s) to source directory\n`);
+        }
+      }
+      subsFiles = newSubsFiles;
+    }
   }
 
-  const beforeMedia = new Set<string>(afterSubs);
   let mediaLog = '';
-  let afterMedia = await listFiles();
   let mediaFiles: string[] = [];
+  
+  // Phase 2-4: Download video, audio, and merge
+  // Skip if: mediaCompleted is true AND media file exists in sourceDir
+  const shouldSkipMedia = downloadMode !== 'subs' && 
+    state.mediaCompleted && 
+    state.mediaFile && 
+    await fileExistsInSource(sourceDir, state.mediaFile);
+  
   if (downloadMode !== 'subs') {
-    mediaLog = await runWithArgs(mediaArgs, 'media');
-    afterMedia = await listFiles();
-    mediaFiles = afterMedia.filter(name => !beforeMedia.has(name));
+    if (shouldSkipMedia) {
+      onData?.(`[SKIP] Media already completed and file exists in source directory\n`);
+      mediaFiles = state.mediaFile ? [state.mediaFile] : [];
+    } else {
+      const beforeMedia = new Set<string>(await listFiles());
+      const mediaArgs = [
+        ...baseArgs
+      ];
+      mediaLog = await runWithArgs(mediaArgs, 'media');
+      const afterMedia = await listFiles();
+      const newMediaFiles = afterMedia.filter(name => !beforeMedia.has(name));
+      
+      // Find the final merged video file (largest video file after merge)
+      // yt-dlp merges video+audio into a single video file
+      const videoFiles = newMediaFiles.filter(isVideoFile);
+      if (videoFiles.length > 0) {
+        // Find the largest video file (likely the merged output)
+        let largestVideo = videoFiles[0];
+        let largestSize = 0;
+        for (const vf of videoFiles) {
+          try {
+            const stat = await fs.stat(path.join(downloadDir, vf));
+            if (stat.size > largestSize) {
+              largestSize = stat.size;
+              largestVideo = vf;
+            }
+          } catch {}
+        }
+        
+        // Move the merged video to sourceDir
+        const moved = await moveFilesToSource(downloadDir, sourceDir, [largestVideo]);
+        if (moved.length > 0) {
+          state.mediaCompleted = true;
+          state.mediaFile = largestVideo;
+          await writeDownloadState(downloadDir, state);
+          onData?.(`[MOVE] Moved merged video to source directory: ${largestVideo}\n`);
+        }
+      }
+      mediaFiles = newMediaFiles;
+    }
   }
 
   const combinedLog = [subsLog, mediaLog].filter(Boolean).join('\n');
