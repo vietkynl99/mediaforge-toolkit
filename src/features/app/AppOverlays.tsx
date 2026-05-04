@@ -237,16 +237,6 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
         <LazyRunPipelineModal {...runPipelineModalProps} />
       </Suspense>
 
-      {showRenderStudio && runPipelineHasRender && (
-        vaultLoading ? (
-          <div className="fixed inset-0 z-[100] bg-zinc-950 text-zinc-400 flex items-center justify-center">Loading project...</div>
-        ) : (
-          <Suspense fallback={<div className="fixed inset-0 z-[100] bg-zinc-950 text-zinc-400 flex items-center justify-center">Loading render studio...</div>}>
-            <LazyRenderStudioPage {...renderStudioProps} />
-          </Suspense>
-        )
-      )}
-
       <Suspense fallback={null}>
         <LazyAppContextMenus {...appContextMenusProps} />
       </Suspense>

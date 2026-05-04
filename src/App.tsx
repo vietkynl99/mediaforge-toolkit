@@ -116,6 +116,9 @@ const LazyToolsPage = lazy(() =>
 const LazySubtitleStudioPage = lazy(() =>
   import('./features/subtitle/SubtitleStudioPage').then(module => ({ default: module.default }))
 );
+const LazyRenderStudioPage = lazy(() =>
+  import('./RenderStudioPage')
+);
 
 // --- Components ---
 
@@ -1041,6 +1044,21 @@ export default function App() {
       window.history.pushState({}, '', nextPath);
     }
     setActiveTab(tab);
+    if (tab === 'render-studio') {
+      // Khi mở từ tools menu (không phải từ preview), reset về project trống
+      setRunPipelineProjectId(null);
+      setRunPipelineId(null);
+      setRunPipelineRenderTemplateId('custom');
+      setRenderVideoId(null);
+      setRenderAudioId(null);
+      setRenderSubtitleId(null);
+      setRenderImageOrderIds([]);
+      setRenderInputFileIds([]);
+      setShowRenderStudio(true);
+      renderStudioQueryAppliedRef.current = false;
+    } else {
+      setShowRenderStudio(false);
+    }
   };
 
   const setRenderStudioOpen = (open: boolean) => {
@@ -1078,6 +1096,10 @@ export default function App() {
       renderStudioQueryAppliedRef.current = false;
       renderStudioPendingProjectIdRef.current = null;
       renderStudioPendingProjectNameRef.current = null;
+      
+      const target = renderStudioReturnPathRef.current || '/dashboard';
+      const targetTab = getTabFromPath(target);
+      setActiveTab(targetTab);
     }
     setShowRenderStudio(open);
   };
@@ -5494,6 +5516,12 @@ export default function App() {
       renderAudioTransforms,
       setRenderAudioTransforms
     },
+    vault: {
+      vaultFolders,
+      vaultLoading,
+      setRunPipelineProjectId,
+      onRefresh: loadVault,
+    },
     timeline: {
       formatDuration,
       formatDurationFine,
@@ -5700,8 +5728,11 @@ export default function App() {
           imageIds: renderImageOrderIds,
           allIds: renderInputFileIds
         };
+        setShowRunPipeline(false);
+        setActiveTab('render-studio');
         setRenderStudioOpen(true);
       } else if (runPipelineHasTranslate) {
+        setShowRunPipeline(false);
         navigateTab('subtitle-studio');
       }
     },
@@ -5913,13 +5944,15 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <AppHeader
-          onNewJob={openNewJob}
-          onToggleMobileSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-        />
+        {activeTab !== 'subtitle-studio' && activeTab !== 'render-studio' && (
+          <AppHeader
+            onNewJob={openNewJob}
+            onToggleMobileSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+          />
+        )}
 
         {/* Content View */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto h-full">
           <AnimatePresence mode="sync">
             {(activeTab === 'dashboard' || activeTab === 'logs') && !showRenderStudio && (
               <Suspense fallback={<div className="p-4 text-sm text-zinc-500">Loading dashboard...</div>}>
@@ -6614,6 +6647,12 @@ export default function App() {
                   vaultLoading={vaultLoading}
                   onOpenSettings={() => setShowSettingsModal(true)}
                 />
+              </Suspense>
+            )}
+
+            {activeTab === 'render-studio' && (
+              <Suspense key="tab-render-studio" fallback={<div className="p-8 text-sm text-zinc-500">Loading render studio...</div>}>
+                <LazyRenderStudioPage {...renderStudioProps} />
               </Suspense>
             )}
           </AnimatePresence>

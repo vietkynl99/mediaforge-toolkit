@@ -1,6 +1,6 @@
 import React from 'react';
 import { Eye, EyeOff, File, FileAudio, FileText, FileVideo, Menu, MousePointer2, Type, Image, Upload, Volume2, VolumeX, X, Plus, Pencil, Trash2 } from 'lucide-react';
-import { parseSubtitleCues } from '../../app/appData';
+import { parseSubtitleCues, VaultFolder } from '../../app/appData';
 import { parseDurationToSeconds, formatSecondsToTime } from '../../../utils/helpers';
 import { RenderStudioPageProvider } from './RenderStudioPageContext';
 import { RenderStudioHeaderBar } from './components/RenderStudioHeaderBar';
@@ -8,6 +8,8 @@ import { RenderStudioRenderConfirmDialog } from './components/RenderStudioRender
 import { RenderStudioTemplateSaveConfirmDialog } from './components/RenderStudioTemplateSaveConfirmDialog';
 import { InspectorTemplatePanel } from './components/inspector/InspectorTemplatePanel';
 import { InspectorSelectionSummary } from './components/inspector/InspectorSelectionSummary';
+
+import { ProjectSelector } from './components/ProjectSelector';
 
 type RenderStudioPageProps = Record<string, any>;
 
@@ -222,6 +224,13 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
     isSubtitlePresetActive,
     buildSubtitlePreviewStyle
   } = flat;
+
+  const {
+    vaultFolders,
+    vaultLoading,
+    setRunPipelineProjectId,
+    onRefresh
+  } = flat.vault ?? {};
 
   const RENDER_RESOLUTION_PRESETS = flat.RENDER_RESOLUTION_PRESETS ?? DEFAULT_RENDER_RESOLUTION_PRESETS;
   const [selectedTrackKey, setSelectedTrackKey] = React.useState<string | null>(null);
@@ -651,13 +660,22 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
 
   return (
     <RenderStudioPageProvider value={ctx}>
-      <div className="fixed inset-0 z-[60] bg-zinc-950">
-        <div className="relative w-full h-full bg-zinc-950/95 border border-zinc-800 rounded-none shadow-none overflow-hidden flex flex-col">
-          <RenderStudioHeaderBar />
-          <RenderStudioRenderConfirmDialog />
-          <RenderStudioTemplateSaveConfirmDialog />
+      <div className="relative w-full h-full bg-zinc-950/95 border border-zinc-800 rounded-none shadow-none overflow-hidden flex flex-col">
+        {!runPipelineProject ? (
+          <ProjectSelector
+            vaultFolders={vaultFolders ?? []}
+            vaultLoading={vaultLoading ?? false}
+            onSelectProject={(folder) => setRunPipelineProjectId(folder.id)}
+            onBack={() => setShowRenderStudio(false)}
+            onRefresh={onRefresh}
+          />
+        ) : (
+          <>
+            <RenderStudioHeaderBar />
+            <RenderStudioRenderConfirmDialog />
+            <RenderStudioTemplateSaveConfirmDialog />
 
-	                <div className={`grid min-h-0 flex-1 ${renderStudioMediaBinOpen ? 'grid-cols-[260px_minmax(0,1fr)_300px]' : 'grid-cols-[auto_minmax(0,1fr)_300px]'}`}>
+            <div className={`grid min-h-0 flex-1 ${renderStudioMediaBinOpen ? 'grid-cols-[260px_minmax(0,1fr)_300px]' : 'grid-cols-[auto_minmax(0,1fr)_300px]'}`}>
                   <div className={`border-r border-zinc-800 bg-zinc-900/60 flex flex-col gap-4 min-h-0 ${renderStudioMediaBinOpen ? 'p-4' : 'p-2 w-12 items-center'}`}>
                     <div
                       role="button"
@@ -4526,12 +4544,13 @@ export default function RenderStudioPage(props: RenderStudioPageProps) {
                         )}
                       </div>
                     ) : (
-                      <InspectorSelectionSummary />
+                      null
                     )}
                   </div>
                 </div>
-              </div>
-        </div>
+          </>
+        )}
+      </div>
     </RenderStudioPageProvider>
   );
 }

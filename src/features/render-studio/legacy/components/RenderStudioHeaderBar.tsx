@@ -3,7 +3,7 @@ import { FileVideo, AlertCircle } from 'lucide-react';
 import { useRenderStudioPage } from '../RenderStudioPageContext';
 
 export const RenderStudioHeaderBar: React.FC = () => {
-  const { runPipelineProject, renderReady, setShowRenderStudio, runPipelineSubmitting, local } = useRenderStudioPage();
+  const { runPipelineProject, renderReady, setShowRenderStudio, setRunPipelineProjectId, runPipelineSubmitting, local } = useRenderStudioPage();
   const hasError = local.hasInvalidMuteSegments;
 
   return (
@@ -14,8 +14,14 @@ export const RenderStudioHeaderBar: React.FC = () => {
         </div>
         <div>
           <div className="text-[11px] text-zinc-500 uppercase tracking-widest">Render Studio</div>
-          <div className="text-sm font-semibold text-zinc-100">
+          <div className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
             {runPipelineProject?.name ?? 'Project'}
+            <button
+              onClick={() => setRunPipelineProjectId(null)}
+              className="text-[10px] text-zinc-500 hover:text-zinc-300 underline"
+            >
+              Change
+            </button>
           </div>
         </div>
       </div>
