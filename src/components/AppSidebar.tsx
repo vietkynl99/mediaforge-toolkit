@@ -5,21 +5,20 @@ import {
   Database,
   Settings,
   Terminal,
-  Activity,
-  Cpu,
-  HardDrive,
   X,
-  LogOut
+  LogOut,
+  Wrench
 } from 'lucide-react';
 
 interface AppSidebarProps {
   collapsed: boolean;
   setCollapsed: (next: boolean) => void;
   activeTab: string;
-  onNavigateTab: (tab: 'dashboard' | 'forge' | 'vault' | 'settings' | 'logs') => void;
+  onNavigateTab: (tab: 'dashboard' | 'forge' | 'vault' | 'logs' | 'tools') => void;
   onLogout: () => void;
   isMobile?: boolean;
   onClose?: () => void;
+  onOpenSettings?: () => void;
 }
 
 const SidebarItem = ({
@@ -53,7 +52,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   onNavigateTab,
   onLogout,
   isMobile = false,
-  onClose
+  onClose,
+  onOpenSettings
 }) => {
   return (
     <aside className={`${collapsed && !isMobile ? 'w-20' : 'w-64'} border-r border-zinc-800 flex flex-col p-4 gap-6 transition-all duration-300 h-full bg-zinc-950`}>
@@ -108,14 +108,25 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           onClick={() => onNavigateTab('logs')}
           collapsed={collapsed}
         />
+
+        <SidebarItem
+          icon={Wrench}
+          label="Tools"
+          active={activeTab === 'tools' || activeTab === 'subtitle-studio' || activeTab === 'render-studio'}
+          onClick={() => onNavigateTab('tools')}
+          collapsed={collapsed}
+        />
         
         <div className="mt-auto flex flex-col gap-1">
           <div className="my-2 border-t border-zinc-800/50" />
           <SidebarItem
             icon={Settings}
             label="Settings"
-            active={activeTab === 'settings'}
-            onClick={() => onNavigateTab('settings')}
+            active={false}
+            onClick={() => {
+              onOpenSettings?.();
+              onClose?.();
+            }}
             collapsed={collapsed}
           />
           <SidebarItem

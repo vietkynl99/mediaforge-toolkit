@@ -32,6 +32,7 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
 export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime }) => {
   const [autoScroll, setAutoScroll] = useState(true);
   const [logContent, setLogContent] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
   const { lastJob, activeTaskName } = useMemo(() => {
@@ -54,18 +55,21 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime 
   useEffect(() => {
     if (!lastJob) {
       setLogContent('');
+      setIsLoading(false);
       return;
     }
 
     // For processing jobs, poll the log every 2 seconds
     const fetchLog = () => {
+      setIsLoading(true);
       fetch(`/api/jobs/${lastJob.id}/log`)
         .then(res => {
           if (!res.ok) throw new Error('Failed to load log');
           return res.text();
         })
         .then(text => setLogContent(text))
-        .catch(() => setLogContent(''));
+        .catch(() => setLogContent(''))
+        .finally(() => setIsLoading(false));
     };
 
     fetchLog();
@@ -141,7 +145,7 @@ export const LogsPanel: React.FC<LogsPanelProps> = ({ jobs, formatLocalDateTime 
               ref={logRef}
               className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 text-xs text-zinc-200 whitespace-pre-wrap overflow-y-auto flex-1 min-h-0 font-mono leading-relaxed"
             >
-              {logContent || lastJob.error || 'No log output yet.'}
+              {isLoading ? 'Loading...' : (logContent || lastJob.error || 'No log output yet.')}
             </div>
           </div>
         </div>

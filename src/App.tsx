@@ -25,6 +25,8 @@ import {
   MousePointer2,
   Save,
   Menu,
+  X,
+  Settings,
 } from 'lucide-react';
 import { MediaJob, DEFAULT_RENDER_PARAMS } from './types';
 import { AppHeader } from './components/AppHeader';
@@ -107,6 +109,12 @@ const LazyAppOverlays = lazy(() =>
 );
 const LazySettingsPage = lazy(() =>
   import('./features/settings/SettingsPage').then(module => ({ default: module.SettingsPage }))
+);
+const LazyToolsPage = lazy(() =>
+  import('./features/tools/ToolsPage').then(module => ({ default: module.default }))
+);
+const LazySubtitleStudioPage = lazy(() =>
+  import('./features/subtitle/SubtitleStudioPage').then(module => ({ default: module.default }))
 );
 
 // --- Components ---
@@ -255,6 +263,7 @@ export default function App() {
     other: false
   });
   const [showFolderPanel, setShowFolderPanel] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastVisible, setToastVisible] = useState(false);
   const [toastType, setToastType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
@@ -546,8 +555,11 @@ export default function App() {
   const runPipelineHasTts = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
     ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'tts'
     : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'tts'));
+  const runPipelineHasTranslate = runPipelineId?.startsWith(TASK_PIPELINE_PREFIX)
+    ? runPipelineId.slice(TASK_PIPELINE_PREFIX.length) === 'translate'
+    : Boolean(runPipelineGraph?.nodes?.some((node: any) => node?.type === 'translate'));
   const runPipelineEligibleInputs = runPipelineProject?.files.filter(file => (
-    runPipelineHasTts
+    runPipelineHasTts || runPipelineHasTranslate
       ? file.type === 'subtitle'
       : file.type === 'video' || file.type === 'audio'
   )) ?? [];
@@ -2413,6 +2425,18 @@ export default function App() {
         { name: 'text.textAutoMoveInterval', desc: 'Text track auto move interval (s)', type: 'number', default: 0 },
         { name: 'text.textAutoMovePositions', desc: 'Text track auto move positions (x,y % list)', type: 'string', default: '' }
       ]
+    },
+    {
+      type: 'translate',
+      icon: Languages,
+      label: 'Translate AI',
+      desc: 'Translate subtitle files using AI with project-based context.',
+      inputs: ['Subtitle'],
+      outputs: ['Subtitle'],
+      params: [
+        { name: 'subtitleFile', desc: 'Path to source subtitle file', type: 'string', default: '' },
+        { name: 'batchSize', desc: 'Number of segments per API call.', type: 'number', default: 50 }
+      ]
     }
   ]), []);
 
@@ -4270,16 +4294,17 @@ export default function App() {
   useEffect(() => {
     if (!runPipelineProject) return;
     const currentInput = runPipelineProject.files.find(file => file.id === runPipelineInputId);
+    const needsSubtitle = runPipelineHasTts || runPipelineHasTranslate;
     const currentInputValid = Boolean(
       currentInput
-      && (runPipelineHasTts ? currentInput.type === 'subtitle' : (currentInput.type === 'video' || currentInput.type === 'audio'))
+      && (needsSubtitle ? currentInput.type === 'subtitle' : (currentInput.type === 'video' || currentInput.type === 'audio'))
     );
     if (currentInputValid) return;
-    const firstInput = runPipelineHasTts
+    const firstInput = needsSubtitle
       ? runPipelineProject.files.find(file => file.type === 'subtitle')
       : runPipelineProject.files.find(file => file.type === 'video' || file.type === 'audio');
     setRunPipelineInputId(firstInput?.id ?? null);
-  }, [runPipelineProject?.id, runPipelineHasTts, runPipelineInputId]);
+  }, [runPipelineProject?.id, runPipelineHasTts, runPipelineHasTranslate, runPipelineInputId]);
 
   useEffect(() => {
     if (!runPipelineProject || !runPipelineHasRender) return;
@@ -5661,19 +5686,24 @@ export default function App() {
     },
     isNewJobProjectLoading,
     runPipelineHasRender,
+    runPipelineHasTranslate,
     runPipelineProject,
     runPipelineSubmitting,
     onOpenPreview: () => {
-      // L inputs hin ti vo pending inputs  preserve khi m Render Studio
-      // ng race condition vi useEffect reset inputs hoc auto-apply template
-      renderStudioPendingInputsRef.current = {
-        videoId: renderVideoId,
-        audioId: renderAudioId,
-        subtitleId: renderSubtitleId,
-        imageIds: renderImageOrderIds,
-        allIds: renderInputFileIds
-      };
-      setRenderStudioOpen(true);
+      if (runPipelineHasRender) {
+        // Lưu inputs hiện tại vào pending inputs để preserve khi mở Render Studio
+        // Tránh race condition với useEffect reset inputs hoặc auto-apply template
+        renderStudioPendingInputsRef.current = {
+          videoId: renderVideoId,
+          audioId: renderAudioId,
+          subtitleId: renderSubtitleId,
+          imageIds: renderImageOrderIds,
+          allIds: renderInputFileIds
+        };
+        setRenderStudioOpen(true);
+      } else if (runPipelineHasTranslate) {
+        navigateTab('subtitle-studio');
+      }
     },
     onRun: () => runPipelineJob(),
     runPipelineHasDownload,
@@ -5686,6 +5716,7 @@ export default function App() {
       runPipelineHasDownload,
       runPipelineHasRender,
       runPipelineHasTts,
+      runPipelineHasTranslate,
       downloadProjectName,
       setDownloadProjectName,
       downloadProjectPickerOpen,
@@ -5848,6 +5879,7 @@ export default function App() {
             onNavigateTab={navigateTab}
             onLogout={handleLogout}
             isMobile={false}
+            onOpenSettings={() => setShowSettingsModal(true)}
           />
         </div>
       </Suspense>
@@ -5874,6 +5906,7 @@ export default function App() {
             onLogout={handleLogout}
             isMobile
             onClose={() => setMobileSidebarOpen(false)}
+            onOpenSettings={() => setShowSettingsModal(true)}
           />
         </Suspense>
       </div>
@@ -5888,21 +5921,21 @@ export default function App() {
         {/* Content View */}
         <div className="flex-1 overflow-y-auto">
           <AnimatePresence mode="sync">
-            {(activeTab === 'dashboard' || activeTab === 'logs') && (
-              <JobsFeature
-                ref={(handle) => {
-                  jobsHandleRef.current = handle;
-                }}
-                activeTab={activeTab}
-                formatLocalDateTime={formatLocalDateTime}
-                showToast={showToast}
-                vaultFolders={vaultFolders}
-                setVaultFolderId={setVaultFolderId}
-                setVaultFileId={setVaultFileId}
-                setShowFolderPanel={setShowFolderPanel}
-                openRunPipelineFromJob={openRunPipelineFromJob}
-                onJobOutputsCompleted={() => loadVault()}
-              />
+            {(activeTab === 'dashboard' || activeTab === 'logs') && !showRenderStudio && (
+              <Suspense fallback={<div className="p-4 text-sm text-zinc-500">Loading dashboard...</div>}>
+                <JobsFeature
+                  ref={jobsHandleRef}
+                  activeTab={activeTab}
+                  formatLocalDateTime={formatLocalDateTime}
+                  showToast={showToast}
+                  vaultFolders={vaultFolders}
+                  setVaultFolderId={setVaultFolderId}
+                  setVaultFileId={setVaultFileId}
+                  setShowFolderPanel={setShowFolderPanel}
+                  openRunPipelineFromJob={openRunPipelineFromJob}
+                  onJobOutputsCompleted={() => loadVault()}
+                />
+              </Suspense>
             )}
 
             {activeTab === 'forge' && (
@@ -6561,9 +6594,26 @@ export default function App() {
               </Suspense>
             )}
 
-            {activeTab === 'settings' && (
-              <Suspense key="tab-settings" fallback={<div className="p-8 text-sm text-zinc-500">Loading settings...</div>}>
-                <LazySettingsPage />
+            {activeTab === 'tools' && (
+              <Suspense key="tab-tools" fallback={<div className="p-8 text-sm text-zinc-500">Loading tools...</div>}>
+                <LazyToolsPage onOpenTool={(tool) => {
+                  if (tool === 'subtitle-studio') {
+                    navigateTab('subtitle-studio');
+                  } else if (tool === 'render-studio') {
+                    navigateTab('render-studio');
+                  }
+                  // For split-srt and combine-srt, we need to implement them later
+                }} />
+              </Suspense>
+            )}
+
+            {activeTab === 'subtitle-studio' && (
+              <Suspense key="tab-subtitle-studio" fallback={<div className="p-8 text-sm text-zinc-500">Loading subtitle studio...</div>}>
+                <LazySubtitleStudioPage 
+                  vaultFolders={vaultFolders}
+                  vaultLoading={vaultLoading}
+                  onOpenSettings={() => setShowSettingsModal(true)}
+                />
               </Suspense>
             )}
           </AnimatePresence>
@@ -6625,6 +6675,7 @@ export default function App() {
               runPipelineModalProps={runPipelineModalProps}
               showRenderStudio={showRenderStudio}
               runPipelineHasRender={runPipelineHasRender}
+              runPipelineHasTranslate={runPipelineHasTranslate}
               vaultLoading={vaultLoading}
               renderStudioProps={renderStudioProps}
               appContextMenusProps={appContextMenusProps}
@@ -6641,6 +6692,10 @@ export default function App() {
             onClose={closeConfirmModal}
             onConfirm={handleConfirmModalConfirm}
             onSecondary={handleConfirmModalSecondary}
+          />
+          <SettingsModal
+            show={showSettingsModal}
+            onClose={() => setShowSettingsModal(false)}
           />
         </div>
       </main>
@@ -6667,6 +6722,56 @@ export default function App() {
           navigateAuth(authView === 'login' ? 'register' : 'login');
         }}
       />
+
     </Suspense>
+  );
+}
+
+function SettingsModal({
+  show,
+  onClose
+}: {
+  show: boolean;
+  onClose: () => void;
+}) {
+  if (!show) return null;
+
+  return (
+    <div
+      className="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-4xl max-h-[90vh] bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-600/10 rounded-lg">
+              <Settings size={20} className="text-blue-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-zinc-100">Settings</h2>
+              <p className="text-xs text-zinc-500">Configure application preferences</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+            aria-label="Close settings"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Modal Content */}
+        <div className="max-h-[calc(90vh-80px)] overflow-y-auto">
+          <Suspense fallback={<div className="p-8 text-center text-zinc-500">Loading settings...</div>}>
+            <LazySettingsPage />
+          </Suspense>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -46,6 +46,9 @@ export interface JobInputs {
   ttsRemoveLineBreaks?: boolean;
   renderConfigV2?: any;
   renderPreviewSeconds?: number;
+  translateSubtitleFile?: string;
+  translatePreset?: any;
+  translateBatchSize?: number;
 }
 
 /**
@@ -106,6 +109,12 @@ export function buildJobGraph(
     if (node.type === 'render') {
       if (inputs.renderConfigV2) task.params.configV2 = inputs.renderConfigV2;
       if (inputs.renderPreviewSeconds !== undefined) task.params.previewSeconds = inputs.renderPreviewSeconds;
+    }
+
+    if (node.type === 'translate') {
+      if (inputs.translateSubtitleFile) task.params.subtitleFile = inputs.translateSubtitleFile;
+      if (inputs.translatePreset) task.params.preset = inputs.translatePreset;
+      if (inputs.translateBatchSize) task.params.batchSize = inputs.translateBatchSize;
     }
 
     tasks.set(node.id, task);

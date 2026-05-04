@@ -11,6 +11,7 @@ interface RunPipelineModalProps {
   onClose: () => void;
   isNewJobProjectLoading: boolean;
   runPipelineHasRender: boolean;
+  runPipelineHasTranslate: boolean;
   runPipelineProject: any;
   runPipelineSubmitting: boolean;
   onOpenPreview: () => void;
@@ -33,6 +34,7 @@ export const RunPipelineModal: React.FC<RunPipelineModalProps> = ({
   onClose,
   isNewJobProjectLoading,
   runPipelineHasRender,
+  runPipelineHasTranslate,
   runPipelineProject,
   runPipelineSubmitting,
   onOpenPreview,
@@ -58,7 +60,7 @@ export const RunPipelineModal: React.FC<RunPipelineModalProps> = ({
         <div className="flex items-center justify-between">
           <div className="text-xs text-zinc-500 uppercase tracking-widest">New Job</div>
           <div className="flex items-center gap-2">
-            {!isNewJobProjectLoading && runPipelineHasRender && (
+            {!isNewJobProjectLoading && (runPipelineHasRender || runPipelineHasTranslate) && (
               <button
                 onClick={onOpenPreview}
                 disabled={!runPipelineProject}

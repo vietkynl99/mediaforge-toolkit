@@ -1,4 +1,6 @@
 import { VaultFile, VaultFolder, VaultFolderDTO, VaultStatus } from '../types/vault';
+import { SubtitleSegment } from '../features/subtitle/types';
+import { parseSRT, parseSktProject, parseCapCutDraft, generateSktProject } from '../features/subtitle/services/subtitleLogic';
 
 export const vaultService = {
   async getFolders(): Promise<VaultFolder[]> {
@@ -85,6 +87,43 @@ export const vaultService = {
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || `Update status failed (${response.status})`);
+    }
+  },
+
+  async getFileContent(relativePath: string): Promise<string> {
+    const response = await fetch(`/api/vault/text?path=${encodeURIComponent(relativePath)}`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch file content (${response.status})`);
+    }
+    const data = await response.json() as { content: string };
+    return data.content;
+  },
+
+  async loadSubtitleFile(relativePath: string): Promise<{ segments: SubtitleSegment[], preset?: any }> {
+    const content = await this.getFileContent(relativePath);
+    const lower = relativePath.toLowerCase();
+    
+    if (lower.endsWith('.srt')) {
+      return { segments: parseSRT(content) };
+    } else if (lower.endsWith('.sktproject')) {
+      const res = parseSktProject(content);
+      return { segments: res.segments, preset: res.preset };
+    } else if (lower.endsWith('.json')) {
+      const res = parseCapCutDraft(content);
+      return { segments: res.segments };
+    }
+    throw new Error('Unsupported subtitle format');
+  },
+
+  async saveSubtitleFile(relativePath: string, content: string): Promise<void> {
+    const response = await fetch('/api/vault/subtitle/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ relativePath, content })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Save failed (${response.status})`);
     }
   }
 };

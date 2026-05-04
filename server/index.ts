@@ -100,7 +100,7 @@ const writeProjectMeta = async (folderPath: string, meta: ProjectMeta): Promise<
 
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
 const AUDIO_EXT = new Set(['.wav', '.mp3', '.aac', '.flac', '.ogg', '.m4a']);
-const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
+const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub', '.sktproject']);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff']);
 const PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const PREVIEW_MAX_SECONDS = 60;
@@ -3173,6 +3173,59 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       job.progress = Math.max(0, Math.min(99, Math.round(totalAfter / job.tasks.length)));
       scheduleJobPersist(job);
     }
+
+    const translateTask = job.tasks.find(task => task.type === 'translate');
+    if (translateTask) {
+      const subtitleFile = (job as any).__translateSubtitleFile as string | undefined;
+      const projectName = job.projectName;
+      if (!subtitleFile || !projectName) {
+        throw new Error('Missing input for translate task');
+      }
+      translateTask.status = 'active';
+      translateTask.progress = 0;
+      const updateTranslateJobProgress = () => {
+        const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+        job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+        scheduleJobPersist(job);
+      };
+      updateTranslateJobProgress();
+      
+      const translateAbortController = new AbortController();
+      (job as any).__abortController = translateAbortController;
+      
+      const translateExecutor = new (await import('./job/executor.js')).TranslateTaskExecutor();
+      const translateTaskNode = {
+        id: translateTask.id,
+        type: 'translate' as const,
+        name: translateTask.name,
+        status: 'running' as const,
+        progress: 0,
+        dependencies: [],
+        dependents: [],
+        priority: 2,
+        params: {
+          projectName,
+          subtitleFile,
+          preset: (job as any).__translatePreset,
+          batchSize: (job as any).__translateBatchSize
+        }
+      };
+
+      await translateExecutor.execute(translateTaskNode as any, {
+        signal: translateAbortController.signal,
+        onProgress: (p, msg) => {
+          translateTask.progress = p;
+          if (msg) appendJobLog(job, msg + '\n');
+          updateTranslateJobProgress();
+        },
+        onLog: msg => appendJobLog(job, msg + '\n')
+      });
+
+      translateTask.status = 'done';
+      translateTask.progress = 100;
+      updateTranslateJobProgress();
+    }
+
     const renderTask = job.tasks.find(task => task.type === 'render');
     if (renderTask) {
       const rawConfig = (job as any).__renderConfigV2 ?? (job.params as any)?.render?.configV2;
@@ -5720,6 +5773,11 @@ app.post('/api/jobs/run', async (req, res) => {
   const renderPreviewSeconds = renderPreviewSecondsRaw !== undefined && Number.isFinite(renderPreviewSecondsRaw) && renderPreviewSecondsRaw > 0
     ? Math.min(3600, Math.round(renderPreviewSecondsRaw * 1000) / 1000)
     : undefined;
+
+  const translateSubtitleFile = typeof req.body?.subtitleFile === 'string' ? req.body.subtitleFile : undefined;
+  const translatePreset = req.body?.preset;
+  const translateBatchSize = typeof req.body?.batchSize === 'number' ? req.body.batchSize : undefined;
+
   if (LOG_RENDER_V2_DEBUG && renderConfigV2) {
     console.log('RENDER_V2_DEBUG jobs/run received renderConfigV2', JSON.stringify({
       renderPreviewSeconds: renderPreviewSeconds ?? null,
@@ -5850,6 +5908,11 @@ app.post('/api/jobs/run', async (req, res) => {
       if (renderAudioPath) renderPayload.audioPath = renderAudioPath;
       if (renderSubtitlePath) renderPayload.subtitlePath = renderSubtitlePath;
 
+      const translatePayload: Record<string, any> = {};
+      if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
+      if (translatePreset) translatePayload.preset = translatePreset;
+      if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
+
       job = {
         id: jobId,
         name: pipelineName,
@@ -5883,6 +5946,7 @@ app.post('/api/jobs/run', async (req, res) => {
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
           },
+          translate: Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
           render: Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
@@ -5906,6 +5970,9 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__forceRenderV2New = forceNew;
       (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
       if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
+      if (translateSubtitleFile) (job as any).__translateSubtitleFile = translateSubtitleFile;
+      if (translatePreset) (job as any).__translatePreset = translatePreset;
+      if (translateBatchSize) (job as any).__translateBatchSize = translateBatchSize;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
@@ -5991,6 +6058,14 @@ app.post('/api/jobs/run', async (req, res) => {
         renderPayload.signature = signature;
       }
 
+      const translatePayload: Record<string, any> = {};
+      if (req.body.translate) {
+        translatePayload.translate = req.body.translate;
+      }
+      if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
+      if (translatePreset) translatePayload.preset = translatePreset;
+      if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
+
       job = {
         id: jobId,
         name: pipelineName,
@@ -6019,6 +6094,7 @@ app.post('/api/jobs/run', async (req, res) => {
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
           },
+          translate: Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
           render: Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
@@ -6037,6 +6113,9 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__forceRenderV2New = forceNew;
       (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
       if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
+      if (translateSubtitleFile) (job as any).__translateSubtitleFile = translateSubtitleFile;
+      if (translatePreset) (job as any).__translatePreset = translatePreset;
+      if (translateBatchSize) (job as any).__translateBatchSize = translateBatchSize;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
@@ -6610,6 +6689,47 @@ app.get('/api/vault/text', async (req, res) => {
   }
 });
 
+app.post('/api/vault/subtitle/save', async (req, res) => {
+  const relativePathRaw = typeof req.body?.relativePath === 'string' ? req.body.relativePath.trim() : '';
+  const contentRaw = typeof req.body?.content === 'string' ? req.body.content : '';
+
+  if (!relativePathRaw) {
+    res.status(400).json({ error: 'Missing relativePath' });
+    return;
+  }
+
+  if (!contentRaw) {
+    res.status(400).json({ error: 'Missing content' });
+    return;
+  }
+
+  // Ensure path ends with .sktproject
+  let savePath = relativePathRaw;
+  if (!savePath.toLowerCase().endsWith('.sktproject')) {
+    savePath = savePath.replace(/\.[^/.]+$/, '') + '.sktproject';
+  }
+
+  const fullPath = resolveSafePath(savePath);
+  if (!fullPath) {
+    res.status(400).json({ error: 'Invalid path' });
+    return;
+  }
+
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(fullPath);
+    await fs.mkdir(dir, { recursive: true });
+
+    // Write file
+    await fs.writeFile(fullPath, contentRaw, 'utf-8');
+
+    res.json({ success: true, path: savePath });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to save file';
+    res.status(500).json({ error: message });
+  }
+});
+
 const isVideoFile = (filePath: string) => VIDEO_EXT.has(path.extname(filePath).toLowerCase());
 const isAudioFile = (filePath: string) => AUDIO_EXT.has(path.extname(filePath).toLowerCase());
 const isSubtitleFile = (filePath: string) => SUB_EXT.has(path.extname(filePath).toLowerCase());
@@ -6887,6 +7007,51 @@ app.get('/api/settings/concurrency/status', (_req, res) => {
     res.json(rm.getStatus());
   } catch {
     res.json({ totalRunning: 0, byResource: {}, byType: {} });
+  }
+});
+
+import { callGemini } from './ai-service.js';
+import * as SubtitleAI from './subtitle-ai.js';
+
+// Subtitle AI API
+app.post('/api/subtitle/ai/translate', async (req, res) => {
+  try {
+    const result = await SubtitleAI.translateBatch(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error('Translate Batch Error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Translation failed' });
+  }
+});
+
+app.post('/api/subtitle/ai/optimize', async (req, res) => {
+  try {
+    const result = await SubtitleAI.aiFixSegments(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error('Optimize Error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Optimization failed' });
+  }
+});
+
+app.post('/api/subtitle/ai/analyze-style', async (req, res) => {
+  try {
+    const result = await SubtitleAI.analyzeTranslationStyle(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error('Analyze Style Error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Analysis failed' });
+  }
+});
+
+app.post('/api/subtitle/ai/call', async (req, res) => {
+  try {
+    const params = req.body;
+    const result = await callGemini(params);
+    res.json(result);
+  } catch (err) {
+    console.error('AI Call Error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI call failed' });
   }
 });
 

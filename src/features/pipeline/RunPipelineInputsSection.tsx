@@ -4,6 +4,7 @@ interface RunPipelineInputsSectionProps {
   runPipelineHasDownload: boolean;
   runPipelineHasRender: boolean;
   runPipelineHasTts: boolean;
+  runPipelineHasTranslate: boolean;
   downloadProjectName: string;
   setDownloadProjectName: (value: string) => void;
   downloadProjectPickerOpen: boolean;
@@ -48,6 +49,7 @@ export const RunPipelineInputsSection: React.FC<RunPipelineInputsSectionProps> =
   runPipelineHasDownload,
   runPipelineHasRender,
   runPipelineHasTts,
+  runPipelineHasTranslate,
   downloadProjectName,
   setDownloadProjectName,
   downloadProjectPickerOpen,
@@ -176,7 +178,7 @@ export const RunPipelineInputsSection: React.FC<RunPipelineInputsSectionProps> =
             ? 'Inputs (URL)'
             : runPipelineHasRender
               ? 'Inputs (Files)'
-              : runPipelineHasTts
+              : (runPipelineHasTts || runPipelineHasTranslate)
                 ? 'Inputs (Subtitle)'
                 : 'Inputs (Video/Audio)'}
         </div>
@@ -371,7 +373,7 @@ export const RunPipelineInputsSection: React.FC<RunPipelineInputsSectionProps> =
                   >
                     <option value="">Select input file</option>
                     {runPipelineProject?.files
-                      .filter(file => (runPipelineHasTts ? file.type === 'subtitle' : file.type === 'video' || file.type === 'audio'))
+                      .filter(file => ((runPipelineHasTts || runPipelineHasTranslate) ? file.type === 'subtitle' : file.type === 'video' || file.type === 'audio'))
                       .map(file => (
                         <option
                           key={file.id}

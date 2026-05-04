@@ -211,6 +211,20 @@ export const parseAssCues = (content: string, removeLineBreaks: boolean) => {
 
 export const parseSubtitleCues = (content: string) => {
   const normalized = stripUtf8Bom(content ?? '');
+  if (normalized.startsWith('{')) {
+    try {
+      const json = JSON.parse(normalized);
+      if (json.version === "1.0" && Array.isArray(json.segments)) {
+        // .sktproject format
+        const srtContent = json.segments.map((s: any, index: number) => {
+          return `${index + 1}\n${s.start} --> ${s.end}\n${s.translated || s.original || ""}\n`;
+        }).join('\n');
+        return parseSrtVttCues(srtContent, true);
+      }
+    } catch (e) {
+      console.error('Failed to parse potential .sktproject JSON', e);
+    }
+  }
   const looksLikeAss = /\[Script Info\]|\nDialogue:\s*/i.test(normalized);
   return looksLikeAss ? parseAssCues(normalized, true) : parseSrtVttCues(normalized, true);
 };

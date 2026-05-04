@@ -70,6 +70,7 @@ interface AppOverlaysProps {
   runPipelineModalProps: any;
   showRenderStudio: boolean;
   runPipelineHasRender: boolean;
+  runPipelineHasTranslate: boolean;
   vaultLoading: boolean;
   renderStudioProps: any;
   appContextMenusProps: any;
@@ -127,6 +128,7 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
   runPipelineModalProps,
   showRenderStudio,
   runPipelineHasRender,
+  runPipelineHasTranslate,
   vaultLoading,
   renderStudioProps,
   appContextMenusProps,

@@ -50,6 +50,10 @@ export class ConfigManager {
             ...DEFAULT_CONCURRENCY_CONFIG.globalLimits,
             ...loaded.globalLimits,
           },
+          ai: {
+            ...DEFAULT_CONCURRENCY_CONFIG.ai!,
+            ...loaded.ai,
+          },
         };
       } else {
         // No saved config, use defaults
@@ -99,6 +103,12 @@ export class ConfigManager {
       this.config.globalLimits = {
         ...this.config.globalLimits,
         ...newConfig.globalLimits,
+      };
+    }
+    if (newConfig.ai) {
+      this.config.ai = {
+        ...this.config.ai!,
+        ...newConfig.ai,
       };
     }
     await this.save();

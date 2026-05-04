@@ -2,7 +2,8 @@ import {
   Download, 
   FileAudio, 
   FileVideo,
-  File
+  File,
+  Languages
 } from 'lucide-react';
 import { TaskTemplate, PipelineSummary } from './types/index';
 
@@ -60,6 +61,19 @@ export const AVAILABLE_TASKS: TaskTemplate[] = [
     preview: 'tts'
   },
   {
+    type: 'translate',
+    label: 'Translate SRT',
+    desc: 'Translate subtitle files using AI with customizable humor level.',
+    inputs: ['Subtitle'],
+    outputs: ['Subtitle'],
+    params: [
+      { name: 'humorLevel', desc: 'Humor level for translation (1-10). Higher = more creative/funny.', type: 'number', default: 10 },
+      { name: 'aiModel', desc: 'AI model to use for translation.', type: 'string', default: 'gemini-2.5-flash' },
+      { name: 'batchSize', desc: 'Number of segments per API call.', type: 'number', default: 100 }
+    ],
+    preview: 'translate'
+  },
+  {
     type: 'render',
     label: 'Render',
     desc: 'Combine video, audio, and subtitle into final output.',
@@ -110,7 +124,8 @@ export const DOWNLOAD_MODE_OPTIONS = [
   { value: 'media', label: 'Audio + video only' }
 ];
 
-export const RENDER_STUDIO_PATH = '/render-studio';
+export const RENDER_STUDIO_PATH = '/tools/render-studio';
+export const SUBTITLE_STUDIO_PATH = '/tools/subtitle-studio';
 
 export const RENDER_TIMELINE_VIEW_PAD = 0.12;
 export const RENDER_TIMELINE_MAX_VIEW_DURATION = 20;
@@ -124,8 +139,10 @@ export const TAB_PATH_MAP: Record<string, string> = {
   dashboard: '/dashboard',
   forge: '/pipeline-forge',
   vault: '/media-vault',
-  settings: '/settings',
-  logs: '/logs'
+  logs: '/logs',
+  tools: '/tools',
+  'subtitle-studio': '/tools/subtitle-studio',
+  'render-studio': '/tools/render-studio'
 };
 
 export const TASK_PIPELINE_PREFIX = 'task:';

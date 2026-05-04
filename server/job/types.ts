@@ -6,9 +6,11 @@ export type TaskStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed
 
 export type ResourceType = 'cpu' | 'gpu' | 'network';
 
+export type TaskType = 'download' | 'uvr' | 'tts' | 'render' | 'translate';
+
 export interface TaskNode {
   id: string;
-  type: 'download' | 'uvr' | 'tts' | 'render';
+  type: TaskType;
   name: string;
   status: TaskStatus;
   progress: number;
@@ -47,9 +49,22 @@ export interface ConcurrencyRule {
   priority: number;           // Default priority for this task type
 }
 
+export type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
+
 export interface ConcurrencyConfig {
   rules: ConcurrencyRule[];
   globalLimits: Record<ResourceType, number>;
+  ai?: {
+    model: AiModel;
+    apiKey: string;
+    cpsThreshold?: {
+      safeMax: number;
+      warningMax: number;
+    };
+    translationBatchSize?: number;
+    maxSingleLineWords?: number;
+    autoSplitLongLines?: boolean;
+  };
 }
 
 export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
@@ -57,12 +72,24 @@ export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
     { taskType: 'download', maxConcurrent: 4, resourceType: 'network', priority: 4 },
     { taskType: 'uvr', maxConcurrent: 1, resourceType: 'cpu', priority: 3 },
     { taskType: 'tts', maxConcurrent: 2, resourceType: 'network', priority: 2 },
+    { taskType: 'translate', maxConcurrent: 2, resourceType: 'network', priority: 2 },
     { taskType: 'render', maxConcurrent: 1, resourceType: 'cpu', priority: 1 },
   ],
   globalLimits: {
     cpu: 8,
     gpu: 1,
     network: 4,
+  },
+  ai: {
+    model: 'gemini-2.5-flash',
+    apiKey: '',
+    cpsThreshold: {
+      safeMax: 25,
+      warningMax: 40,
+    },
+    translationBatchSize: 100,
+    maxSingleLineWords: 12,
+    autoSplitLongLines: false,
   },
 };
 

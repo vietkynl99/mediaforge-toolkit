@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Save, RotateCcw, Cpu, Wifi, MemoryStick, AlertCircle, Check } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { Save, RotateCcw, Cpu, Wifi, MemoryStick, AlertCircle, Check, Sparkles, Eye, EyeOff } from 'lucide-react';
 
 interface ConcurrencyRule {
   taskType: string;
@@ -14,6 +14,17 @@ interface ConcurrencyConfig {
     cpu: number;
     gpu: number;
     network: number;
+  };
+  ai?: {
+    model: AiModel;
+    apiKey: string;
+    translationBatchSize?: number;
+    maxSingleLineWords?: number;
+    autoSplitLongLines?: boolean;
+    cpsThreshold?: {
+      safeMax: number;
+      warningMax: number;
+    };
   };
 }
 
@@ -36,16 +47,25 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   render: 'Video Render',
 };
 
+type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
+
 export function SettingsPage() {
   const [config, setConfig] = useState<ConcurrencyConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadConfig();
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
   }, []);
 
   const loadConfig = async () => {
@@ -63,8 +83,7 @@ export function SettingsPage() {
     }
   };
 
-  const saveConfig = async () => {
-    if (!config) return;
+  const saveConfig = useCallback(async (newConfig: ConcurrencyConfig) => {
     setSaving(true);
     setError(null);
     setSuccess(false);
@@ -72,57 +91,76 @@ export function SettingsPage() {
       const response = await fetch('/api/settings/concurrency', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
+        body: JSON.stringify(newConfig),
       });
       if (!response.ok) throw new Error('Failed to save config');
       setSuccess(true);
-      setHasChanges(false);
       setTimeout(() => setSuccess(false), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save config');
     } finally {
       setSaving(false);
     }
-  };
+  }, []);
 
-  const resetConfig = async () => {
-    if (!confirm('Reset to default configuration?')) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/settings/concurrency/reset', { method: 'POST' });
-      if (!response.ok) throw new Error('Failed to reset config');
-      const data = await response.json();
-      setConfig(data);
-      setHasChanges(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reset config');
-    } finally {
-      setLoading(false);
+  const debouncedSave = useCallback((newConfig: ConcurrencyConfig) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
-  };
+    debounceTimerRef.current = setTimeout(() => {
+      saveConfig(newConfig);
+    }, 1000);
+  }, [saveConfig]);
 
   const updateGlobalLimit = (resource: string, value: number) => {
     if (!config) return;
-    setConfig({
+    const newConfig = {
       ...config,
       globalLimits: {
         ...config.globalLimits,
         [resource]: Math.max(1, value),
       },
-    });
-    setHasChanges(true);
+    };
+    setConfig(newConfig);
+    debouncedSave(newConfig);
   };
 
   const updateRule = (taskType: string, field: 'maxConcurrent' | 'priority', value: number) => {
     if (!config) return;
-    setConfig({
+    const newConfig = {
       ...config,
       rules: config.rules.map(rule =>
         rule.taskType === taskType ? { ...rule, [field]: Math.max(1, value) } : rule
       ),
-    });
-    setHasChanges(true);
+    };
+    setConfig(newConfig);
+    debouncedSave(newConfig);
+  };
+
+  const updateAiSetting = (field: string, value: any) => {
+    if (!config) return;
+    
+    const currentAi = config.ai || { model: 'gemini-2.5-flash', apiKey: '' };
+    let newAi: any = { ...currentAi };
+    
+    if (field.includes('.')) {
+      const [parent, child] = field.split('.');
+      if (parent === 'cpsThreshold') {
+        newAi.cpsThreshold = {
+          ...(currentAi.cpsThreshold || { safeMax: 25, warningMax: 40 }),
+          [child]: value
+        };
+      }
+    } else {
+      newAi[field] = value;
+    }
+
+    const newConfig = {
+      ...config,
+      ai: newAi
+    };
+    setConfig(newConfig);
+    debouncedSave(newConfig);
   };
 
   if (loading) {
@@ -146,29 +184,19 @@ export function SettingsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-zinc-100">Concurrency Settings</h1>
+        <h1 className="text-xl font-semibold text-zinc-100">Settings</h1>
         <div className="flex items-center gap-2">
-          {hasChanges && (
-            <span className="text-xs text-amber-400">Unsaved changes</span>
+          {saving && (
+            <span className="text-xs text-amber-400 flex items-center gap-1">
+              <div className="animate-spin w-3 h-3 border border-amber-400 border-t-transparent rounded-full" />
+              Saving...
+            </span>
           )}
           {success && (
             <span className="text-xs text-green-400 flex items-center gap-1">
               <Check size={12} /> Saved
             </span>
           )}
-          <button
-            onClick={resetConfig}
-            className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 rounded-lg hover:border-zinc-600 transition-colors flex items-center gap-1.5"
-          >
-            <RotateCcw size={12} /> Reset
-          </button>
-          <button
-            onClick={saveConfig}
-            disabled={saving || !hasChanges}
-            className="px-3 py-1.5 text-xs text-zinc-100 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 rounded-lg transition-colors flex items-center gap-1.5"
-          >
-            <Save size={12} /> {saving ? 'Saving...' : 'Save'}
-          </button>
         </div>
       </div>
 
@@ -178,6 +206,132 @@ export function SettingsPage() {
           {error}
         </div>
       )}
+
+      {/* AI Settings */}
+      <section className="mb-8">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+            <Sparkles size={14} />
+            AI Settings
+          </h2>
+        </div>
+        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                Model
+              </label>
+              <select
+                value={config.ai?.model || 'gemini-2.5-flash'}
+                onChange={e => updateAiSetting('model', e.target.value)}
+                className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+              >
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast)</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Balanced)</option>
+                <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                <option value="gemini-3-pro-preview">Gemini 3 Pro Preview (Highest Quality)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                Translation Batch Size
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={config.ai?.translationBatchSize || 100}
+                onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
+                className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="relative">
+            <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+              Gemini API Key
+            </label>
+            <input
+              type={showApiKey ? 'text' : 'password'}
+              value={config.ai?.apiKey || ''}
+              onChange={e => updateAiSetting('apiKey', e.target.value)}
+              placeholder="Enter your Gemini API Key"
+              className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => setShowApiKey(prev => !prev)}
+              className="absolute right-3 top-[29px] p-1 text-zinc-400 hover:text-zinc-200"
+            >
+              {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-zinc-800">
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                Max Words per Line
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={config.ai?.maxSingleLineWords || 12}
+                onChange={e => updateAiSetting('maxSingleLineWords', parseInt(e.target.value) || 1)}
+                className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-3 pt-6">
+              <input
+                type="checkbox"
+                id="autoSplit"
+                checked={config.ai?.autoSplitLongLines || false}
+                onChange={e => updateAiSetting('autoSplitLongLines', e.target.checked)}
+                className="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor="autoSplit" className="text-sm text-zinc-300 cursor-pointer">
+                Auto split long lines
+              </label>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-zinc-800">
+            <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-3">
+              CPS Thresholds
+            </label>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-zinc-400 font-medium">Safe Max</span>
+                  <span className="text-[10px] text-green-400 font-bold">{config.ai?.cpsThreshold?.safeMax || 25} CPS</span>
+                </div>
+                <input
+                  type="range"
+                  min={10}
+                  max={40}
+                  value={config.ai?.cpsThreshold?.safeMax || 25}
+                  onChange={e => updateAiSetting('cpsThreshold.safeMax', parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-green-500"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] text-zinc-400 font-medium">Warning Max</span>
+                  <span className="text-[10px] text-amber-400 font-bold">{config.ai?.cpsThreshold?.warningMax || 40} CPS</span>
+                </div>
+                <input
+                  type="range"
+                  min={30}
+                  max={60}
+                  value={config.ai?.cpsThreshold?.warningMax || 40}
+                  onChange={e => updateAiSetting('cpsThreshold.warningMax', parseInt(e.target.value))}
+                  className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Global Limits */}
       <section className="mb-8">
