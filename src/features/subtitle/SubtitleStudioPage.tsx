@@ -17,9 +17,25 @@ import { SegmentList } from './components/SegmentList';
 import { AnalyzerPanel } from './components/AnalyzerPanel';
 import { PresetPage } from './components/PresetPage';
 import { vaultService } from '../../services/vault';
-import { VaultFolder, VaultFile } from '../../types/vault';
+import { VaultFolder, VaultFile, VaultStatus } from '../../types/vault';
 
 const INITIAL_USAGE: ApiUsage = { style: { requests: 0, tokens: 0 }, translate: { requests: 0, tokens: 0, segments: 0 }, optimize: { requests: 0, tokens: 0 } };
+
+const STATUS_COLORS: Record<VaultStatus, string> = {
+  'todo': 'bg-zinc-500',
+  'in progress': 'bg-blue-500',
+  'done': 'bg-lime-500',
+  'closed': 'bg-red-500',
+  'error': 'bg-red-600',
+};
+
+const STATUS_LABELS: Record<VaultStatus, string> = {
+  'todo': 'Todo',
+  'in progress': 'In Progress',
+  'done': 'Done',
+  'closed': 'Closed',
+  'error': 'Error',
+};
 const EDITOR_PAGE_SIZE = 25;
 
 interface SubtitleStudioPageProps {
@@ -94,6 +110,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [baseFileName, setBaseFileName] = useState<string>('');
   const [editedCount, setEditedCount] = useState<number>(0);
   const [filter, setFilter] = useState<string>('all');
+  const [folderQuery, setFolderQuery] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isPageEditing, setIsPageEditing] = useState<boolean>(false);
   const [pageInputValue, setPageInputValue] = useState<string>('1');
@@ -1007,12 +1024,30 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
 
             <div className="flex-1 flex gap-6 min-h-0">
               {/* Projects List */}
-              <div className="w-64 flex flex-col bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden">
-                <div className="p-4 border-b border-slate-800">
+              <div className="w-3/10 flex flex-col bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden">
+                <div className="p-4 border-b border-slate-800 space-y-3">
                   <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
                     <Folder size={16} className="text-lime-400" />
                     Projects
                   </h2>
+                  <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5">
+                    <Search size={14} className="text-slate-500" />
+                    <input
+                      type="text"
+                      value={folderQuery}
+                      onChange={(e) => setFolderQuery(e.target.value)}
+                      placeholder="Search projects..."
+                      className="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-500 focus:outline-none"
+                    />
+                    {folderQuery && (
+                      <button
+                        onClick={() => setFolderQuery('')}
+                        className="text-slate-500 hover:text-slate-300"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
                   {parentVaultLoading ? (
@@ -1022,7 +1057,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                   ) : vaultFolders.length === 0 ? (
                     <p className="text-xs text-slate-500 p-3 text-center">No projects available</p>
                   ) : (
-                    vaultFolders.map((folder) => (
+                    vaultFolders.filter(folder => folder.name.toLowerCase().includes(folderQuery.toLowerCase())).map((folder) => (
                       <button
                         key={folder.id}
                         onClick={() => setSelectedFolderId(folder.id)}
@@ -1032,7 +1067,14 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                             : 'hover:bg-slate-800 text-slate-400'
                         }`}
                       >
-                        <p className="text-sm font-medium truncate">{folder.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium truncate flex-1">{folder.name}</p>
+                          {folder.status && (
+                            <span className={`text-[9px] leading-none font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${STATUS_COLORS[folder.status]} text-white shrink-0`}>
+                              {STATUS_LABELS[folder.status]}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs text-slate-500 mt-1">
                           {folder.files?.filter(f => {
                             const lowerPath = f.relativePath?.toLowerCase() || f.name.toLowerCase();
@@ -1051,7 +1093,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
               </div>
 
               {/* Files List */}
-              <div className="flex-1 flex flex-col bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden">
+              <div className="w-7/10 flex flex-col bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 flex items-center justify-between">
                   <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
                     <File size={16} className="text-lime-400" />
