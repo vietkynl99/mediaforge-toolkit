@@ -5908,7 +5908,8 @@ app.post('/api/render-v2/check-status', async (req, res) => {
 });
 
 app.post('/api/jobs/run', async (req, res) => {
-  const pipelineId = Number(req.body?.pipelineId);
+  const pipelineIdRaw = req.body?.pipelineId;
+  const pipelineId = typeof pipelineIdRaw === 'string' ? pipelineIdRaw : (Number.isFinite(Number(pipelineIdRaw)) ? Number(pipelineIdRaw) : null);
   const inlineGraph = req.body?.graph;
   const inlineName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   const inputPath = typeof req.body?.inputPath === 'string' ? req.body.inputPath : '';
@@ -6003,6 +6004,10 @@ app.post('/api/jobs/run', async (req, res) => {
     }
 
     const hasDownload = tasks.some(task => task.type === 'download' || task.type.startsWith('download_'));
+    const hasUvr = tasks.some(task => task.type === 'uvr');
+    const hasTts = tasks.some(task => task.type === 'tts');
+    const hasTranslate = tasks.some(task => task.type === 'translate');
+    const hasRender = tasks.some(task => task.type === 'render');
     const createdAt = new Date().toISOString();
     const jobId = `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     let job: JobRecord;
@@ -6152,7 +6157,7 @@ app.post('/api/jobs/run', async (req, res) => {
         tasks,
         createdAt,
         params: {
-          pipelineId,
+          pipelineId: pipelineId,
           pipelineName,
           projectName: safeProjectName,
           download: {
@@ -6162,20 +6167,20 @@ app.post('/api/jobs/run', async (req, res) => {
             subLangs: downloadSubLangs,
             overwrite
           },
-          uvr: {
+          uvr: hasUvr ? {
             backend,
             model,
             outputFormat
-          },
-          tts: {
+          } : undefined,
+          tts: hasTts ? {
             voice: ttsVoice || undefined,
             rate: ttsRate,
             pitch: ttsPitch,
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
-          },
-          translate: Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
-          render: Object.keys(renderPayload).length > 0 ? renderPayload : undefined
+          } : undefined,
+          translate: hasTranslate && Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
+          render: hasRender && Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
       if (renderPreviewSeconds && job.params.render) {
@@ -6309,25 +6314,25 @@ app.post('/api/jobs/run', async (req, res) => {
         tasks,
         createdAt,
         params: {
-          pipelineId,
+          pipelineId: pipelineId,
           pipelineName,
           projectName,
           inputRelativePath: inputPath,
           inputPaths: inputPaths && inputPaths.length > 0 ? inputPaths : undefined,
-          uvr: {
+          uvr: hasUvr ? {
             backend,
             model,
             outputFormat
-          },
-          tts: {
+          } : undefined,
+          tts: hasTts ? {
             voice: ttsVoice || undefined,
             rate: ttsRate,
             pitch: ttsPitch,
             overlapMode: ttsOverlapMode,
             removeLineBreaks: ttsRemoveLineBreaks
-          },
-          translate: Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
-          render: Object.keys(renderPayload).length > 0 ? renderPayload : undefined
+          } : undefined,
+          translate: hasTranslate && Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
+          render: hasRender && Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
       if (renderPreviewSeconds && job.params.render) {

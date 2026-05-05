@@ -29,7 +29,7 @@ export interface MediaJob {
   taskCount?: number;
   error?: string;
   params?: {
-    pipelineId?: number;
+    pipelineId?: number | string;
     pipelineName?: string;
     projectName?: string;
     inputPaths?: string[];
@@ -59,6 +59,19 @@ export interface MediaJob {
       overlapSeconds?: number;
       overlapMode?: 'overlap' | 'truncate';
       removeLineBreaks?: boolean;
+    };
+    translate?: {
+      subtitleFile?: string;
+      preset?: {
+        reference?: {
+          title_or_summary?: string;
+        };
+        genres?: string[];
+        character_names?: string[];
+        humor_level?: number;
+      };
+      batchSize?: number;
+      targetIds?: string[];
     };
   };
 }
