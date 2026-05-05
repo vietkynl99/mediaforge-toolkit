@@ -8,6 +8,8 @@ interface ConcurrencyRule {
   priority: number;
 }
 
+type AiProviderType = 'gemini' | 'openrouter';
+
 interface ConcurrencyConfig {
   rules: ConcurrencyRule[];
   globalLimits: {
@@ -16,8 +18,17 @@ interface ConcurrencyConfig {
     network: number;
   };
   ai?: {
-    model: AiModel;
-    apiKey: string;
+    provider?: AiProviderType;
+    // Legacy fields
+    model?: AiModel;
+    apiKey?: string;
+    // Gemini settings
+    geminiModel?: string;
+    geminiApiKey?: string;
+    // OpenRouter settings
+    openrouterModel?: string;
+    openrouterApiKey?: string;
+    // Common settings
     translationBatchSize?: number;
     maxSingleLineWords?: number;
     autoSplitLongLines?: boolean;
@@ -56,6 +67,7 @@ export function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showOpenRouterApiKey, setShowOpenRouterApiKey] = useState(false);
   
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -140,7 +152,7 @@ export function SettingsPage() {
   const updateAiSetting = (field: string, value: any) => {
     if (!config) return;
     
-    const currentAi = config.ai || { model: 'gemini-2.5-flash', apiKey: '' };
+    const currentAi = config.ai || { provider: 'gemini', model: 'gemini-2.5-flash', apiKey: '' };
     let newAi: any = { ...currentAi };
     
     if (field.includes('.')) {
@@ -153,6 +165,14 @@ export function SettingsPage() {
       }
     } else {
       newAi[field] = value;
+      // When changing provider, set default model for that provider
+      if (field === 'provider') {
+        if (value === 'gemini') {
+          newAi.geminiModel = newAi.geminiModel || 'gemini-2.5-flash';
+        } else if (value === 'openrouter') {
+          newAi.openrouterModel = newAi.openrouterModel || 'openrouter/auto';
+        }
+      }
     }
 
     const newConfig = {
@@ -216,58 +236,145 @@ export function SettingsPage() {
           </h2>
         </div>
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                Model
-              </label>
-              <select
-                value={config.ai?.model || 'gemini-2.5-flash'}
-                onChange={e => updateAiSetting('model', e.target.value)}
-                className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
-              >
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast)</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Balanced)</option>
-                <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                <option value="gemini-3-pro-preview">Gemini 3 Pro Preview (Highest Quality)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                Translation Batch Size
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={500}
-                value={config.ai?.translationBatchSize || 100}
-                onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
-                className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
-              />
-            </div>
+          {/* Provider Selection */}
+          <div>
+            <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+              AI Provider
+            </label>
+            <select
+              value={config.ai?.provider || 'gemini'}
+              onChange={e => updateAiSetting('provider', e.target.value)}
+              className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+            >
+              <option value="gemini">Google Gemini</option>
+              <option value="openrouter">OpenRouter (Multi-model)</option>
+            </select>
           </div>
 
-          <div className="relative">
-            <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-              Gemini API Key
-            </label>
-            <input
-              type="text"
-              autoComplete="off"
-              style={{ WebkitTextSecurity: showApiKey ? 'none' : 'disc' } as React.CSSProperties}
-              value={config.ai?.apiKey || ''}
-              onChange={e => updateAiSetting('apiKey', e.target.value)}
-              placeholder="Enter your Gemini API Key"
-              className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
-            />
-            <button
-              type="button"
-              onClick={() => setShowApiKey(prev => !prev)}
-              className="absolute right-3 top-[29px] p-1 text-zinc-400 hover:text-zinc-200"
-            >
-              {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          </div>
+          {/* Gemini Settings */}
+          {(config.ai?.provider || 'gemini') === 'gemini' && (
+            <div className="space-y-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
+              <div className="text-xs text-zinc-400 font-medium flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-500" />
+                Gemini Configuration
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                    Model
+                  </label>
+                  <select
+                    value={config.ai?.geminiModel || config.ai?.model || 'gemini-2.5-flash'}
+                    onChange={e => updateAiSetting('geminiModel', e.target.value)}
+                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast)</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Balanced)</option>
+                    <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                    <option value="gemini-3-pro-preview">Gemini 3 Pro Preview (Highest Quality)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                    Translation Batch Size
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={config.ai?.translationBatchSize || 100}
+                    onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
+                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div className="relative">
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  Gemini API Key
+                </label>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  style={{ WebkitTextSecurity: showApiKey ? 'none' : 'disc' } as React.CSSProperties}
+                  value={config.ai?.geminiApiKey || config.ai?.apiKey || ''}
+                  onChange={e => updateAiSetting('geminiApiKey', e.target.value)}
+                  placeholder="Enter your Gemini API Key"
+                  className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey(prev => !prev)}
+                  className="absolute right-3 top-[29px] p-1 text-zinc-400 hover:text-zinc-200"
+                >
+                  {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* OpenRouter Settings */}
+          {(config.ai?.provider || 'gemini') === 'openrouter' && (
+            <div className="space-y-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
+              <div className="text-xs text-zinc-400 font-medium flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-purple-500" />
+                OpenRouter Configuration
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                    Model
+                  </label>
+                  <input
+                    type="text"
+                    value={config.ai?.openrouterModel || 'openrouter/auto'}
+                    onChange={e => updateAiSetting('openrouterModel', e.target.value)}
+                    placeholder="e.g., openrouter/auto, anthropic/claude-3-opus"
+                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1">
+                    Browse models at <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/models</a>.
+                  </p>
+                </div>
+                <div>
+                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                    Translation Batch Size
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={config.ai?.translationBatchSize || 100}
+                    onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
+                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div className="relative">
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  OpenRouter API Key
+                </label>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  style={{ WebkitTextSecurity: showOpenRouterApiKey ? 'none' : 'disc' } as React.CSSProperties}
+                  value={config.ai?.openrouterApiKey || ''}
+                  onChange={e => updateAiSetting('openrouterApiKey', e.target.value)}
+                  placeholder="Enter your OpenRouter API Key"
+                  className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowOpenRouterApiKey(prev => !prev)}
+                  className="absolute right-3 top-[29px] p-1 text-zinc-400 hover:text-zinc-200"
+                >
+                  {showOpenRouterApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500">
+                Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/keys</a>
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4 pt-2 border-t border-zinc-800">
             <div>

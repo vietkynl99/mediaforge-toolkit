@@ -1,5 +1,5 @@
 import { Type } from "@google/genai";
-import { callGemini } from "./ai-service.js";
+import { callAi } from "./ai-provider.js";
 
 // Helper functions for prompt generation (moved from frontend)
 function getHumorRule(humorLevel: number): string {
@@ -148,7 +148,7 @@ Subtitle data:
 ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
 `;
 
-  return callGemini({
+  return callAi({
     prompt,
     responseMimeType: "application/json",
     responseSchema: {
@@ -215,7 +215,7 @@ Segments:
 ${JSON.stringify(segments)}
 `;
 
-  return callGemini({
+  return callAi({
     prompt,
     responseMimeType: "application/json",
     responseSchema: {
@@ -247,7 +247,7 @@ export async function analyzeTranslationStyle(params: { titleOrSummary: string }
 Chỉ được phép chọn từ danh sách sau:
 Genres: ${taxonomy.join(', ')}`;
 
-  return callGemini({
+  return callAi({
     prompt,
     responseMimeType: "application/json",
     responseSchema: {

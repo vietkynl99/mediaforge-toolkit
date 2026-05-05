@@ -221,11 +221,15 @@ export class TranslateTaskExecutor extends TaskExecutor {
             translatedItems = JSON.parse(result.text);
           } catch (parseErr) {
             context.onLog(`ERROR: Failed to parse AI response as JSON: ${parseErr}`);
+            context.onLog(`ERROR: AI response text (first 500 chars): ${result.text.substring(0, 500)}`);
+            context.onLog(`ERROR: Full AI response length: ${result.text.length} characters`);
+            throw new Error(`Failed to parse AI response as JSON. Response was: ${result.text.substring(0, 200)}...`);
           }
           
           if (!Array.isArray(translatedItems)) {
-            context.onLog(`ERROR: Parsed response is not an array`);
-            translatedItems = [];
+            context.onLog(`ERROR: Parsed response is not an array. Got: ${typeof translatedItems}`);
+            context.onLog(`ERROR: Parsed value: ${JSON.stringify(translatedItems).substring(0, 300)}`);
+            throw new Error('AI response was not a valid array format');
           }
           
           let matchedCount = 0;
@@ -396,11 +400,15 @@ export class OptimizeTaskExecutor extends TaskExecutor {
             fixedItems = JSON.parse(result.text);
           } catch (parseErr) {
             context.onLog(`ERROR: Failed to parse AI response as JSON: ${parseErr}`);
+            context.onLog(`ERROR: AI response text (first 500 chars): ${result.text.substring(0, 500)}`);
+            context.onLog(`ERROR: Full AI response length: ${result.text.length} characters`);
+            throw new Error(`Failed to parse AI response as JSON. Response was: ${result.text.substring(0, 200)}...`);
           }
 
           if (!Array.isArray(fixedItems)) {
-            context.onLog(`ERROR: Parsed response is not an array`);
-            fixedItems = [];
+            context.onLog(`ERROR: Parsed response is not an array. Got: ${typeof fixedItems}`);
+            context.onLog(`ERROR: Parsed value: ${JSON.stringify(fixedItems).substring(0, 300)}`);
+            throw new Error('AI response was not a valid array format');
           }
 
           let matchedCount = 0;

@@ -7448,7 +7448,7 @@ app.get('/api/settings/concurrency/status', (_req, res) => {
   }
 });
 
-import { callGemini } from './ai-service.js';
+import { callAi } from './ai-provider.js';
 import * as SubtitleAI from './subtitle-ai.js';
 
 // Subtitle AI API
@@ -7485,7 +7485,7 @@ app.post('/api/subtitle/ai/analyze-style', async (req, res) => {
 app.post('/api/subtitle/ai/call', async (req, res) => {
   try {
     const params = req.body;
-    const result = await callGemini(params);
+    const result = await callAi(params);
     res.json(result);
   } catch (err) {
     console.error('AI Call Error:', err);

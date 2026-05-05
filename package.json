@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
+    "@openrouter/sdk": "^0.12.26",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "concurrently": "^9.2.0",

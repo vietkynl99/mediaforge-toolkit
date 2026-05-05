@@ -83,8 +83,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           if (data.ai) {
             setSettings(prev => ({
               ...prev,
-              aiModel: data.ai.model,
-              apiKey: data.ai.apiKey,
+              provider: data.ai.provider || 'gemini',
+              // Legacy fields
+              aiModel: data.ai.model || data.ai.geminiModel,
+              apiKey: data.ai.apiKey || data.ai.geminiApiKey,
+              // Gemini settings
+              geminiModel: data.ai.geminiModel || data.ai.model,
+              geminiApiKey: data.ai.geminiApiKey || data.ai.apiKey,
+              // OpenRouter settings
+              openrouterModel: data.ai.openrouterModel || 'openrouter/auto',
+              openrouterApiKey: data.ai.openrouterApiKey || '',
+              // Common settings
               translationBatchSize: data.ai.translationBatchSize || 20,
               maxSingleLineWords: data.ai.maxSingleLineWords || 12,
               autoSplitLongLines: data.ai.autoSplitLongLines || false
@@ -99,6 +108,52 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     fetchSettings();
   }, []);
 
+  // Reload settings when page becomes visible (e.g., returning from settings page)
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await fetch('/api/settings/concurrency');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ai) {
+            setSettings(prev => ({
+              ...prev,
+              provider: data.ai.provider || 'gemini',
+              aiModel: data.ai.model || data.ai.geminiModel,
+              apiKey: data.ai.apiKey || data.ai.geminiApiKey,
+              geminiModel: data.ai.geminiModel || data.ai.model,
+              geminiApiKey: data.ai.geminiApiKey || data.ai.apiKey,
+              openrouterModel: data.ai.openrouterModel || 'openrouter/auto',
+              openrouterApiKey: data.ai.openrouterApiKey || '',
+              translationBatchSize: data.ai.translationBatchSize || 20,
+              maxSingleLineWords: data.ai.maxSingleLineWords || 12,
+              autoSplitLongLines: data.ai.autoSplitLongLines || false
+            }));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch AI settings:', err);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSettings();
+      }
+    };
+
+    const handleFocus = () => {
+      fetchSettings();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
   useEffect(() => {
     // Only save after settings have been loaded from server
     if (!settingsLoaded) return;
@@ -110,8 +165,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ai: {
-              model: settings.aiModel,
-              apiKey: settings.apiKey,
+              provider: settings.provider,
+              // Legacy fields
+              model: settings.geminiModel || settings.aiModel,
+              apiKey: settings.geminiApiKey || settings.apiKey,
+              // Gemini settings
+              geminiModel: settings.geminiModel,
+              geminiApiKey: settings.geminiApiKey,
+              // OpenRouter settings
+              openrouterModel: settings.openrouterModel,
+              openrouterApiKey: settings.openrouterApiKey,
+              // Common settings
               translationBatchSize: settings.translationBatchSize,
               maxSingleLineWords: settings.maxSingleLineWords,
               autoSplitLongLines: settings.autoSplitLongLines
@@ -123,7 +187,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       }
     };
     saveSettings();
-  }, [settings.aiModel, settings.apiKey, settings.translationBatchSize, settings.maxSingleLineWords, settings.autoSplitLongLines, settingsLoaded]);
+  }, [settings.provider, settings.geminiModel, settings.geminiApiKey, settings.openrouterModel, settings.openrouterApiKey, settings.translationBatchSize, settings.maxSingleLineWords, settings.autoSplitLongLines, settingsLoaded]);
 
   const [showTranslationStylePopup, setShowTranslationStylePopup] = useState<boolean>(false);
   const [isPresetLoading, setIsPresetLoading] = useState<boolean>(false);
@@ -139,8 +203,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           if (data.ai) {
             setSettings(prev => ({
               ...prev,
-              aiModel: data.ai.model,
-              apiKey: data.ai.apiKey,
+              provider: data.ai.provider || 'gemini',
+              // Legacy fields
+              aiModel: data.ai.model || data.ai.geminiModel,
+              apiKey: data.ai.apiKey || data.ai.geminiApiKey,
+              // Gemini settings
+              geminiModel: data.ai.geminiModel || data.ai.model,
+              geminiApiKey: data.ai.geminiApiKey || data.ai.apiKey,
+              // OpenRouter settings
+              openrouterModel: data.ai.openrouterModel || 'openrouter/auto',
+              openrouterApiKey: data.ai.openrouterApiKey || '',
+              // Common settings
               translationBatchSize: data.ai.translationBatchSize || 20,
               maxSingleLineWords: data.ai.maxSingleLineWords || 12,
               autoSplitLongLines: data.ai.autoSplitLongLines || false
@@ -328,8 +401,12 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   // Effects
   useEffect(() => {
     localStorage.setItem('subtitle_settings', JSON.stringify(settings));
-    if (typeof settings.apiKey === 'string' && settings.apiKey.trim()) {
-      localStorage.setItem('subtitle_api_key', settings.apiKey);
+    // Save the appropriate API key based on provider
+    const currentApiKey = settings.provider === 'openrouter' 
+      ? settings.openrouterApiKey 
+      : (settings.geminiApiKey || settings.apiKey);
+    if (typeof currentApiKey === 'string' && currentApiKey.trim()) {
+      localStorage.setItem('subtitle_api_key', currentApiKey);
     } else {
       localStorage.removeItem('subtitle_api_key');
     }
@@ -937,8 +1014,15 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
 
   // Optimize
   const handleAiOptimize = async () => {
-    if (!settingsRef.current.apiKey?.trim()) {
-      showToast('warning', "Please enter your Gemini API Key in Settings.");
+    // Check for API key based on provider
+    const provider = settingsRef.current.provider || 'gemini';
+    const apiKey = provider === 'openrouter' 
+      ? settingsRef.current.openrouterApiKey 
+      : (settingsRef.current.geminiApiKey || settingsRef.current.apiKey);
+    
+    if (!apiKey?.trim()) {
+      const providerName = provider === 'openrouter' ? 'OpenRouter' : 'Gemini';
+      showToast('warning', `Please enter your ${providerName} API Key in Settings.`);
       onOpenSettings?.();
       return;
     }
@@ -1087,15 +1171,22 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
 
   // Translation Preset (DNA) handlers
   const handleDNAAnalyze = async (input: string) => {
-    if (!settings.apiKey?.trim()) {
-      showToast('warning', "Please enter your Gemini API Key in Settings.");
+    // Check for API key based on provider
+    const provider = settings.provider || 'gemini';
+    const apiKey = provider === 'openrouter' 
+      ? settings.openrouterApiKey 
+      : (settings.geminiApiKey || settings.apiKey);
+    
+    if (!apiKey?.trim()) {
+      const providerName = provider === 'openrouter' ? 'OpenRouter' : 'Gemini';
+      showToast('warning', `Please enter your ${providerName} API Key in Settings.`);
       onOpenSettings?.();
       return;
     }
     if (!input.trim()) return;
     setIsPresetLoading(true);
     try {
-      const { preset, tokens } = await analyzeTranslationStyle(input, settings.aiModel, settings.apiKey);
+      const { preset, tokens } = await analyzeTranslationStyle(input, settings.geminiModel || settings.aiModel, apiKey);
       setTranslationPreset(preset);
       if (preset?.reference?.title_or_summary) {
         setPresetDraftSummary(preset.reference.title_or_summary);

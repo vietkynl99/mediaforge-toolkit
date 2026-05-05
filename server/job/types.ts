@@ -49,14 +49,25 @@ export interface ConcurrencyRule {
   priority: number;           // Default priority for this task type
 }
 
+export type AiProviderType = 'gemini' | 'openrouter';
+
 export type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
 export interface ConcurrencyConfig {
   rules: ConcurrencyRule[];
   globalLimits: Record<ResourceType, number>;
   ai?: {
-    model: AiModel;
-    apiKey: string;
+    provider?: AiProviderType;
+    // Legacy fields (for backward compatibility)
+    model?: AiModel;
+    apiKey?: string;
+    // Gemini settings
+    geminiModel?: string;
+    geminiApiKey?: string;
+    // OpenRouter settings
+    openrouterModel?: string;
+    openrouterApiKey?: string;
+    // Common settings
     cpsThreshold?: {
       safeMax: number;
       warningMax: number;
@@ -81,8 +92,17 @@ export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
     network: 4,
   },
   ai: {
+    provider: 'gemini',
+    // Legacy fields
     model: 'gemini-2.5-flash',
     apiKey: '',
+    // Gemini settings
+    geminiModel: 'gemini-2.5-flash',
+    geminiApiKey: '',
+    // OpenRouter settings
+    openrouterModel: 'openrouter/auto',
+    openrouterApiKey: '',
+    // Common settings
     cpsThreshold: {
       safeMax: 25,
       warningMax: 40,

@@ -12,6 +12,9 @@ export type SubtitleAiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-
 // Alias for backward compatibility
 export type AiModel = SubtitleAiModel;
 
+// AI Provider type
+export type AiProviderType = 'gemini' | 'openrouter';
+
 export interface TranslationPreset {
   reference: {
     title_or_summary: string;
@@ -93,8 +96,18 @@ export interface SubtitleAppSettings {
     warningMax: number;
   };
   translationBatchSize: number;
-  aiModel: SubtitleAiModel;
-  apiKey: string;
+  // Provider settings
+  provider?: AiProviderType;
+  // Legacy fields (backward compatibility)
+  aiModel?: SubtitleAiModel;
+  apiKey?: string;
+  // Gemini settings
+  geminiModel?: string;
+  geminiApiKey?: string;
+  // OpenRouter settings
+  openrouterModel?: string;
+  openrouterApiKey?: string;
+  // Common settings
   maxSingleLineWords: number;
   autoSplitLongLines: boolean;
 }
@@ -127,6 +140,15 @@ export const DEFAULT_SUBTITLE_SETTINGS: SubtitleAppSettings = {
   translationBatchSize: 100,
   maxSingleLineWords: 12,
   autoSplitLongLines: false,
+  // Provider settings
+  provider: 'gemini',
+  // Legacy fields
   aiModel: 'gemini-2.5-flash' as const,
-  apiKey: ''
+  apiKey: '',
+  // Gemini settings
+  geminiModel: 'gemini-2.5-flash',
+  geminiApiKey: '',
+  // OpenRouter settings
+  openrouterModel: 'openrouter/auto',
+  openrouterApiKey: ''
 };

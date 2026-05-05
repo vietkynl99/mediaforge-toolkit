@@ -75,3 +75,41 @@ export type RenderConfigV2 = {
   items: RenderItemV2[];
   effects?: RenderEffectV2[];
 };
+
+// AI Provider Types
+export type AiProviderType = 'gemini' | 'openrouter';
+
+export interface AiProviderConfig {
+  provider: AiProviderType;
+  // Gemini settings
+  geminiModel?: string;
+  geminiApiKey?: string;
+  // OpenRouter settings
+  openrouterModel?: string;
+  openrouterApiKey?: string;
+  // Common settings
+  translationBatchSize?: number;
+  maxSingleLineWords?: number;
+  autoSplitLongLines?: boolean;
+  cpsThreshold?: {
+    safeMax: number;
+    warningMax: number;
+  };
+}
+
+export interface AiCallParams {
+  systemInstruction?: string;
+  prompt: string;
+  temperature?: number;
+  responseMimeType?: string;
+  responseSchema?: any;
+}
+
+export interface AiCallResult {
+  text: string;
+  usage?: {
+    totalTokenCount?: number;
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+  };
+}

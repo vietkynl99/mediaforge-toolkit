@@ -115,10 +115,16 @@ export class ConfigManager {
       this.config.ai = {
         ...oldAi,
         ...newConfig.ai,
-        // Preserve API key if the incoming one is empty/whitespace
+        // Preserve API keys if the incoming ones are empty/whitespace
         apiKey: (newConfig.ai.apiKey && newConfig.ai.apiKey.trim()) 
           ? newConfig.ai.apiKey 
-          : oldAi.apiKey || ''
+          : oldAi.apiKey || '',
+        geminiApiKey: (newConfig.ai.geminiApiKey && newConfig.ai.geminiApiKey.trim()) 
+          ? newConfig.ai.geminiApiKey 
+          : oldAi.geminiApiKey || '',
+        openrouterApiKey: (newConfig.ai.openrouterApiKey && newConfig.ai.openrouterApiKey.trim()) 
+          ? newConfig.ai.openrouterApiKey 
+          : oldAi.openrouterApiKey || '',
       };
     }
     await this.save();

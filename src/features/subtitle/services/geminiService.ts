@@ -194,7 +194,7 @@ export async function extractTitleFromFilename(filename: string, model: AiModel,
   return { title, tokens };
 }
 
-export async function analyzeTranslationStyle(titleOrSummary: string, model: AiModel, apiKey: string): Promise<{ preset: TranslationPreset, tokens: number }> {
+export async function analyzeTranslationStyle(titleOrSummary: string, model: string, apiKey: string): Promise<{ preset: TranslationPreset, tokens: number }> {
   
   try {
     const result = await callBackendAi('/api/subtitle/ai/analyze-style', {
