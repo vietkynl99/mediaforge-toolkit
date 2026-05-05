@@ -48,11 +48,11 @@ export class ConfigManager {
           rules: loaded.rules ?? DEFAULT_CONCURRENCY_CONFIG.rules,
           globalLimits: {
             ...DEFAULT_CONCURRENCY_CONFIG.globalLimits,
-            ...loaded.globalLimits,
+            ...(loaded.globalLimits || {}),
           },
           ai: {
             ...DEFAULT_CONCURRENCY_CONFIG.ai!,
-            ...loaded.ai,
+            ...(loaded.ai || {}),
           },
         };
       } else {
@@ -96,6 +96,11 @@ export class ConfigManager {
    * Update configuration
    */
   async update(newConfig: Partial<ConcurrencyConfig>): Promise<ConcurrencyConfig> {
+    // Ensure current config is loaded from DB if possible
+    if (!this.config || Object.keys(this.config.globalLimits).length === 0) {
+      await this.load();
+    }
+
     if (newConfig.rules) {
       this.config.rules = newConfig.rules;
     }
@@ -106,9 +111,14 @@ export class ConfigManager {
       };
     }
     if (newConfig.ai) {
+      const oldAi = this.config.ai || DEFAULT_CONCURRENCY_CONFIG.ai!;
       this.config.ai = {
-        ...this.config.ai!,
+        ...oldAi,
         ...newConfig.ai,
+        // Preserve API key if the incoming one is empty/whitespace
+        apiKey: (newConfig.ai.apiKey && newConfig.ai.apiKey.trim()) 
+          ? newConfig.ai.apiKey 
+          : oldAi.apiKey || ''
       };
     }
     await this.save();

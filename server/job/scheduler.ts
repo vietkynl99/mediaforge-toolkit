@@ -180,8 +180,10 @@ export class JobScheduler {
 
     const context: ExecutorContext = {
       signal: abortController.signal,
-      onProgress: (progress, message) => {
+      onProgress: (progress, message, processed, total) => {
         task.progress = progress;
+        if (processed !== undefined) (task as any).processed = processed;
+        if (total !== undefined) (task as any).total = total;
         this.events.onTaskProgress?.(task.id, progress, message);
       },
       onLog: (message) => {

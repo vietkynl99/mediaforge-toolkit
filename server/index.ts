@@ -614,7 +614,7 @@ const verifyPassword = (password: string, stored: string) => {
 
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 type JobTaskStatus = 'pending' | 'active' | 'done' | 'error';
-type JobTask = { id: string; type: string; name: string; status: JobTaskStatus; progress: number };
+type JobTask = { id: string; type: string; name: string; status: JobTaskStatus; progress: number; processed?: number; total?: number };
 type JobRecord = {
   id: string;
   name: string;
@@ -3273,14 +3273,17 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
           projectName,
           subtitleFile,
           preset: (job as any).__translatePreset,
-          batchSize: (job as any).__translateBatchSize
+          batchSize: (job as any).__translateBatchSize,
+          targetIds: (job as any).__translateTargetIds
         }
       };
 
       await translateExecutor.execute(translateTaskNode as any, {
         signal: translateAbortController.signal,
-        onProgress: (p, msg) => {
+        onProgress: (p, msg, processed, total) => {
           translateTask.progress = p;
+          if (processed !== undefined) (translateTask as any).processed = processed;
+          if (total !== undefined) (translateTask as any).total = total;
           if (msg) appendJobLog(job, msg + '\n');
           updateTranslateJobProgress();
         },
@@ -5239,17 +5242,18 @@ app.get('/api/jobs', async (req, res) => {
   const search = (req.query.search as string || '').trim().toLowerCase();
   const statusFilter = (req.query.status as string || '').trim();
   const pipelineFilter = (req.query.pipeline as string || '').trim();
-  
+  const fileFilter = (req.query.file as string || '').trim();
+
   // Filter jobs by search keyword
   let filteredJobs = jobs;
   if (search) {
-    filteredJobs = filteredJobs.filter(job => 
+    filteredJobs = filteredJobs.filter(job =>
       job.name?.toLowerCase().includes(search) ||
       job.projectName?.toLowerCase().includes(search) ||
       job.fileName?.toLowerCase().includes(search)
     );
   }
-  
+
   // Filter jobs by status
   if (statusFilter) {
     const allowedStatuses = statusFilter.split(',').filter(Boolean);
@@ -5257,7 +5261,16 @@ app.get('/api/jobs', async (req, res) => {
       filteredJobs = filteredJobs.filter(job => allowedStatuses.includes(job.status));
     }
   }
-  
+
+  // Filter jobs by file path (matches inputRelativePath or translate.subtitleFile)
+  if (fileFilter) {
+    filteredJobs = filteredJobs.filter(job =>
+      (job as any).inputRelativePath === fileFilter ||
+      job.params?.translate?.subtitleFile === fileFilter ||
+      job.params?.inputRelativePath === fileFilter
+    );
+  }
+
   // Filter jobs by pipeline type (check if any task type matches)
   if (pipelineFilter) {
     const allowedTypes = pipelineFilter.split(',').filter(Boolean);
@@ -5401,6 +5414,9 @@ app.get('/api/jobs/:id', async (req, res) => {
     tasks: job.tasks,
     createdAt: job.createdAt,
     startedAt: job.startedAt,
+    // Include processed/total from first translate task if available
+    processed: job.tasks?.find((t: any) => t.type === 'translate')?.processed,
+    total: job.tasks?.find((t: any) => t.type === 'translate')?.total,
     finishedAt: job.finishedAt,
     durationMs: job.durationMs,
     error: truncatedError,
@@ -5842,7 +5858,11 @@ app.post('/api/jobs/run', async (req, res) => {
 
   const translateSubtitleFile = typeof req.body?.subtitleFile === 'string' ? req.body.subtitleFile : undefined;
   const translatePreset = req.body?.preset;
-  const translateBatchSize = typeof req.body?.batchSize === 'number' ? req.body.batchSize : undefined;
+  const translateBatchSize = typeof req.body?.batchSize === 'number'
+    ? req.body.batchSize
+    : typeof req.body?.graph?.nodes?.[0]?.params?.batchSize === 'number'
+      ? req.body.graph.nodes[0].params.batchSize
+      : undefined;
 
   if (LOG_RENDER_V2_DEBUG && renderConfigV2) {
     console.log('RENDER_V2_DEBUG jobs/run received renderConfigV2', JSON.stringify({
@@ -6015,6 +6035,9 @@ app.post('/api/jobs/run', async (req, res) => {
       if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
       if (translatePreset) translatePayload.preset = translatePreset;
       if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
+      // Extract targetIds from graph node params or top-level
+      const targetIds = req.body?.targetIds || req.body?.graph?.nodes?.[0]?.params?.targetIds;
+      if (targetIds) translatePayload.targetIds = targetIds;
 
       job = {
         id: jobId,
@@ -6164,11 +6187,14 @@ app.post('/api/jobs/run', async (req, res) => {
 
       const translatePayload: Record<string, any> = {};
       if (req.body.translate) {
-        translatePayload.translate = req.body.translate;
+        Object.assign(translatePayload, req.body.translate);
       }
       if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
       if (translatePreset) translatePayload.preset = translatePreset;
       if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
+      // Extract targetIds from graph node params or top-level
+      const targetIds = req.body?.targetIds || req.body?.graph?.nodes?.[0]?.params?.targetIds;
+      if (targetIds) translatePayload.targetIds = targetIds;
 
       job = {
         id: jobId,
@@ -6217,9 +6243,12 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__forceRenderV2New = forceNew;
       (job as any).__ttsRemoveLineBreaks = ttsRemoveLineBreaks;
       if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
-      if (translateSubtitleFile) (job as any).__translateSubtitleFile = translateSubtitleFile;
-      if (translatePreset) (job as any).__translatePreset = translatePreset;
-      if (translateBatchSize) (job as any).__translateBatchSize = translateBatchSize;
+      
+      // Map translation params from the consolidated payload
+      if (translatePayload.subtitleFile) (job as any).__translateSubtitleFile = translatePayload.subtitleFile;
+      if (translatePayload.preset) (job as any).__translatePreset = translatePayload.preset;
+      if (translatePayload.batchSize) (job as any).__translateBatchSize = translatePayload.batchSize;
+      if (translatePayload.targetIds) (job as any).__translateTargetIds = translatePayload.targetIds;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;

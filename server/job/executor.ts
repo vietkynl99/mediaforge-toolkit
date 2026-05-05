@@ -11,7 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { MEDIA_VAULT_ROOT } from '../constants.js';
 
-export type ProgressCallback = (progress: number, message?: string) => void;
+export type ProgressCallback = (progress: number, message?: string, processed?: number, total?: number) => void;
 export type LogCallback = (message: string) => void;
 
 export interface ExecutorContext {
@@ -113,7 +113,8 @@ export class TranslateTaskExecutor extends TaskExecutor {
       preset,
       maxSingleLineWords = 12,
       autoSplitLongLines = false,
-      batchSize = 50
+      batchSize = 20,
+      targetIds // Array of IDs to translate (optional)
     } = task.params;
 
     if (!projectName || !subtitleFile) {
@@ -123,59 +124,162 @@ export class TranslateTaskExecutor extends TaskExecutor {
     const fullPath = path.join(MEDIA_VAULT_ROOT, subtitleFile);
     context.onLog(`Reading subtitle file: ${subtitleFile}`);
     
-    let subtitleData;
+    let subtitleData: any;
+    let isSktProject = false;
+    let originalProject: any = null;
+
     try {
       const content = await fs.readFile(fullPath, 'utf-8');
-      subtitleData = JSON.parse(content);
+      const parsed = JSON.parse(content);
+      
+      if (parsed && parsed.version === "1.0" && Array.isArray(parsed.segments)) {
+        isSktProject = true;
+        originalProject = parsed;
+        subtitleData = parsed.segments.map((s: any) => ({
+          id: String(s.id),
+          startTime: s.start,
+          endTime: s.end,
+          originalText: s.original,
+          translatedText: s.translated,
+          text: s.translated
+        }));
+      } else if (Array.isArray(parsed)) {
+        subtitleData = parsed.map((s: any) => ({
+          ...s,
+          id: String(s.id)
+        }));
+      } else {
+        throw new Error('Invalid subtitle format: expected an array of cues or a .sktproject object');
+      }
     } catch (err) {
-      throw new Error(`Failed to read subtitle file: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    if (!Array.isArray(subtitleData)) {
-      throw new Error('Invalid subtitle format: expected an array of cues');
+      const errorMsg = `Failed to read or parse subtitle file at ${fullPath}: ${err instanceof Error ? err.message : String(err)}`;
+      context.onLog(`ERROR: ${errorMsg}`);
+      throw new Error(errorMsg);
     }
 
     const totalCues = subtitleData.length;
-    context.onLog(`Total cues to translate: ${totalCues}`);
+    context.onLog(`Total cues in file: ${totalCues}`);
 
-    // Process in batches
-    for (let i = 0; i < totalCues; i += batchSize) {
-      checkAborted(context.signal);
-      
-      const batch = subtitleData.slice(i, i + batchSize);
-      const contextBefore = i > 0 ? subtitleData.slice(Math.max(0, i - 3), i).map(c => c.text || c.originalText) : [];
-      const contextAfter = (i + batchSize < totalCues) ? subtitleData.slice(i + batchSize, i + batchSize + 3).map(c => c.text || c.originalText) : [];
-
-      context.onLog(`Translating batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(totalCues / batchSize)}...`);
-      
-      const result = await SubtitleAI.translateBatch({
-        batch,
-        contextBefore,
-        contextAfter,
-        preset,
-        maxSingleLineWords,
-        autoSplitLongLines
+    // Filter segments to translate
+    let cuesToTranslate = subtitleData;
+    if (Array.isArray(targetIds)) {
+      // Specific IDs requested
+      const idSet = new Set(targetIds.map(id => String(id)));
+      cuesToTranslate = subtitleData.filter((c: any) => idSet.has(String(c.id)));
+      context.onLog(`Filtering job to ${cuesToTranslate.length} specific segments based on targetIds.`);
+    } else {
+      // No targetIds = translate all untranslated segments
+      cuesToTranslate = subtitleData.filter((c: any) => {
+        // Check if segment has a translation
+        const hasTranslation = (c.translatedText && c.translatedText.trim()) ||
+                               (c.translated && c.translated.trim());
+        return !hasTranslation;
       });
-
-      // Update the cues in original array
-      if (result && Array.isArray(result.text)) {
-        // results are in format [{id, text}]
-        const translatedItems = result.text;
-        for (const item of translatedItems) {
-          const cue = subtitleData.find(c => c.id === item.id);
-          if (cue) {
-            cue.text = item.text;
-          }
-        }
-      }
-
-      const progress = Math.round(((i + batch.length) / totalCues) * 100);
-      context.onProgress(progress, `Translated ${i + batch.length}/${totalCues} cues`);
+      context.onLog(`Translating ${cuesToTranslate.length} untranslated segments (out of ${totalCues} total).`);
     }
 
-    // Save back to file (or a new file)
-    context.onLog(`Saving translated subtitles...`);
-    await fs.writeFile(fullPath, JSON.stringify(subtitleData, null, 2), 'utf-8');
+    const totalToTranslate = cuesToTranslate.length;
+    if (totalToTranslate === 0) {
+      context.onLog('No segments matching targetIds found or needed. Skipping.');
+      return { success: true, outputs: [subtitleFile] };
+    }
+
+    // Process in batches
+    for (let i = 0; i < totalToTranslate; i += batchSize) {
+      checkAborted(context.signal);
+      
+      const batch = cuesToTranslate.slice(i, i + batchSize);
+      
+      // Find context from the original subtitleData to maintain sequence awareness
+      const firstInBatch = batch[0];
+      const lastInBatch = batch[batch.length - 1];
+      const originalIdx = subtitleData.findIndex((c: any) => String(c.id) === String(firstInBatch.id));
+      
+      const contextBefore = originalIdx > 0 
+        ? subtitleData.slice(Math.max(0, originalIdx - 3), originalIdx).map((c: any) => c.originalText || c.text || "") 
+        : [];
+      const contextAfter = (originalIdx + batch.length < totalCues) 
+        ? subtitleData.slice(originalIdx + batch.length, originalIdx + batch.length + 3).map((c: any) => c.originalText || c.text || "") 
+        : [];
+
+      context.onLog(`Translating batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(totalToTranslate / batchSize)} (${batch.length} segments)...`);
+      
+      try {
+        const result = await SubtitleAI.translateBatch({
+          batch,
+          contextBefore,
+          contextAfter,
+          preset,
+          maxSingleLineWords,
+          autoSplitLongLines
+        });
+
+        // Parse AI response - result.text is a JSON string
+        if (result && typeof result.text === 'string') {
+          let translatedItems: any[] = [];
+          try {
+            translatedItems = JSON.parse(result.text);
+          } catch (parseErr) {
+            context.onLog(`ERROR: Failed to parse AI response as JSON: ${parseErr}`);
+          }
+          
+          if (!Array.isArray(translatedItems)) {
+            context.onLog(`ERROR: Parsed response is not an array`);
+            translatedItems = [];
+          }
+          
+          let matchedCount = 0;
+          for (const item of translatedItems) {
+            // Find cue in our working array - use loose equality or cast to string for ID comparison
+            const cue = subtitleData.find((c: any) => String(c.id) === String(item.id));
+            if (cue) {
+              matchedCount++;
+              cue.translatedText = item.text;
+              cue.text = item.text;
+              cue.translated = item.text; // Ensure all variants are set
+            }
+
+            // ALSO update the originalProject.segments directly if it's an sktproject
+            if (isSktProject && originalProject?.segments) {
+              const originalSeg = originalProject.segments.find((s: any) => String(s.id) === String(item.id));
+              if (originalSeg) {
+                originalSeg.translated = item.text;
+              }
+            }
+          }
+        }
+      } catch (aiErr) {
+        const aiErrorMsg = `AI Translation failed for batch: ${aiErr instanceof Error ? aiErr.message : JSON.stringify(aiErr)}`;
+        context.onLog(`CRITICAL ERROR: ${aiErrorMsg}`);
+        throw new Error(aiErrorMsg);
+      }
+
+      const progress = Math.round(((i + batch.length) / totalToTranslate) * 100);
+      const processed = Math.min(i + batchSize, totalToTranslate);
+      context.onProgress(progress, `Translated ${processed}/${totalToTranslate} requested cues`, processed, totalToTranslate);
+
+      // Ghi dữ liệu xuống file sau mỗi batch thành công
+      try {
+        if (isSktProject) {
+          // Cập nhật lại mảng segments trong project gốc
+          originalProject.segments = subtitleData.map((s: any) => ({
+            id: s.id,
+            start: s.startTime,
+            end: s.endTime,
+            original: s.originalText || s.original || "",
+            translated: s.translatedText || s.text || s.translated || "",
+            optimize_history: s.optimizeHistory || []
+          }));
+          originalProject.updated_at = new Date().toISOString();
+          await fs.writeFile(fullPath, JSON.stringify(originalProject, null, 2), 'utf-8');
+        } else {
+          context.onLog(`Saving batch progress to JSON file...`);
+          await fs.writeFile(fullPath, JSON.stringify(subtitleData, null, 2), 'utf-8');
+        }
+      } catch (saveErr) {
+        context.onLog(`WARNING: Failed to save intermediate results: ${saveErr instanceof Error ? saveErr.message : String(saveErr)}`);
+      }
+    }
 
     return {
       success: true,

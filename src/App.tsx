@@ -4090,6 +4090,47 @@ export default function App() {
     setShowRunPipeline(true);
   };
 
+  const openSubtitleStudioFromJob = (job: MediaJob) => {
+    const jobParams = job.params ?? {};
+    const projectName = (jobParams.projectName ?? job.projectName)?.trim();
+    const inputPaths = Array.isArray(jobParams.inputPaths)
+      ? jobParams.inputPaths.filter((value: unknown) => typeof value === 'string')
+      : [];
+    const inputRelativePath = inputPaths[0]
+      ?? (typeof jobParams.inputRelativePath === 'string' ? jobParams.inputRelativePath : '');
+
+    let projectMatch: VaultFolder | undefined;
+    let fileMatch: VaultFile | undefined;
+
+    if (inputRelativePath) {
+      projectMatch = vaultFolders.find(folder => folder.files.some(file => file.relativePath === inputRelativePath));
+      fileMatch = projectMatch?.files.find(file => file.relativePath === inputRelativePath);
+    }
+    if (!projectMatch && projectName) {
+      projectMatch = vaultFolders.find(folder => folder.name.toLowerCase() === projectName.toLowerCase());
+    }
+
+    if (!projectMatch) {
+      showToast('Project not found in Media Vault', 'warning');
+      return;
+    }
+
+    // Find subtitle file in the project
+    if (!fileMatch) {
+      fileMatch = projectMatch.files.find(file => file.type === 'subtitle');
+    }
+
+    if (!fileMatch) {
+      showToast('No subtitle file found in project', 'warning');
+      return;
+    }
+
+    // Navigate to subtitle studio with deeplink
+    const deeplink = `/tools/subtitle-studio?folderId=${projectMatch.id}&fileId=${fileMatch.id}`;
+    window.history.pushState({}, '', deeplink);
+    setActiveTab('subtitle-studio');
+  };
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (newJobDraftLoadedRef.current) return;
@@ -5966,6 +6007,7 @@ export default function App() {
                   setVaultFileId={setVaultFileId}
                   setShowFolderPanel={setShowFolderPanel}
                   openRunPipelineFromJob={openRunPipelineFromJob}
+                  openSubtitleStudioFromJob={openSubtitleStudioFromJob}
                   onJobOutputsCompleted={() => loadVault()}
                 />
               </Suspense>
@@ -6777,7 +6819,7 @@ function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[300] flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div

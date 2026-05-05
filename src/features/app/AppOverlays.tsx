@@ -137,7 +137,7 @@ export const AppOverlays: React.FC<AppOverlaysProps> = ({
   return (
     <>
       {toastVisible && toastMessage && (
-        <div className={`fixed bottom-6 right-6 z-[70] px-4 py-2 rounded-lg border text-sm shadow-lg ${toastStyles[toastType]}`}>
+        <div className={`fixed bottom-6 right-6 z-[500] px-4 py-2 rounded-lg border text-sm shadow-lg ${toastStyles[toastType]}`}>
           {toastMessage}
         </div>
       )}

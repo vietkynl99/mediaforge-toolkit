@@ -26,37 +26,17 @@ const isLikelyVietnamese = (text: string): boolean => {
  * Parses a filename to extract base name and the current edited count.
  */
 export function parseFileName(fileName: string): { baseName: string, editedCount: number } {
-  let name = fileName
+  const name = fileName
     .replace(/\.srt$/i, '')
     .replace(/\.sktproject$/i, '')
     .replace(/\.json$/i, '')
     .trim();
-  let editedCount = 0;
-
-  const editedRegex = /^\[Edited(\d*)\]/;
-  const match = name.match(editedRegex);
-
-  if (match) {
-    const numPart = match[1];
-    if (numPart === "") {
-      editedCount = 1;
-    } else {
-      if (!numPart.startsWith('0')) {
-        editedCount = parseInt(numPart, 10);
-      } else {
-        return { baseName: name, editedCount: 0 };
-      }
-    }
-    name = name.substring(match[0].length).trim();
-  }
-
-  return { baseName: name, editedCount };
+  
+  return { baseName: name, editedCount: 0 };
 }
 
 export function generateExportFileName(baseName: string, currentCount: number, extension: string = '.srt'): string {
-  const nextCount = currentCount + 1;
-  const prefix = nextCount === 1 ? '[Edited]' : `[Edited${nextCount}]`;
-  return `${prefix}${baseName}${extension}`;
+  return `${baseName}${extension}`;
 }
 
 export function parseSRT(content: string): SubtitleSegment[] {

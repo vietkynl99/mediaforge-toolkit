@@ -3,7 +3,7 @@ import {
   Search, CopyCheck, CopyX, Languages, Sparkles, Download, Trash2, Settings,
   X, Eye, EyeOff, ChevronRight, ChevronLeft, History, AlertTriangle, CheckCircle,
   Wrench, Menu, Bell, Filter, FileText, Wand2, PanelRightOpen, PanelRightClose,
-  Folder, File, Upload, Type
+  Folder, File, Upload, Type, RefreshCw
 } from 'lucide-react';
 import {
   parseSRT, parseSktProject, parseCapCutDraft, generateSktProject, analyzeSegments,
@@ -59,11 +59,18 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
+  const [deeplinkPending, setDeeplinkPending] = useState<boolean>(() => {
+    // Check if there's a deeplink in URL on initial mount
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return Boolean(params.get('folderId') && params.get('fileId'));
+  });
   const [status, setStatus] = useState<SubtitleStatus>('idle');
   const [progress, setProgress] = useState<number>(0);
   const [segments, setSegments] = useState<SubtitleSegment[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [settings, setSettings] = useState<SubtitleAppSettings>(DEFAULT_SUBTITLE_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -75,8 +82,12 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
             setSettings(prev => ({
               ...prev,
               aiModel: data.ai.model,
-              apiKey: data.ai.apiKey
+              apiKey: data.ai.apiKey,
+              translationBatchSize: data.ai.translationBatchSize || 20,
+              maxSingleLineWords: data.ai.maxSingleLineWords || 12,
+              autoSplitLongLines: data.ai.autoSplitLongLines || false
             }));
+            setSettingsLoaded(true);
           }
         }
       } catch (err) {
@@ -87,6 +98,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   }, []);
 
   useEffect(() => {
+    // Only save after settings have been loaded from server
+    if (!settingsLoaded) return;
+    
     const saveSettings = async () => {
       try {
         await fetch('/api/settings/concurrency', {
@@ -95,7 +109,10 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           body: JSON.stringify({
             ai: {
               model: settings.aiModel,
-              apiKey: settings.apiKey
+              apiKey: settings.apiKey,
+              translationBatchSize: settings.translationBatchSize,
+              maxSingleLineWords: settings.maxSingleLineWords,
+              autoSplitLongLines: settings.autoSplitLongLines
             }
           }),
         });
@@ -104,7 +121,39 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       }
     };
     saveSettings();
-  }, [settings.aiModel, settings.apiKey]);
+  }, [settings.aiModel, settings.apiKey, settings.translationBatchSize, settings.maxSingleLineWords, settings.autoSplitLongLines, settingsLoaded]);
+
+  const [showTranslationStylePopup, setShowTranslationStylePopup] = useState<boolean>(false);
+  const [isPresetLoading, setIsPresetLoading] = useState<boolean>(false);
+  const [presetDraftSummary, setPresetDraftSummary] = useState<string>('');
+  const [showToastHistory, setShowToastHistory] = useState<boolean>(false);
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await fetch('/api/settings/concurrency');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ai) {
+            setSettings(prev => ({
+              ...prev,
+              aiModel: data.ai.model,
+              apiKey: data.ai.apiKey,
+              translationBatchSize: data.ai.translationBatchSize || 20,
+              maxSingleLineWords: data.ai.maxSingleLineWords || 12,
+              autoSplitLongLines: data.ai.autoSplitLongLines || false
+            }));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch AI settings:', err);
+      }
+    };
+
+    if (showTranslationStylePopup) {
+      fetchSettings();
+    }
+  }, [showTranslationStylePopup]);
 
   const [fileName, setFileName] = useState<string>('');
   const [baseFileName, setBaseFileName] = useState<string>('');
@@ -119,10 +168,6 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [showQualityDashboard, setShowQualityDashboard] = useState<boolean>(true);
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [focusSegmentId, setFocusSegmentId] = useState<number | null>(null);
-  const [showTranslationStylePopup, setShowTranslationStylePopup] = useState<boolean>(false);
-  const [isPresetLoading, setIsPresetLoading] = useState<boolean>(false);
-  const [presetDraftSummary, setPresetDraftSummary] = useState<string>('');
-  const [showToastHistory, setShowToastHistory] = useState<boolean>(false);
 
   // Save states
   const [isDirty, setIsDirty] = useState<boolean>(false);
@@ -139,6 +184,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   });
 
   const [apiUsage, setApiUsage] = useState<ApiUsage>(INITIAL_USAGE);
+  const lastLoadedProgressRef = useRef<number>(0);
   const [translationPreset, setTranslationPreset] = useState<TranslationPreset | null>(() => ({
     reference: { title_or_summary: '' },
     genres: [],
@@ -178,6 +224,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const undoStackRef = useRef<SubtitleSegment[][]>([]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const currentJobIdRef = useRef<string | null>(null);
 
   const stopRequestedRefCurrent = stopRequestedRef.current;
   const optimizeStopRequestedRefCurrent = optimizeStopRequestedRef.current;
@@ -191,19 +239,19 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     [selectedFolder]
   );
 
-  const handleSelectFile = async (file: VaultFile) => {
+  const handleSelectFile = async (file: VaultFile, options?: { silent?: boolean }) => {
     try {
       setFileLoading(true);
       setSelectedFileId(file.id);
-      
+
       // Update URL with deeplink
       if (typeof window !== 'undefined' && selectedFolderId) {
         const params = new URLSearchParams({ folderId: selectedFolderId, fileId: file.id });
         window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
       }
-      
+
       const { segments: parsedSegments, preset } = await vaultService.loadSubtitleFile(file.relativePath);
-      
+
       const { baseName, editedCount: count } = parseFileName(file.name);
       setBaseFileName(baseName);
       setEditedCount(count);
@@ -219,13 +267,50 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       if (preset) {
         setTranslationPreset({ ...preset, humor_level: humorLevel });
       }
-      setTranslationState({ status: 'idle', processed: 0, total: 0 });
+
+      // Only reset translation state if we are NOT in the middle of a job
+      setTranslationState(prev => {
+        if (prev.status === 'running' || prev.status === 'queued') {
+          return prev; // Keep current job status and progress
+        }
+        return { status: 'idle', processed: 0, total: 0 };
+      });
+
+      // Check for running job for this file and restore state if found
+      try {
+        const jobsRes = await fetch(`/api/jobs?file=${encodeURIComponent(file.relativePath)}&status=processing,queued&limit=1`);
+        if (jobsRes.ok) {
+          const jobsData = await jobsRes.json();
+          if (jobsData.jobs && jobsData.jobs.length > 0) {
+            const runningJob = jobsData.jobs[0];
+            const translateTask = runningJob.tasks?.find((t: any) => t.type === 'translate');
+
+            // Restore translation state
+            setTranslationState({
+              status: runningJob.status === 'processing' ? 'running' : 'queued',
+              processed: translateTask?.processed || 0,
+              total: translateTask?.total || fixedSegments.filter(s => !s.translatedText).length
+            });
+            setStatus('processing');
+            setProgress(runningJob.progress || 0);
+            currentJobIdRef.current = runningJob.id;
+
+            // Start polling
+            pollJobStatus(runningJob.id);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to check running jobs:', err);
+      }
+
       setApiUsage(INITIAL_USAGE);
       setStatus('success');
       setFilter('all');
       setCurrentPage(1);
       setSelectedIds(new Set());
-      showToast('success', `Loaded ${fixedSegments.length} segments.`);
+      if (!options?.silent) {
+        showToast('success', `Loaded ${fixedSegments.length} segments.`);
+      }
     } catch (err) {
       showToast('error', (err as Error).message);
     } finally {
@@ -260,6 +345,15 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     }
   }, [initialFile]);
 
+  // Cleanup polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+
   // Deeplink: Load from URL params on mount
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -275,10 +369,18 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         setSelectedFolderId(folderId);
         const file = folder.files?.find(f => f.id === fileId);
         if (file) {
-          // Small delay to ensure folder is set first
-          setTimeout(() => handleSelectFile(file), 100);
+          // Load file immediately, no delay needed
+          handleSelectFile(file).finally(() => {
+            setDeeplinkPending(false);
+          });
+        } else {
+          setDeeplinkPending(false);
         }
+      } else {
+        setDeeplinkPending(false);
       }
+    } else {
+      setDeeplinkPending(false);
     }
   }, [vaultFolders]); // Only run when vaultFolders is loaded
 
@@ -494,39 +596,48 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       setTranslationState({ status: 'queued', processed: 0, total: needingTranslation.length });
       setProgress(0);
 
+      const payload = {
+        name: `Translate: ${currentFile.name}`,
+        projectName: selectedFolder?.name,
+        inputPath: currentFile.relativePath,
+        subtitleFile: currentFile.relativePath,
+        preset: translationPreset,
+        batchSize: settings.translationBatchSize || 20,
+        graph: {
+          nodes: [
+            {
+              id: 'translate-1',
+              type: 'translate',
+              label: 'Translate AI',
+              params: {
+                inputPath: currentFile.relativePath,
+                subtitleFile: currentFile.relativePath,
+                preset: translationPreset,
+                batchSize: settings.translationBatchSize || 20,
+                // Only send targetIds for specific selection, not for 'all' mode
+                targetIds: aiScope.mode === 'selected' ? aiScope.untranslated.map(s => s.id) : undefined
+              }
+            }
+          ],
+          edges: []
+        }
+      };
+
       const response = await fetch('/api/jobs/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Translate: ${currentFile.name}`,
-          projectName: selectedFolder?.name,
-          subtitleFile: currentFile.relativePath,
-          preset: translationPreset,
-          batchSize: settings.translationBatchSize || 50,
-          graph: {
-            nodes: [
-              {
-                id: 'translate-1',
-                type: 'translate',
-                label: 'Translate AI',
-                params: {
-                  subtitleFile: currentFile.relativePath,
-                  preset: translationPreset,
-                  batchSize: settings.translationBatchSize || 50
-                }
-              }
-            ],
-            edges: []
-          }
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to start translation job');
+        console.error('Job system error details:', errorData);
+        throw new Error(errorData.error || errorData.message || 'Failed to start translation job');
       }
 
-      const { id: jobId } = await response.json();
+      const responseData = await response.json();
+      const jobId = responseData.id;
+      currentJobIdRef.current = jobId;
       setTranslationState(prev => ({ ...prev, jobId }));
       showToast('success', "Translation job queued successfully.");
       
@@ -540,32 +651,60 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   };
 
   const pollJobStatus = async (jobId: string) => {
-    const interval = setInterval(async () => {
+    lastLoadedProgressRef.current = 0;
+    // Clear any existing polling
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+    pollingIntervalRef.current = setInterval(async () => {
       try {
         const response = await fetch(`/api/jobs/${jobId}`);
         if (!response.ok) return;
         const job = await response.json();
-        
+
         if (job.status === 'completed') {
-          clearInterval(interval);
+          if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+          currentJobIdRef.current = null;
           setTranslationState(prev => ({ ...prev, status: 'completed', processed: prev.total }));
           setProgress(100);
           setStatus('success');
           showToast('success', "Translation completed via Job System.");
-          
-          // Reload file to get translated content
+
+          // Reload file to get final content
           const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
           if (currentFile) {
             handleSelectFile(currentFile);
           }
         } else if (job.status === 'failed' || job.status === 'cancelled') {
-          clearInterval(interval);
+          if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+          currentJobIdRef.current = null;
           setTranslationState(prev => ({ ...prev, status: job.status === 'failed' ? 'error' : 'stopped' }));
           setStatus(job.status === 'failed' ? 'error' : 'success');
           showToast(job.status === 'failed' ? 'error' : 'info', `Translation job ${job.status}: ${job.error || ''}`);
+
+          // Even on failure, reload what we have
+          const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
+          if (currentFile) {
+            handleSelectFile(currentFile);
+          }
         } else if (job.status === 'processing') {
-          setTranslationState(prev => ({ ...prev, status: 'running' }));
-          setProgress(job.progress || 0);
+          const newProgress = job.progress || 0;
+          setTranslationState(prev => ({
+            ...prev,
+            status: 'running',
+            processed: job.processed ?? prev.processed,
+            total: job.total ?? prev.total
+          }));
+          setProgress(newProgress);
+
+          // Reload file content on every progress update for live updates
+          if (newProgress > lastLoadedProgressRef.current) {
+            const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
+            if (currentFile) {
+              handleSelectFile(currentFile, { silent: true });
+              lastLoadedProgressRef.current = newProgress;
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to poll job status:', err);
@@ -573,11 +712,20 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     }, 2000);
   };
 
-  const handleStopTranslate = () => {
+  const handleStopTranslate = async () => {
     if (isStoppingTranslate) return;
     stopRequestedRef.current = true;
     setIsStoppingTranslate(true);
     showToast('info', "Stopping translation...");
+
+    // Cancel job via API if we have a running job
+    if (currentJobIdRef.current) {
+      try {
+        await fetch(`/api/jobs/${currentJobIdRef.current}/cancel`, { method: 'POST' });
+      } catch (err) {
+        console.error('Failed to cancel job:', err);
+      }
+    }
   };
 
   // Optimize
@@ -882,10 +1030,14 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         : `Stop (${optimizeState.processed}/${optimizeState.total} - ${progressDisplay}%)`;
     }
     if (aiScope.action === 'translate') {
-      return `Translate (${aiScope.untranslated.length})`;
+      return aiScope.mode === 'selected' 
+        ? `Translate Selected (${aiScope.untranslated.length})`
+        : `Translate All (${aiScope.untranslated.length})`;
     }
     if (aiScope.action === 'optimize') {
-      return `Optimize (${aiScope.translated.length})`;
+      return aiScope.mode === 'selected'
+        ? `Optimize Selected (${aiScope.translated.length})`
+        : `Optimize All (${aiScope.translated.length})`;
     }
     return 'Translate';
   }, [aiRunningMode, aiScope, isStoppingTranslate, isStoppingOptimize, translationState, optimizeState, progressDisplay]);
@@ -894,7 +1046,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     ? isStoppingTranslate
     : aiRunningMode === 'optimize'
       ? isStoppingOptimize
-      : (status === 'processing' || aiScope.action === 'none');
+      : (status === 'processing' || aiScope.action === 'none' || (aiScope.mode === 'all' && !selectedFileId));
 
   // Toast UI
   const toastTone = {
@@ -1008,13 +1160,21 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       <Layout>
         {/* Toast */}
         {toast.visible && (
-          <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[200] border px-6 py-3 rounded-full shadow-2xl ${toastTone[toast.type].container}`}>
+          <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[600] border px-6 py-3 rounded-full shadow-2xl ${toastTone[toast.type].container}`}>
             <p className="text-sm font-bold">{toast.message}</p>
           </div>
         )}
 
         {/* Editor Tab */}
-        {segments.length === 0 && (
+        {segments.length === 0 && deeplinkPending ? (
+          // Show loading when deeplink is pending (prevents flash of project selection)
+          <div className="flex-1 flex items-center justify-center bg-slate-950/50">
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-8 h-8 border-2 border-lime-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-sm text-slate-400">Loading file...</p>
+            </div>
+          </div>
+        ) : segments.length === 0 && (
           <div className="flex-1 flex flex-col p-6 bg-slate-950/50 overflow-hidden">
             {/* Header */}
             <div className="mb-6">
@@ -1429,6 +1589,24 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                         <polyline points="7 3 7 8 15 8" />
                       </svg>
                     )}
+                  </button>
+
+                  {/* Reload Button */}
+                  <button
+                    onClick={() => {
+                      const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
+                      if (currentFile) handleSelectFile(currentFile);
+                    }}
+                    disabled={!selectedFileId || fileLoading}
+                    className={`inline-flex items-center justify-center w-7 h-7 p-0 rounded-md border transition-colors ${
+                      fileLoading
+                        ? 'border-blue-500/30 bg-blue-500/10 text-blue-400'
+                        : 'border-slate-700 bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+                    } disabled:opacity-50`}
+                    title="Reload file"
+                    aria-label="Reload file"
+                  >
+                    <RefreshCw size={14} className={fileLoading ? 'animate-spin' : ''} />
                   </button>
 
                   {/* Auto-save Toggle Button */}

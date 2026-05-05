@@ -52,6 +52,7 @@ export type JobsFeatureProps = {
   setVaultFileId: (id: string | null) => void;
   setShowFolderPanel: (open: boolean) => void;
   openRunPipelineFromJob: (job: MediaJob) => void;
+  openSubtitleStudioFromJob: (job: MediaJob) => void;
   onJobOutputsCompleted: () => void;
 };
 
@@ -65,6 +66,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     setVaultFileId,
     setShowFolderPanel,
     openRunPipelineFromJob,
+    openSubtitleStudioFromJob,
     onJobOutputsCompleted
   },
   ref
@@ -340,6 +342,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
         setVaultFileId={setVaultFileId}
         setShowFolderPanel={setShowFolderPanel}
         openRunPipelineFromJob={openRunPipelineFromJob}
+        openSubtitleStudioFromJob={openSubtitleStudioFromJob}
         openJobLog={(id) => {
           setJobLogJobId(id);
           setJobLogOpen(true);

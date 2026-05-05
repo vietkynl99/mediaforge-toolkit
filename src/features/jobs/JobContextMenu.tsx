@@ -12,12 +12,13 @@ interface JobContextMenuProps {
   menu: JobContextMenuState;
   job: MediaJob | null;
   setMenu: React.Dispatch<React.SetStateAction<JobContextMenuState>>;
-  vaultFolders: Array<{ id: string; name: string; files: Array<{ id: string }> }>;
+  vaultFolders: Array<{ id: string; name: string; files: Array<{ id: string; relativePath?: string }> }>;
   showToast: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
   setVaultFolderId: (id: string | null) => void;
   setVaultFileId: (id: string | null) => void;
   setShowFolderPanel: (open: boolean) => void;
   openRunPipelineFromJob: (job: MediaJob) => void;
+  openSubtitleStudioFromJob: (job: MediaJob) => void;
   openJobLog: (jobId: string) => void;
   cancelJob: (id: string) => void;
   deleteJob: (id: string) => void;
@@ -36,6 +37,7 @@ export function JobContextMenu({
   setVaultFileId,
   setShowFolderPanel,
   openRunPipelineFromJob,
+  openSubtitleStudioFromJob,
   openJobLog,
   cancelJob,
   deleteJob
@@ -87,6 +89,18 @@ export function JobContextMenu({
             }}
           >
             Open project
+          </button>
+        )}
+        {/* Open with Subtitle Studio - only for translate jobs */}
+        {job.name?.toLowerCase().includes('translate') && (
+          <button
+            className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
+            onClick={() => {
+              setMenu(prev => ({ ...prev, open: false }));
+              openSubtitleStudioFromJob(job);
+            }}
+          >
+            Open with Subtitle Studio
           </button>
         )}
         <button

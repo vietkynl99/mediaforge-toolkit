@@ -252,7 +252,9 @@ export function SettingsPage() {
               Gemini API Key
             </label>
             <input
-              type={showApiKey ? 'text' : 'password'}
+              type="text"
+              autoComplete="off"
+              style={{ WebkitTextSecurity: showApiKey ? 'none' : 'disc' } as React.CSSProperties}
               value={config.ai?.apiKey || ''}
               onChange={e => updateAiSetting('apiKey', e.target.value)}
               placeholder="Enter your Gemini API Key"
