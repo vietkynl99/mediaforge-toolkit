@@ -7,7 +7,6 @@ import { spawn } from 'child_process';
 import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
-import initSqlJs from 'sql.js';
 import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR_CLI_PATH, UVR_OUTPUT_DIRNAME } from './constants.js';
 import { ttsRouter } from './tts.js';
 import { parseAssCues, parseSrtVttCues, parseSktProjectCues, type SubtitleCue } from './subtitleCues.js';
@@ -42,56 +41,88 @@ import {
   ConcurrencyConfig,
   DEFAULT_CONCURRENCY_CONFIG 
 } from './job/index.js';
+import { 
+  initDatabase, 
+  getDb, 
+  persistDb, 
+  schedulePersistDb,
+  createAuthRouter,
+  authMiddleware,
+  getSessionFromRequest,
+  setSessionCookie,
+  clearSessionCookie,
+  normalizeUsername,
+  isValidUsername,
+  isValidPassword,
+  hashPassword,
+  verifyPassword,
+  getCpuUsage,
+  getMemoryUsage,
+  getCpuCount,
+  getServerStats,
+  type AuthSession
+} from './core/index.js';
+import {
+  ensureCircleMaskPgm,
+  ensureFeatherMaskPgm,
+  measureAudioLufs,
+  escapeFilterPath,
+  clampRender,
+  parseBlurRegionEffects,
+  summarizeRenderConfigForDebug,
+  BLUR_FEATHER_MAX,
+  STATIC_MASK_LOOP_FILTER,
+  parseResolution,
+  resolveRenderInputPath
+} from './services/render.js';
+import {
+  runFfprobe,
+  runFfprobeSampleRate,
+  runFfprobeStreamSamples,
+  runFfprobeStartTime
+} from './services/ffprobe.js';
+import {
+  type VaultFileDTO,
+  type VaultFolderDTO,
+  VIDEO_EXT,
+  AUDIO_EXT,
+  SUB_EXT,
+  IMAGE_EXT,
+  detectType,
+  parseTimeToSeconds,
+  parseSubtitleDuration,
+  getDurationSeconds,
+  buildUvrOutputMap,
+  buildTtsOutputMap,
+  readProjectTtsMeta,
+  readProjectUvrMeta,
+  readFilesFromDir,
+  isVideoFile,
+  isAudioFile,
+  isSubtitleFile,
+  isImageFile,
+  resolveSafePath,
+  getContentType
+} from './services/vault.js';
+import {
+  buildRenderV2FilterGraph,
+  checkCopyPathEligibility,
+  buildRenderV2FfmpegArgs,
+  buildRenderV2Signature,
+  buildRenderInputFingerprints,
+  isReusableRenderSegment,
+  runFfmpegLoggedCommand,
+  escapeConcatFilePath,
+  parseFfmpegProgressSeconds,
+  buildSubtitlesVideoFilter,
+  formatArg,
+  type BuildFilterGraphOptions,
+  type FilterGraphResult,
+  type CopyPathResult
+} from './services/render-v2.js';
 
-type VaultFileDTO = {
-  name: string;
-  relativePath: string;
-  sizeBytes: number;
-  modifiedAt: string;
-  type: 'video' | 'audio' | 'subtitle' | 'image' | 'output' | 'other';
-  extension: string;
-  durationSeconds?: number;
-  linkedTo?: string;
-  uvr?: {
-    processedAt: string;
-    backend?: string;
-    model?: string;
-    outputFormat?: string;
-    outputs?: string[];
-    role?: 'source' | 'output';
-    sourceRelativePath?: string;
-  };
-  tts?: {
-    processedAt: string;
-    voice?: string;
-    rate?: number;
-    pitch?: number;
-    overlapSeconds?: number;
-    overlapMode?: 'overlap' | 'truncate';
-    removeLineBreaks?: boolean;
-    outputSignature?: string;
-    outputDetails?: Record<string, {
-      processedAt?: string;
-      voice?: string;
-      rate?: number;
-      pitch?: number;
-      overlapSeconds?: number;
-      overlapMode?: 'overlap' | 'truncate';
-      removeLineBreaks?: boolean;
-      outputSignature?: string;
-    }>;
-    outputs?: string[];
-    role?: 'source' | 'output';
-    sourceRelativePath?: string;
-  };
-};
-
-type VaultFolderDTO = {
-  name: string;
-  path: string;
-  files: VaultFileDTO[];
-  status?: string;
-};
+// Wrapper for resolveSafePath with MEDIA_VAULT_ROOT
+const safeResolvePath = (relativePath: string) => resolveSafePath(relativePath, MEDIA_VAULT_ROOT);
 
 type ProjectConfig = {
   renderV2?: {
@@ -187,10 +218,6 @@ const moveFilesToSource = async (downloadDir: string, sourceDir: string, filenam
   return moved;
 };
 
-const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v']);
-const AUDIO_EXT = new Set(['.wav', '.mp3', '.aac', '.flac', '.ogg', '.m4a']);
-const SUB_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub', '.sktproject']);
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff']);
 const PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const PREVIEW_MAX_SECONDS = 60;
 const loadProjectConfig = (): ProjectConfig => {
@@ -236,9 +263,6 @@ const RENDER_V2_PARALLEL_SEGMENTS = Math.max(
     : 2
 );
 const FONT_LIST_CACHE_MS = 5 * 60 * 1000;
-const AUTH_SESSION_COOKIE = 'mf_session';
-const AUTH_SESSION_TTL_DAYS = Number(process.env.AUTH_SESSION_TTL_DAYS ?? 7);
-const AUTH_SESSION_TTL_MS = Math.max(1, AUTH_SESSION_TTL_DAYS) * 24 * 60 * 60 * 1000;
 
 const app = express();
 const PORT = Number(process.env.VAULT_PORT ?? 3001);
@@ -246,112 +270,11 @@ const REGISTER_MODE =
   ['1', 'true', 'yes', 'on'].includes((process.env.REGISTER_MODE ?? '').toLowerCase());
 app.use(express.json({ limit: '2mb' }));
 
-type AuthSession = {
-  id: string;
-  userId: number;
-  username: string;
-  createdAt: string;
-  expiresAt: number;
-};
+// Auth middleware
+app.use('/api', authMiddleware);
 
-const sessions = new Map<string, AuthSession>();
-
-const parseCookies = (header: string | undefined) => {
-  const out: Record<string, string> = {};
-  if (!header) return out;
-  header.split(';').forEach(part => {
-    const [rawKey, ...rest] = part.trim().split('=');
-    if (!rawKey) return;
-    const value = rest.join('=');
-    try {
-      out[rawKey] = decodeURIComponent(value);
-    } catch {
-      out[rawKey] = value;
-    }
-  });
-  return out;
-};
-
-const getSessionFromRequest = (req: express.Request) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const sessionId = cookies[AUTH_SESSION_COOKIE];
-  if (!sessionId) return null;
-  const now = Date.now();
-  const cached = sessions.get(sessionId);
-  if (cached) {
-    if (cached.expiresAt <= now) {
-      sessions.delete(sessionId);
-      try {
-        db.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
-        schedulePersistDb();
-      } catch {
-        // ignore
-      }
-      return null;
-    }
-    return cached;
-  }
-  try {
-    const result = db.exec(
-      'SELECT id, user_id, username, created_at, expires_at FROM sessions WHERE id = ? LIMIT 1',
-      [sessionId]
-    );
-    const row = result[0]?.values?.[0];
-    if (!row) return null;
-    const [id, userId, username, createdAt, expiresAt] = row as [string, number, string, string, number];
-    if (!expiresAt || Number(expiresAt) <= now) {
-      db.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
-      schedulePersistDb();
-      return null;
-    }
-    const session: AuthSession = {
-      id,
-      userId,
-      username,
-      createdAt,
-      expiresAt: Number(expiresAt)
-    };
-    sessions.set(sessionId, session);
-    return session;
-  } catch {
-    return null;
-  }
-};
-
-const setSessionCookie = (res: express.Response, sessionId: string) => {
-  res.cookie(AUTH_SESSION_COOKIE, sessionId, {
-    httpOnly: true,
-    sameSite: 'lax',
-    maxAge: AUTH_SESSION_TTL_MS,
-    path: '/'
-  });
-};
-
-const clearSessionCookie = (res: express.Response) => {
-  res.clearCookie(AUTH_SESSION_COOKIE, { path: '/' });
-};
-
-app.use('/api', (req, res, next) => {
-  const path = req.path || '';
-  if (
-    path === '/auth/login' ||
-    path === '/auth/register' ||
-    path === '/auth/config' ||
-    path === '/auth/logout'
-  ) {
-    return next();
-  }
-  const session = getSessionFromRequest(req);
-  if (!session) {
-    const cookies = parseCookies(req.headers.cookie);
-    if (cookies[AUTH_SESSION_COOKIE]) {
-      clearSessionCookie(res);
-    }
-    return res.status(401).json({ ok: false, error: 'Unauthorized' });
-  }
-  (req as any).authUser = session;
-  return next();
-});
+// Auth routes
+app.use('/api', createAuthRouter(REGISTER_MODE));
 
 app.use('/api/tts', ttsRouter);
 
@@ -388,163 +311,9 @@ const listSystemFonts = async (): Promise<string[]> =>
     });
   });
 
-const dbPath = path.join(process.cwd(), 'server', 'data', 'main_db.sqlite');
-const dbDir = path.dirname(dbPath);
-await fs.mkdir(dbDir, { recursive: true });
-
-const SQL = await initSqlJs({
-  locateFile: (file) => path.join(process.cwd(), 'node_modules', 'sql.js', 'dist', file)
-});
-
-let db: any;
-try {
-  const fileBuffer = await fs.readFile(dbPath);
-  db = new SQL.Database(new Uint8Array(fileBuffer));
-} catch {
-  db = new SQL.Database();
-}
-
-try {
-  db.run('DELETE FROM sessions WHERE expires_at <= ?', [Date.now()]);
-} catch {
-  // ignore
-}
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS pipelines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    graph_json TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  )`
-);
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS jobs (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    project_name TEXT,
-    file_name TEXT NOT NULL,
-    file_size TEXT NOT NULL,
-    status TEXT NOT NULL,
-    progress INTEGER NOT NULL,
-    tasks_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    started_at TEXT,
-    finished_at TEXT,
-    duration_ms INTEGER,
-    error TEXT,
-    params_json TEXT
-  )`
-);
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  )`
-);
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    username TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`
-);
-
-try {
-  db.run('CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at)');
-} catch {
-  // ignore
-}
-
-try {
-  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users (username)');
-} catch {
-  // ignore
-}
-
-try {
-  db.run('ALTER TABLE jobs ADD COLUMN params_json TEXT');
-} catch {
-  // ignore if already exists
-}
-
-// Migration: remove log column from jobs table (log is now stored in files)
-const jobsTableInfo = db.exec("PRAGMA table_info('jobs')");
-const jobsColumns = (jobsTableInfo[0]?.values ?? []).map((row: any[]) => String(row[1]));
-const hasLogColumn = jobsColumns.includes('log');
-
-if (hasLogColumn) {
-  db.run(
-    `CREATE TABLE IF NOT EXISTS jobs_new (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      project_name TEXT,
-      file_name TEXT NOT NULL,
-      file_size TEXT NOT NULL,
-      status TEXT NOT NULL,
-      progress INTEGER NOT NULL,
-      tasks_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      started_at TEXT,
-      finished_at TEXT,
-      duration_ms INTEGER,
-      error TEXT,
-      params_json TEXT
-    )`
-  );
-  try {
-    db.run(
-      `INSERT INTO jobs_new (id, name, project_name, file_name, file_size, status, progress,
-        tasks_json, created_at, started_at, finished_at, duration_ms, error, params_json)
-       SELECT id, name, project_name, file_name, file_size, status, progress,
-        tasks_json, created_at, started_at, finished_at, duration_ms, error, params_json
-       FROM jobs`
-    );
-  } catch {
-    // ignore if table is empty or other error
-  }
-  db.run('DROP TABLE jobs');
-  db.run('ALTER TABLE jobs_new RENAME TO jobs');
-}
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS render_templates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      config_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`
-);
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS task_templates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      task_type TEXT NOT NULL,
-      params_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`
-);
-
-try {
-  db.run('CREATE INDEX IF NOT EXISTS idx_task_templates_task_type ON task_templates (task_type)');
-} catch {
-  // ignore
-}
-
-db.run('DROP TABLE IF EXISTS file_uvr');
-
-const persistDb = async () => {
-  const data = db.export();
-  await fs.writeFile(dbPath, Buffer.from(data));
-};
+// Initialize database
+await initDatabase();
+const db = getDb();
 
 // Initialize job system
 const configManager = initConfigManager(db, persistDb);
@@ -560,41 +329,6 @@ let concurrencyConfig: ConcurrencyConfig = DEFAULT_CONCURRENCY_CONFIG;
     initResourceManager(DEFAULT_CONCURRENCY_CONFIG);
   }
 })();
-
-const AUTH_PBKDF2_ITERATIONS = Number(process.env.AUTH_PBKDF2_ITERATIONS ?? 150000);
-const AUTH_PBKDF2_DIGEST = 'sha256';
-const AUTH_PBKDF2_KEYLEN = 32;
-
-const normalizeUsername = (value: string) => value.trim();
-
-const isValidUsername = (value: string) => /^\S{3,64}$/.test(value);
-
-const isValidPassword = (value: string) => value.length >= 6 && value.length <= 128;
-
-const hashPassword = (password: string) => {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto
-    .pbkdf2Sync(password, salt, AUTH_PBKDF2_ITERATIONS, AUTH_PBKDF2_KEYLEN, AUTH_PBKDF2_DIGEST)
-    .toString('hex');
-  return `pbkdf2$${AUTH_PBKDF2_ITERATIONS}$${salt}$${hash}`;
-};
-
-const verifyPassword = (password: string, stored: string) => {
-  const parts = stored.split('$');
-  if (parts.length !== 4) return false;
-  const [scheme, iterRaw, salt, hash] = parts;
-  if (scheme !== 'pbkdf2') return false;
-  const iterations = Number(iterRaw);
-  if (!Number.isFinite(iterations) || iterations <= 0) return false;
-  const derived = crypto
-    .pbkdf2Sync(password, salt, iterations, AUTH_PBKDF2_KEYLEN, AUTH_PBKDF2_DIGEST)
-    .toString('hex');
-  try {
-    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(derived, 'hex'));
-  } catch {
-    return false;
-  }
-};
 
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
 type JobTaskStatus = 'pending' | 'active' | 'done' | 'error';
@@ -628,60 +362,8 @@ const CANCELLED_ERROR_MESSAGE = 'Job cancelled';
 const MAX_JOB_LOG_CHARS = 20000;
 const JOB_LOGS_DIR = path.join(process.cwd(), 'server', 'data', 'logs');
 const jobPersistTimers = new Map<string, NodeJS.Timeout>();
-let persistDbTimer: NodeJS.Timeout | null = null;
-
-// --- System Metrics Helpers ---
-let lastCpuInfo: { idle: number; total: number } | null = null;
-
-const getCpuUsage = (): number => {
-  const cpus = os.cpus();
-  let idle = 0;
-  let total = 0;
-  
-  for (const cpu of cpus) {
-    for (const type in cpu.times) {
-      total += (cpu.times as any)[type];
-    }
-    idle += cpu.times.idle;
-  }
-  
-  if (lastCpuInfo === null) {
-    lastCpuInfo = { idle, total };
-    return 0; // First call, return 0
-  }
-  
-  const idleDiff = idle - lastCpuInfo.idle;
-  const totalDiff = total - lastCpuInfo.total;
-  lastCpuInfo = { idle, total };
-  
-  if (totalDiff === 0) return 0;
-  const usage = Math.round(((totalDiff - idleDiff) / totalDiff) * 100);
-  return Math.max(0, Math.min(100, usage));
-};
-
-const getMemoryUsage = (): { usedPercent: number; usedGB: number; totalGB: number; freeGB: number } => {
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
-  
-  return {
-    usedPercent: Math.round((usedMem / totalMem) * 100),
-    usedGB: Math.round((usedMem / (1024 * 1024 * 1024)) * 100) / 100,
-    totalGB: Math.round((totalMem / (1024 * 1024 * 1024)) * 100) / 100,
-    freeGB: Math.round((freeMem / (1024 * 1024 * 1024)) * 100) / 100
-  };
-};
-
-const getCpuCount = () => os.cpus().length;
-
-// --- Server Stats Cache ---
-// Cache stats to prevent excessive CPU/RAM calculations on every request
-// Minimum interval between recalculations: 5 seconds
-let statsCache: {
-  data: any;
-  timestamp: number;
-} | null = null;
 const STATS_CACHE_MIN_INTERVAL_MS = 5000; // 5 seconds
+let statsCache: { data: any; timestamp: number } | null = null;
 
 const formatLocalTimestamp = () =>
   new Intl.DateTimeFormat('vi-VN', {
@@ -776,14 +458,6 @@ const appendJobLog = (job: JobRecord, message: string) => {
   })();
 
   scheduleJobPersist(job);
-};
-
-const schedulePersistDb = () => {
-  if (persistDbTimer) return;
-  persistDbTimer = setTimeout(() => {
-    persistDbTimer = null;
-    persistDb().catch(() => null);
-  }, 500);
 };
 
 const upsertJobRecord = (job: JobRecord) => {
@@ -1049,24 +723,6 @@ const sanitizeFileName = (value: string) => {
   return cleaned || 'cookies.txt';
 };
 
-const parseResolution = (value: string | undefined | null, fallback = { w: 1920, h: 1080 }) => {
-  if (!value) return fallback;
-  const match = String(value).trim().match(/(\d+)\s*[x×]\s*(\d+)/i);
-  if (!match) return fallback;
-  const w = Number(match[1]);
-  const h = Number(match[2]);
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return fallback;
-  return { w: Math.round(w), h: Math.round(h) };
-};
-
-const resolveRenderInputPath = (ref: string | undefined, inputsMap: Record<string, string>) => {
-  if (!ref) return null;
-  const cleaned = ref.replace(/^\s*\{\{/, '').replace(/\}\}\s*$/, '').trim();
-  const rel = inputsMap[cleaned] ?? inputsMap[ref] ?? '';
-  if (!rel) return null;
-  return resolveSafePath(rel);
-};
-
 const resolveCookiesPath = (value: string) => {
   if (!value) return null;
   const normalized = path.normalize(value);
@@ -1116,1304 +772,9 @@ const resolveRenderConfigV2 = (raw: unknown): RenderConfigV2 | null => {
   return cfg;
 };
 
-const formatArg = (value: string) => (/[^\w@%+=:,./-]/.test(value) ? JSON.stringify(value) : value);
 const LOG_RENDER_PREVIEW_FFMPEG_COMMAND = false;
 const LOG_RENDER_V2_DEBUG =
   ['1', 'true', 'yes', 'on'].includes((process.env.VITE_SERVER_LOG_RENDER_V2_DEBUG ?? '').toLowerCase());
-const BLUR_FEATHER_MAX = 10;
-const STATIC_MASK_LOOP_FILTER = 'loop=loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB';
-
-const summarizeRenderConfigForDebug = (config: RenderConfigV2) => ({
-  timeline: {
-    start: Number.isFinite(config.timeline?.start) ? Number(config.timeline.start) : 0,
-    duration: Number.isFinite(config.timeline?.duration) ? Number(config.timeline.duration) : null,
-    framerate: Number.isFinite(config.timeline?.framerate) ? Number(config.timeline.framerate) : null,
-    resolution: config.timeline?.resolution ?? null
-  },
-  items: (config.items ?? []).map(item => ({
-    id: item.id,
-    type: item.type,
-    timeline: item.timeline ?? null,
-    text: item.type === 'text'
-      ? {
-        start: Number.isFinite(item.text?.start) ? Number(item.text?.start) : null,
-        end: Number.isFinite(item.text?.end) ? Number(item.text?.end) : null,
-        matchDuration: item.text?.matchDuration ?? null
-      }
-      : undefined
-  }))
-});
-
-const ensureCircleMaskPgm = async (tmpDir: string) => {
-  const size = 256;
-  const maskPath = path.join(tmpDir, `circle-mask-${size}.pgm`);
-  try {
-    await fs.access(maskPath);
-    return maskPath;
-  } catch {
-    const radius = size / 2;
-    const cx = (size - 1) / 2;
-    const cy = (size - 1) / 2;
-    const pixels = Buffer.alloc(size * size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const dx = x - cx;
-        const dy = y - cy;
-        const inside = (dx * dx + dy * dy) <= (radius * radius);
-        pixels[y * size + x] = inside ? 255 : 0;
-      }
-    }
-    const header = Buffer.from(`P5\n${size} ${size}\n255\n`, 'ascii');
-    await fs.writeFile(maskPath, Buffer.concat([header, pixels]));
-    return maskPath;
-  }
-};
-
-const ensureFeatherMaskPgm = async (tmpDir: string, featherPct: number) => {
-  const f = Math.max(0, Math.min(BLUR_FEATHER_MAX, Math.round(featherPct)));
-  const size = 256;
-  const maskPath = path.join(tmpDir, `feather-mask-${f}-${size}.pgm`);
-  try {
-    await fs.access(maskPath);
-    return maskPath;
-  } catch {
-    const edge = f <= 0 ? 0 : (f / 100) * (size / 2);
-    const pixels = Buffer.alloc(size * size);
-    for (let y = 0; y < size; y += 1) {
-      for (let x = 0; x < size; x += 1) {
-        const d = Math.min(x, y, size - 1 - x, size - 1 - y);
-        const alpha = edge <= 0 ? 255 : Math.max(0, Math.min(255, Math.round((d / edge) * 255)));
-        pixels[y * size + x] = alpha;
-      }
-    }
-    const header = Buffer.from(`P5\n${size} ${size}\n255\n`, 'ascii');
-    await fs.writeFile(maskPath, Buffer.concat([header, pixels]));
-    return maskPath;
-  }
-};
-
-/**
- * Measures integrated loudness (LUFS) of an audio/video file using ffmpeg ebur128.
- *
- * @param maxDuration - Limit measurement to this many seconds from trimStart.
- *   Keeps measurement fast and avoids scanning long files end-to-end.
- *
- * Uses `silenceremove` before `ebur128` to strip inter-sentence gaps.
- * Without this, sparse audio (TTS voice, instrument cues) has most of its
- * 400ms analysis windows fall below the ebur128 absolute gate (-70 LUFS),
- * causing integrated loudness to report -70 LUFS even when actual content
- * is at a perfectly normal level.
- *
- * Returns the measured LUFS value, or null if measurement fails.
- */
-const measureAudioLufs = (
-  ffmpegPath: string,
-  filePath: string,
-  trimStart: number,
-  maxDuration: number,
-  onLog?: (chunk: string) => void
-): Promise<number | null> => {
-  return new Promise((resolve) => {
-    const filters: string[] = [];
-    if (trimStart > 0) {
-      filters.push(`atrim=start=${trimStart.toFixed(3)}`);
-      filters.push('asetpts=PTS-STARTPTS');
-    }
-    filters.push('silenceremove=stop_periods=-1:stop_threshold=-50dB:stop_duration=0.1');
-    filters.push('asetpts=PTS-STARTPTS');
-    filters.push('ebur128=peak=true');
-    // -t before -i limits input decode time (fast path for long files).
-    // -vn excludes embedded cover-art/video streams from the audio filter graph.
-    const args = [
-      ...(maxDuration > 0 ? ['-t', maxDuration.toFixed(3)] : []),
-      '-i', filePath,
-      '-vn',
-      '-af', filters.join(','),
-      '-f', 'null', '-'
-    ];
-    onLog?.(`[LUFS Measure] ffmpeg ${args.map(a => (a.includes(' ') ? `"${a}"` : a)).join(' ')}\n`);
-    let stderr = '';
-    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    proc.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-    proc.on('error', () => resolve(null));
-    proc.on('close', () => {
-      // ebur128 prints real-time "I: -70 LUFS" lines before any gated audio accumulates.
-      // The FIRST match is always -70; the LAST match is the correct Summary value.
-      // Use matchAll + last element to get the final integrated loudness.
-      const matches = [...stderr.matchAll(/\bI:\s*([\-\d.]+)\s*LUFS/g)];
-      const lastMatch = matches[matches.length - 1];
-      if (lastMatch) {
-        const val = Number(lastMatch[1]);
-        if (Number.isFinite(val)) {
-          onLog?.(`[LUFS Measure] "${path.basename(filePath)}" → ${val.toFixed(1)} LUFS\n`);
-          resolve(val);
-          return;
-        }
-      }
-      onLog?.(`[LUFS Measure] Failed to parse LUFS for "${path.basename(filePath)}", defaulting to 0 dB gain\n`);
-      resolve(null);
-    });
-  });
-};
-
-const buildRenderV2FilterGraph = async (
-  config: RenderConfigV2,
-  tmpDir: string,
-  options?: {
-    includeAudio?: boolean;
-    outputStart?: number;
-    outputDuration?: number;
-    allowShortDuration?: boolean;
-    sampleAt?: number;
-    debugEnabled?: boolean;
-    debugLabel?: string;
-    onLog?: (chunk: string) => void;
-    /** ffmpeg binary path – required for per-track LUFS measurement */
-    ffmpegPath?: string;
-    /** Shared LUFS cache across segment builds; populated on first measurement */
-    lufsCache?: Map<string, number>;
-  }
-) => {
-  const debugEnabled = options?.debugEnabled === true;
-  const debugLabel = options?.debugLabel ? ` ${options.debugLabel}` : '';
-  const onLog = options?.onLog;
-  const INPUT_SEEK_PREROLL_SECONDS = 1;
-  const exportMode = (config.timeline as any).exportMode || 'video+audio';
-  const includeVideo = exportMode !== 'audio only';
-  const includeAudio = options?.includeAudio !== false && exportMode !== 'video only';
-  const { w: outW, h: outH } = parseResolution(config.timeline.resolution);
-  const framerate = Number.isFinite(config.timeline.framerate) ? config.timeline.framerate : 30;
-  const background = '0x000000'; // Default black background
-  const configOutputStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
-  const outputStart = Number.isFinite(options?.outputStart) ? Math.max(0, Number(options?.outputStart)) : configOutputStart;
-
-  // visible === false means the track is hidden and should be skipped entirely.
-  // Applies to: video, image, subtitle, text. Audio uses its own mute flag.
-  const isVisible = (item: RenderItemV2) => item.visible !== false;
-  const isMuted = (item: RenderItemV2) => item.audioMix?.mute === true;
-
-  // Log track optimization details
-  if (onLog) {
-    const used: string[] = [];
-    const skipped: string[] = [];
-    config.items.forEach(item => {
-      const label = `${item.name || item.id} [${item.type}]`;
-      if (item.type === 'video') {
-        if (!isVisible(item)) skipped.push(`${label} (hidden)`);
-        else if (isMuted(item)) used.push(`${label} (video-only, muted)`);
-        else used.push(label);
-      } else if (item.type === 'audio') {
-        if (isMuted(item)) skipped.push(`${label} (muted)`);
-        else used.push(label);
-      } else {
-        if (!isVisible(item)) skipped.push(`${label} (hidden)`);
-        else used.push(label);
-      }
-    });
-    onLog(`[RenderV2] Optimization: ${used.length} tracks used, ${skipped.length} skipped.\n`);
-    if (used.length > 0) onLog(`[RenderV2] Used tracks: ${used.join(', ')}\n`);
-    if (skipped.length > 0) onLog(`[RenderV2] Skipped tracks: ${skipped.join(', ')}\n`);
-  }
-
-  const visualItems = includeVideo ? config.items.filter(item => (item.type === 'video' || item.type === 'image') && isVisible(item)) : [];
-  const audioItems = config.items.filter(item => item.type === 'audio' && !isMuted(item));
-  const subtitleItems = includeVideo ? config.items.filter(item => item.type === 'subtitle' && isVisible(item)) : [];
-  const textItems = includeVideo ? config.items.filter(item => item.type === 'text' && isVisible(item)) : [];
-
-  // In 'audio only' mode visualItems is empty (no video rendered), but we still
-  // need the video file entries in sourceItems so their embedded audio streams
-  // can be mixed. Use a separate list so they get loaded as inputs without
-  // triggering any visual filter graph.
-  // Also respect visible/mute: hidden or muted video items don't contribute embedded audio.
-  const videoItemsForAudio = !includeVideo && includeAudio
-    ? config.items.filter(item => item.type === 'video' && isVisible(item) && !isMuted(item))
-    : [];
-
-  const sourceItems = [
-    ...visualItems,
-    ...videoItemsForAudio,
-    ...(includeAudio ? audioItems : []),
-    ...subtitleItems
-  ];
-  const inputs: Array<{ path: string; type: RenderItemV2['type']; item: RenderItemV2; duration?: number }> = [];
-  for (const item of sourceItems) {
-    const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
-    const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path) : null);
-    if (!sourcePath) continue;
-    let duration: number | undefined;
-    if (item.type === 'video' || item.type === 'audio' || item.type === 'subtitle') {
-      const stats = await fs.stat(sourcePath);
-      duration = await getDurationSeconds(sourcePath, item.type, stats);
-    }
-    inputs.push({ path: sourcePath, type: item.type, item, duration });
-  }
-
-  const computedMediaTimelineDuration = inputs.reduce((max, entry) => {
-    if (entry.type !== 'video' && entry.type !== 'audio') return max;
-    if (!(typeof entry.duration === 'number' && Number.isFinite(entry.duration) && entry.duration > 0)) return max;
-    const trimStart = Math.max(0, entry.item.timeline?.trimStart ?? 0);
-    const trimEnd = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
-    const effective = Math.max(0.1, entry.duration - trimStart - trimEnd);
-    return Math.max(max, effective);
-  }, 0);
-  const resolvedTimelineDuration = Number.isFinite(config.timeline.duration) && Number(config.timeline.duration) > 0
-    ? Number(config.timeline.duration)
-    : computedMediaTimelineDuration;
-  const isImageMatchDuration = (entry: { item: RenderItemV2 }) => {
-    return Boolean(entry.item.timeline?.matchDuration);
-  };
-
-  const defaultDuration = 5;
-  const rawItemTiming = inputs.map(entry => {
-    const startRaw = Math.max(0, entry.item.timeline?.start ?? 0);
-    const trimStartRaw = Math.max(0, entry.item.timeline?.trimStart ?? 0);
-    const trimEndRaw = Math.max(0, entry.item.timeline?.trimEnd ?? 0);
-    const hasExplicitDuration = (
-      (typeof entry.duration === 'number' && Number.isFinite(entry.duration) && entry.duration > 0) ||
-      Number.isFinite(entry.item.timeline?.duration)
-    );
-    const baseDuration = entry.duration && entry.duration > 0
-      ? Math.max(0.1, entry.duration - trimStartRaw - trimEndRaw)
-      : defaultDuration;
-    const matchedImageDuration = entry.type === 'image' && isImageMatchDuration(entry) && resolvedTimelineDuration > 0
-      ? resolvedTimelineDuration
-      : null;
-    const durationRaw = typeof matchedImageDuration === 'number'
-      ? matchedImageDuration
-      : Number.isFinite(entry.item.timeline?.duration)
-      ? Math.max(0.1, Number(entry.item.timeline?.duration))
-      : baseDuration;
-    const endRaw = startRaw + durationRaw;
-    return {
-      entry,
-      startRaw,
-      durationRaw,
-      trimStartRaw,
-      endRaw,
-      hasExplicitDuration: hasExplicitDuration || typeof matchedImageDuration === 'number'
-    };
-  });
-  if (debugEnabled) {
-    console.log(`RENDER_V2_DEBUG raw timing${debugLabel}`, JSON.stringify(rawItemTiming.map(t => ({
-      id: t.entry.item?.id,
-      type: t.entry.type,
-      startRaw: t.startRaw,
-      durationRaw: t.durationRaw,
-      endRaw: t.endRaw,
-      trimStartRaw: t.trimStartRaw,
-      hasExplicitDuration: t.hasExplicitDuration
-    }))));
-  }
-
-  const outputDurationFromItems = rawItemTiming.reduce((max, t) => Math.max(max, t.endRaw - outputStart), 0);
-  const minOutputDuration = options?.allowShortDuration ? 0.001 : 0.1;
-  const trimThreshold = options?.allowShortDuration ? 0.001 : 0.1;
-  const sampleAt = Number.isFinite(options?.sampleAt) ? Math.max(0, Number(options?.sampleAt)) : null;
-  const outputDurationRaw = Number.isFinite(options?.outputDuration)
-    ? Number(options?.outputDuration)
-    : (Number.isFinite(config.timeline.duration)
-      ? Number(config.timeline.duration)
-      : outputDurationFromItems);
-  const outputDuration = Math.max(minOutputDuration, outputDurationRaw);
-
-  const inputArgs: string[] = [];
-  const inputEntries: Array<{
-    type: RenderItemV2['type'];
-    args: string[];
-    item: RenderItemV2;
-    timing?: { start: number; duration: number; trimStart: number };
-  }> = [];
-
-  const finalItemTiming: Array<{ entry: any; start: number; duration: number; trimStart: number }> = [];
-
-  inputs.forEach((entry, idx) => {
-    const args: string[] = [];
-    const rawT = rawItemTiming[idx];
-    let start = 0;
-    let duration = 0;
-    let trimStart = 0;
-    if (sampleAt !== null) {
-      // When source duration is unknown (ffprobe/parse failure), don't drop the item only because
-      // of a fallback duration estimate. Keep it active after its start in preview sampling mode.
-      if (rawT.hasExplicitDuration) {
-        if (rawT.startRaw > sampleAt || rawT.endRaw <= sampleAt) return;
-      } else if (rawT.startRaw > sampleAt) {
-        return;
-      }
-      start = 0;
-      duration = Math.max(trimThreshold, outputDuration);
-      trimStart = entry.type === 'image'
-        ? rawT.trimStartRaw
-        : rawT.trimStartRaw + Math.max(0, sampleAt - rawT.startRaw);
-    } else {
-      if (rawT.endRaw <= outputStart || rawT.startRaw >= outputStart + outputDuration) {
-        return;
-      }
-      start = Math.max(0, rawT.startRaw - outputStart);
-      const end = Math.min(outputDuration, rawT.endRaw - outputStart);
-      duration = Math.max(0.01, end - start);
-      trimStart = entry.type === 'image'
-        ? rawT.trimStartRaw
-        : rawT.trimStartRaw + Math.max(0, outputStart - rawT.startRaw);
-    }
-
-    let inputSeek = 0;
-    if ((entry.type === 'video' || entry.type === 'audio') && trimStart > 0) {
-      inputSeek = Math.max(0, trimStart - INPUT_SEEK_PREROLL_SECONDS);
-      trimStart = Math.max(0, trimStart - inputSeek);
-    }
-
-    const timing = { entry, start, duration, trimStart };
-    finalItemTiming.push(timing);
-
-    if (entry.type === 'image') {
-      args.push('-loop', '1', '-t', String(duration + start));
-    }
-    if (inputSeek > 0) {
-      args.push('-ss', String(inputSeek));
-    }
-    args.push('-i', entry.path);
-    inputArgs.push(...args);
-    inputEntries.push({
-      type: entry.type,
-      args,
-      item: entry.item,
-      timing
-    });
-  });
-
-  const filters: string[] = [];
-  let currentVideo: string | null = null;
-  let visualIndex = 0;
-  let circleMaskPath: string | null = null;
-
-  if (includeVideo) {
-    filters.push(`color=c=${background}:s=${outW}x${outH}:d=${outputDuration}:r=${framerate}[base]`);
-    currentVideo = '[base]';
-
-    const sortedVisual = [...visualItems].sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
-    for (const item of sortedVisual) {
-      const timing = finalItemTiming.find(t => t.entry.item === item);
-      if (!timing) continue;
-
-    const inputIndex = inputEntries.findIndex(e => e.item === item);
-    if (inputIndex < 0) continue;
-
-    const label = `[v${visualIndex}]`;
-    const start = timing?.start ?? 0;
-    const duration = timing?.duration ?? outputDuration;
-    const end = Math.max(start + 0.01, start + duration);
-    const scale = item.transform?.scale ?? 1;
-    const rotation = item.transform?.rotation ?? 0;
-    const opacity = Math.max(0, Math.min(100, item.transform?.opacity ?? 100)) / 100;
-    const posX = item.transform?.x ?? 50;
-    const posY = item.transform?.y ?? 50;
-    const fit = item.transform?.fit ?? 'contain';
-    const crop = item.transform?.crop;
-    const xExpr = `(main_w-overlay_w)*${posX}/100`;
-    const yExpr = `(main_h-overlay_h)*${posY}/100`;
-
-    let chain = `[${inputIndex}:v]`;
-    const addFilter = (filter: string) => {
-      chain += chain.endsWith(']') ? filter : `,${filter}`;
-    };
-    const trimStart = timing?.trimStart ?? 0;
-    const trimEndValue = trimStart + duration;
-    if (trimStart > 0 || duration > trimThreshold) {
-      addFilter(`trim=start=${trimStart}:end=${trimEndValue}`);
-    }
-    addFilter('setpts=PTS-STARTPTS');
-    if (crop) {
-      const cw = Math.max(0.1, Math.min(100, crop.w));
-      const ch = Math.max(0.1, Math.min(100, crop.h));
-      const cx = Math.max(0, Math.min(100, crop.x));
-      const cy = Math.max(0, Math.min(100, crop.y));
-      addFilter(
-        `crop=iw*${(cw / 100).toFixed(4)}:ih*${(ch / 100).toFixed(4)}:iw*${(cx / 100).toFixed(4)}:ih*${(cy / 100).toFixed(4)}`
-      );
-    }
-    if (fit === 'stretch') {
-      addFilter(`scale=${outW}:${outH}`);
-    } else if (fit === 'cover') {
-      addFilter(`scale=${outW}:${outH}:force_original_aspect_ratio=increase`);
-    } else {
-      addFilter(`scale=${outW}:${outH}:force_original_aspect_ratio=decrease`);
-    }
-
-    const mirror = item.transform?.mirror;
-    if (mirror === 'horizontal') {
-      addFilter('hflip');
-    } else if (mirror === 'vertical') {
-      addFilter('vflip');
-    } else if (mirror === 'both') {
-      addFilter('hflip,vflip');
-    }
-    if (scale !== 1) {
-      addFilter(`scale=iw*${scale}:ih*${scale}`);
-    }
-    if (rotation !== 0) {
-      const radians = (rotation * Math.PI) / 180;
-      addFilter(`rotate=${radians}:fillcolor=none`);
-    }
-    addFilter('format=rgba');
-    if (item.mask && (item.mask.type === 'rect' || item.mask.type === 'circle')) {
-      const mx = Math.max(0, Math.min(100, Number(item.mask.x ?? 0)));
-      const my = Math.max(0, Math.min(100, Number(item.mask.y ?? 0)));
-      const mw = Math.max(0.1, Math.min(100, Number(item.mask.w ?? 100)));
-      const mh = Math.max(0.1, Math.min(100, Number(item.mask.h ?? 100)));
-      const splitLabelA = `[vms${visualIndex}a]`;
-      const splitLabelB = `[vms${visualIndex}b]`;
-      const outLabel = `[v${visualIndex}]`;
-      const splitChain = chain.endsWith(']')
-        ? `${chain}split=2${splitLabelA}${splitLabelB}`
-        : `${chain},split=2${splitLabelA}${splitLabelB}`;
-      filters.push(splitChain);
-      if (item.mask.type === 'rect') {
-        const cropLabel = `[vmcrop${visualIndex}]`;
-        const clearLabel = `[vmclr${visualIndex}]`;
-        const mxNorm = (mx / 100).toFixed(4);
-        const myNorm = (my / 100).toFixed(4);
-        const mwNorm = (mw / 100).toFixed(4);
-        const mhNorm = (mh / 100).toFixed(4);
-        filters.push(
-          `${splitLabelA}crop=iw*${mwNorm}:ih*${mhNorm}:iw*${mxNorm}:ih*${myNorm}${cropLabel}`
-        );
-        filters.push(`${splitLabelB}colorchannelmixer=aa=0${clearLabel}`);
-        let mergeChain = `${clearLabel}${cropLabel}overlay=x=W*${mxNorm}:y=H*${myNorm}:format=auto`;
-        if (opacity < 1) {
-          mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
-        }
-        filters.push(`${mergeChain}${outLabel}`);
-      } else {
-        if (!circleMaskPath) {
-          circleMaskPath = await ensureCircleMaskPgm(tmpDir);
-        }
-        const cropLabel = `[vmcrop${visualIndex}]`;
-        const maskUnitLabel = `[vmmu${visualIndex}]`;
-        const maskLabel = `[vmask${visualIndex}]`;
-        const cropRefLabel = `[vmcr${visualIndex}]`;
-        const maskedCropLabel = `[vmcm${visualIndex}]`;
-        const clearLabel = `[vmclr${visualIndex}]`;
-        const mxNorm = (mx / 100).toFixed(4);
-        const myNorm = (my / 100).toFixed(4);
-        const mwNorm = (mw / 100).toFixed(4);
-        const mhNorm = (mh / 100).toFixed(4);
-        filters.push(
-          `${splitLabelA}crop=iw*${mwNorm}:ih*${mhNorm}:iw*${mxNorm}:ih*${myNorm}${cropLabel}`
-        );
-        filters.push(`movie='${escapeFilterPath(circleMaskPath)}',format=gray,${STATIC_MASK_LOOP_FILTER}${maskUnitLabel}`);
-        filters.push(`${maskUnitLabel}${cropLabel}scale2ref${maskLabel}${cropRefLabel}`);
-        filters.push(`${cropRefLabel}${maskLabel}alphamerge${maskedCropLabel}`);
-        filters.push(`${splitLabelB}colorchannelmixer=aa=0${clearLabel}`);
-        let mergeChain = `${clearLabel}${maskedCropLabel}overlay=x=W*${mxNorm}:y=H*${myNorm}:format=auto`;
-        if (opacity < 1) {
-          mergeChain += `,colorchannelmixer=aa=${opacity.toFixed(3)}`;
-        }
-        filters.push(`${mergeChain}${outLabel}`);
-      }
-    } else {
-      if (opacity < 1) {
-        addFilter(`colorchannelmixer=aa=${opacity.toFixed(3)}`);
-      }
-      filters.push(`${chain}${label}`);
-    }
-    const itemBlurEffects = parseBlurRegionEffects(
-      Array.isArray(item.effects)
-        ? item.effects
-          .filter(effect => effect && effect.type === 'blur_region')
-          .map(effect => ({ type: 'blur_region', ...((effect.params ?? {}) as Record<string, unknown>) }))
-        : []
-    );
-    let overlayInputLabel = label;
-    if (itemBlurEffects.length > 0) {
-      let blurCurrentLabel = label;
-      for (let effectIndex = 0; effectIndex < itemBlurEffects.length; effectIndex += 1) {
-        const effect = itemBlurEffects[effectIndex];
-        const x = effect.left;
-        const y = effect.top;
-        const w = 100 - effect.left - effect.right;
-        const h = 100 - effect.top - effect.bottom;
-        const sigma = effect.sigma;
-        const feather = effect.feather > 0 ? effect.feather : 0;
-        const main = `ivm${visualIndex}_${effectIndex}`;
-        const tmp = `ivt${visualIndex}_${effectIndex}`;
-        const out = `ivo${visualIndex}_${effectIndex}`;
-        // Stronger blur for subtitle masking: use gaussian blur instead of boxblur.
-        const gblurSigma = Math.max(2, Math.min(96, Number(sigma) * 1.8));
-        const gblurSteps = Math.max(1, Math.min(6, Math.round(gblurSigma / 10)));
-        const bl = `ivb${visualIndex}_${effectIndex}`;
-        filters.push(`${blurCurrentLabel}split=2[${main}][${tmp}]`);
-        filters.push(
-          `[${tmp}]crop=iw*${w}/100:ih*${h}/100:iw*${x}/100:ih*${y}/100,format=rgba,gblur=sigma=${gblurSigma.toFixed(2)}:steps=${gblurSteps}:planes=0x7,format=rgba[${bl}]`
-        );
-        if (feather > 0) {
-          const maskPath = await ensureFeatherMaskPgm(tmpDir, feather);
-          const featherMaskSigma = Math.max(0.8, Math.min(16, feather * 1.2));
-          const mu = `ivmu${visualIndex}_${effectIndex}`;
-          const mk = `ivmk${visualIndex}_${effectIndex}`;
-          const br = `ivbr${visualIndex}_${effectIndex}`;
-          const ba = `ivba${visualIndex}_${effectIndex}`;
-          filters.push(
-            `movie='${escapeFilterPath(maskPath)}',format=gray,gblur=sigma=${featherMaskSigma.toFixed(2)}:steps=2,${STATIC_MASK_LOOP_FILTER}[${mu}]`
-          );
-          filters.push(`[${mu}][${bl}]scale2ref[${mk}][${br}]`);
-          filters.push(`[${br}][${mk}]alphamerge[${ba}]`);
-          filters.push(`[${main}][${ba}]overlay=W*${x}/100:H*${y}/100:format=auto[${out}]`);
-        } else {
-          filters.push(`[${main}][${bl}]overlay=W*${x}/100:H*${y}/100[${out}]`);
-        }
-        blurCurrentLabel = `[${out}]`;
-      }
-      overlayInputLabel = blurCurrentLabel;
-    }
-    const overlayFilter = sampleAt === null
-      ? `overlay=x=${xExpr}:y=${yExpr}:enable='between(t,${start},${end})'`
-      : `overlay=x=${xExpr}:y=${yExpr}`;
-    filters.push(`${currentVideo}${overlayInputLabel}${overlayFilter}[v${visualIndex}o]`);
-    currentVideo = `[v${visualIndex}o]`;
-    visualIndex += 1;
-  }
-
-  for (let idx = 0; idx < subtitleItems.length; idx += 1) {
-    const subtitleItem = subtitleItems[idx];
-    const timing = finalItemTiming.find(t => t.entry.item === subtitleItem);
-    if (!timing) continue;
-
-    const subPath = resolveRenderInputPath(subtitleItem.source?.ref, config.inputsMap)
-      ?? (subtitleItem.source?.path ? resolveSafePath(subtitleItem.source.path) : null);
-    if (!subPath) continue;
-    const start = timing.start;
-    const end = start + timing.duration;
-    const stylePayload = {
-      ...(subtitleItem.subtitleStyle ?? {}),
-      playResX: outW,
-      playResY: outH,
-      shift: -outputStart
-    };
-    const style = parseAssRenderStyle(stylePayload);
-    const assOut = path.join(tmpDir, `render-v2-${idx}.ass`);
-    try {
-      await writeStyledAssFile(subPath, style, assOut);
-      const subFilter = buildSubtitlesVideoFilter(assOut, { w: style.playResX, h: style.playResY });
-      const label = `[vsub${idx}]`;
-      // Note: subtitles filter already honors subtitle timestamps; avoid enable=... for wider ffmpeg compatibility.
-      filters.push(`${currentVideo}${subFilter}${label}`);
-      currentVideo = label;
-    } catch {
-      // ignore subtitle parsing errors
-    }
-  }
-
-  for (let idx = 0; idx < textItems.length; idx += 1) {
-    const textItem = textItems[idx];
-    const rawText = typeof textItem.text?.value === 'string' ? textItem.text.value.trim() : '';
-    if (!rawText) continue;
-    const isTextMatchDuration = String(textItem.text?.matchDuration ?? '0') === '1';
-
-    const itemStartRaw = isTextMatchDuration
-      ? 0
-      : (Number.isFinite(textItem.text?.start)
-        ? Number(textItem.text?.start)
-        : (textItem.timeline?.start ?? 0));
-    const itemEndRaw = isTextMatchDuration
-      ? (resolvedTimelineDuration > 0 ? resolvedTimelineDuration : (itemStartRaw + 5))
-      : (Number.isFinite(textItem.text?.end)
-        ? Number(textItem.text?.end)
-        : (Number.isFinite(textItem.timeline?.duration)
-          ? itemStartRaw + Number(textItem.timeline?.duration)
-          : itemStartRaw + 5));
-
-    if (itemEndRaw <= outputStart || itemStartRaw >= outputStart + outputDuration) {
-      continue;
-    }
-
-    const stylePayload = {
-      ...(textItem.subtitleStyle ?? {}),
-      playResX: outW,
-      playResY: outH,
-      shift: -outputStart
-    };
-    const style = parseAssRenderStyle(stylePayload);
-    const assOut = path.join(tmpDir, `render-text-${idx}.ass`);
-    try {
-      const doc = buildAssDocument([{ start: itemStartRaw, end: itemEndRaw, text: rawText }], style);
-      await fs.writeFile(assOut, doc, 'utf-8');
-      const subFilter = buildSubtitlesVideoFilter(assOut, { w: style.playResX, h: style.playResY });
-      const label = `[vtext${idx}]`;
-      filters.push(`${currentVideo}${subFilter}${label}`);
-      currentVideo = label;
-    } catch {
-      // ignore text rendering errors
-    }
-  }
-  } // end if (includeVideo)
-
-  // ─── Audio Mixing ─────────────────────────────────────────────────────────
-  // Resolve timeline-level audio settings.
-  // timeline.targetLufs = final output loudness target (applied once via loudnorm).
-  // track.targetLufs    = relative balance between tracks (applied via volume gain).
-  const timelineTargetLufs = typeof (config.timeline as any).targetLufs === 'number'
-    ? Number((config.timeline as any).targetLufs)
-    : -14;
-
-  // Build list of all items that contribute audio.
-  // Video tracks (non-muted) are included just like dedicated audio tracks.
-  type AudioCandidate = {
-    item: RenderItemV2;
-    inputIndex: number;
-    timing: { start: number; duration: number; trimStart: number };
-    streamSelector: string;    // e.g. '[0:a]'
-    directMapSelector: string; // e.g. '0:a'
-    trackLabel: string;
-  };
-
-  const audioCandidates: AudioCandidate[] = [];
-
-  if (includeAudio) {
-    // 1. Video items: include their embedded audio stream if not muted.
-    //    Covers both normal (video+audio) mode and audio-only export mode.
-    const videoAudioSourceItems = includeVideo ? visualItems : videoItemsForAudio;
-    for (const item of videoAudioSourceItems) {
-      if (item.type !== 'video') continue;
-      const timing = finalItemTiming.find(t => t.entry.item === item);
-      if (!timing) continue;
-      const inputIndex = inputEntries.findIndex(e => e.item === item);
-      if (inputIndex < 0) continue;
-      const trackLabel = item.name ?? item.id ?? 'video';
-      const isMuted = item.audioMix?.mute === true;
-      const muteMsg = `[AudioMix] Video track "${trackLabel}" (id=${item.id}): muted=${isMuted}`;
-      if (debugEnabled) console.log(muteMsg);
-      onLog?.(`${muteMsg}\n`);
-      if (isMuted) continue;
-      audioCandidates.push({
-        item,
-        inputIndex,
-        timing,
-        streamSelector: `[${inputIndex}:a]`,
-        directMapSelector: `${inputIndex}:a`,
-        trackLabel
-      });
-    }
-
-    // 2. Pure audio tracks
-    for (const item of audioItems) {
-      const timing = finalItemTiming.find(t => t.entry.item === item);
-      if (!timing) continue;
-      const inputIndex = inputEntries.findIndex(e => e.item === item);
-      if (inputIndex < 0) continue;
-      const trackLabel = item.name ?? item.id ?? 'audio';
-      const isMuted = item.audioMix?.mute === true;
-      const muteMsg = `[AudioMix] Audio track "${trackLabel}" (id=${item.id}): muted=${isMuted}`;
-      if (debugEnabled) console.log(muteMsg);
-      onLog?.(`${muteMsg}\n`);
-      if (isMuted) continue;
-      audioCandidates.push({
-        item,
-        inputIndex,
-        timing,
-        streamSelector: `[${inputIndex}:a]`,
-        directMapSelector: `${inputIndex}:a`,
-        trackLabel
-      });
-    }
-  }
-
-  // ── Log mixing decision ──────────────────────────────────────────────────
-  const audioLog = (msg: string) => {
-    const fullMsg = `[AudioMix]${debugLabel} ${msg}`;
-    if (debugEnabled) console.log(fullMsg);
-    onLog?.(`${fullMsg}\n`);
-  };
-  audioLog(`Timeline targetLufs=${timelineTargetLufs} (output loudnorm target)`);
-  audioLog(`Active audio candidates: ${audioCandidates.length} (after mute filter)`);
-
-  // ── Per-track: resolve target LUFS ──────────────────────────────────────
-  // track.targetLufs controls relative balance between tracks.
-  // Falls back to timeline.targetLufs when not set per-track.
-  const resolveTrackTargetLufs = (item: RenderItemV2): number => {
-    const trackLufs = (item.audioMix as any)?.targetLufs;
-    return typeof trackLufs === 'number' ? trackLufs : timelineTargetLufs;
-  };
-
-  // ── LUFS measurement helpers ─────────────────────────────────────────────
-  const ffmpegPathForLufs = options?.ffmpegPath;
-  const lufsCache = options?.lufsCache;
-
-  // Maximum seconds to scan when measuring LUFS.
-  // Keeps measurement fast and representative for long files with sparse content.
-  const MAX_LUFS_MEASURE_SECONDS = 120;
-
-  // Minimum LUFS considered a valid/reliable measurement.
-  // ebur128 floors at -70 LUFS when content is near-silent; readings at or below
-  // this threshold indicate excessive silence in the measured window and should
-  // be treated as unreliable to avoid extreme gain boosts.
-  const LUFS_UNRELIABLE_FLOOR = -60;
-
-  /**
-   * Returns measured LUFS from cache, or measures and caches it.
-   * @param maxDuration  Seconds to scan (should match the content window in use).
-   * Returns null when ffmpegPath is unavailable or measurement fails.
-   */
-  const getOrMeasureLufs = async (
-    filePath: string,
-    trimStart: number,
-    maxDuration: number
-  ): Promise<number | null> => {
-    if (!ffmpegPathForLufs) return null;
-    const cacheKey = `${filePath}::${trimStart.toFixed(3)}::${maxDuration.toFixed(0)}`;
-    if (lufsCache?.has(cacheKey)) return lufsCache.get(cacheKey)!;
-    const measured = await measureAudioLufs(ffmpegPathForLufs, filePath, trimStart, maxDuration, options?.onLog);
-    if (measured !== null && lufsCache) lufsCache.set(cacheKey, measured);
-    return measured;
-  };
-
-  // ── Build per-candidate audio filter chains (async: measures LUFS) ───────
-  //
-  // FLOW per track:
-  //   1. atrim / asetpts  – trim to content window
-  //   2. volume=<factor>  – normalize to track.targetLufs using measured LUFS
-  //   3. aformat          – unify sample format & channel layout for amix
-  //   4. adelay           – timeline offset
-  //   5. afade            – optional fade in/out
-  //
-  // ❌ No loudnorm per track (applied once on final mixed output instead)
-  const buildAudioChain = async (
-    candidate: AudioCandidate,
-    outputLabel: string
-  ): Promise<string> => {
-    const { item, timing } = candidate;
-    const trimStart = timing.trimStart;
-    const duration = timing.duration;
-    const start = timing.start;
-    const endValue = trimStart + duration;
-    const trackTargetLufs = resolveTrackTargetLufs(item);
-    const fadeIn = Math.max(0, item.audioMix?.fadeIn ?? 0);
-    const fadeOut = Math.max(0, item.audioMix?.fadeOut ?? 0);
-
-    // Measure LUFS → compute gainDb for relative balance.
-    // Limit measurement to the content window (capped at MAX_LUFS_MEASURE_SECONDS)
-    // so that a long file with sparse content doesn't drag the LUFS average to -70.
-    const inputFile = inputs[candidate.inputIndex];
-    let gainDb = 0;
-    if (inputFile?.path) {
-      const measureDuration = Math.min(Math.max(duration, 5), MAX_LUFS_MEASURE_SECONDS);
-      const measuredLufs = await getOrMeasureLufs(inputFile.path, trimStart, measureDuration);
-      if (measuredLufs !== null) {
-        if (measuredLufs <= LUFS_UNRELIABLE_FLOOR) {
-          // Near-silent measurement window — avoid extreme gain boost.
-          // The final loudnorm pass will still normalize the output level.
-          audioLog(
-            `  Track "${candidate.trackLabel}": measuredLufs=${measuredLufs.toFixed(1)} (at/below ` +
-            `${LUFS_UNRELIABLE_FLOOR} LUFS floor — treating as unreliable, gainDb=0)`
-          );
-        } else {
-          gainDb = trackTargetLufs - measuredLufs;
-          audioLog(
-            `  Track "${candidate.trackLabel}": measuredLufs=${measuredLufs.toFixed(1)}, ` +
-            `targetLufs=${trackTargetLufs}, gainDb=${gainDb.toFixed(2)}`
-          );
-        }
-      } else {
-        audioLog(
-          `  Track "${candidate.trackLabel}": LUFS measurement unavailable, ` +
-          `gainDb=0 (targetLufs=${trackTargetLufs})`
-        );
-      }
-    }
-
-    let chain = candidate.streamSelector;
-    const addFilter = (filter: string) => {
-      chain += chain.endsWith(']') ? filter : `,${filter}`;
-    };
-
-    // 1. Trim to content window
-    if (trimStart > 0 || duration > trimThreshold) {
-      addFilter(`atrim=start=${trimStart}:end=${endValue}`);
-    }
-    addFilter('asetpts=PTS-STARTPTS');
-
-    // 2. Volume normalization (gain = trackTargetLufs − measuredLufs)
-    const gainFactor = Math.pow(10, gainDb / 20);
-    addFilter(`volume=${gainFactor.toFixed(6)}`);
-    audioLog(`    → volume: factor=${gainFactor.toFixed(6)} (${gainDb >= 0 ? '+' : ''}${gainDb.toFixed(2)} dB)`);
-
-    // 3. Unify format for consistent mixing across all tracks
-    addFilter('aformat=sample_fmts=fltp:channel_layouts=stereo');
-
-    // Delay (timeline offset)
-    if (start > 0) {
-      const ms = Math.round(start * 1000);
-      addFilter(`adelay=${ms}|${ms}`);
-    }
-
-    // Fade in/out
-    if (fadeIn > 0) {
-      addFilter(`afade=t=in:st=${start}:d=${fadeIn}`);
-    }
-    if (fadeOut > 0) {
-      const end = Math.max(start + 0.01, start + duration);
-      const fadeOutStart = Math.max(start, end - fadeOut);
-      addFilter(`afade=t=out:st=${fadeOutStart}:d=${fadeOut}`);
-    }
-
-    // Mute segments - apply volume=0 during specified time ranges
-    const muteSegments = item.audioMix?.muteSegments;
-    if (muteSegments && muteSegments.length > 0) {
-      // Build enable expression using or() function: or(between(t,start1,end1),between(t,start2,end2),...)
-      const betweenExprs = muteSegments.map(seg => `between(t,${seg.start},${seg.end})`);
-      const enableExpr = betweenExprs.length === 1 
-        ? betweenExprs[0] 
-        : betweenExprs.reduce((acc, expr) => `or(${acc},${expr})`);
-      addFilter(`volume=0:enable='${enableExpr}'`);
-      audioLog(`    → mute segments: ${muteSegments.map(s => `[${s.start}-${s.end}]`).join(', ')}`);
-    }
-
-    return `${chain}${outputLabel}`;
-  };
-
-  const audioFilters: string[] = [];
-  let audioMap: string[] = [];
-
-  if (includeAudio && audioCandidates.length > 0) {
-    // Clamp loudnorm target to safe ffmpeg range
-    const lufsOut = Math.max(-70, Math.min(-5, timelineTargetLufs));
-
-    if (audioCandidates.length === 1) {
-      // ── Single track: per-track gain → pre-label → output loudnorm ──────
-      audioLog(`Single audio track → per-track gain + output loudnorm (I=${lufsOut})`);
-      const chain = await buildAudioChain(audioCandidates[0], '[apre]');
-      filters.push(chain);
-      // loudnorm applied once: ensures consistent output level (timeline.targetLufs)
-      filters.push(`[apre]loudnorm=I=${lufsOut}:TP=-1:LRA=11[aout]`);
-      audioLog(`Output loudnorm: I=${lufsOut} TP=-1 LRA=11 → [aout]`);
-      audioMap = ['-map', '[aout]'];
-    } else {
-      // ── Multiple tracks: per-track chains → amix → output loudnorm ──────
-      audioLog(`${audioCandidates.length} audio tracks → per-track gain → amix → output loudnorm`);
-      for (let i = 0; i < audioCandidates.length; i++) {
-        const chain = await buildAudioChain(audioCandidates[i], `[a${i}]`);
-        audioFilters.push(chain);
-      }
-      const mixInputs = audioCandidates.map((_, idx) => `[a${idx}]`).join('');
-      filters.push(...audioFilters);
-      // Note: 'normalize' option omitted — not supported on this ffmpeg build
-      filters.push(`${mixInputs}amix=inputs=${audioCandidates.length}:duration=longest:dropout_transition=0[amixed]`);
-      audioLog(`amix: ${audioCandidates.length} inputs → [amixed]`);
-      // loudnorm applied once: guarantees consistent output level across renders
-      filters.push(`[amixed]loudnorm=I=${lufsOut}:TP=-1:LRA=11[aout]`);
-      audioLog(`Output loudnorm: I=${lufsOut} TP=-1 LRA=11 → [aout]`);
-      audioMap = ['-map', '[aout]'];
-    }
-  } else if (includeAudio) {
-    audioLog(`No active audio tracks after mute filter — output will have no audio stream`);
-  }
-
-  const filterComplex = filters.filter(f => f && f.trim().length > 0).join(';');
-  if (debugEnabled) {
-    console.log(`RENDER_V2_DEBUG final timing${debugLabel}`, JSON.stringify(finalItemTiming.map(t => ({
-      id: t.entry.item?.id,
-      type: t.entry.type,
-      start: t.start,
-      duration: t.duration,
-      trimStart: t.trimStart,
-      end: t.start + t.duration
-    }))));
-  }
-
-  return {
-    inputArgs,
-    inputEntries,
-    filterComplex,
-    videoLabel: currentVideo,
-    audioMap,
-    outputDuration,
-    framerate
-  };
-};
-
-// ─── Stream Copy Fast-Path ─────────────────────────────────────────────────
-// When the final active track list is exactly:
-//   • 1 visible video track (muted=true)  → contributes video stream only
-//   • 1 audio track (muted=false)         → contributes audio stream only
-// AND no visual transforms / trim / timeline offsets / LUFS processing are
-// needed, FFmpeg can copy both streams directly (-c:v copy -c:a copy)
-// which is dramatically faster and lossless.
-
-// Full Copy  (mode='full')   : -c:v copy -c:a copy — fully lossless
-// Hybrid Copy (mode='hybrid'): audio-only pass (temp) + video stream copy mux
-//                              Avoids video encode (~90% of render time) even when audio needs processing/mix
-// None        (mode='none')  : standard segmented encode pipeline
-type CopyPathResult =
-  | { mode: 'full'; videoPath: string; duration: number; audioFromVideo: boolean; audioPath?: string }
-  | { mode: 'hybrid'; videoPath: string; duration: number; activeAudioSourceCount: number }
-  | { mode: 'none'; reason: string };
-
-const checkCopyPathEligibility = (
-  config: RenderConfigV2,
-  opts?: {
-    outputStart?: number;
-    onLog?: (chunk: string) => void;
-  }
-): CopyPathResult => {
-  const log = (msg: string) => opts?.onLog?.(`[CopyPath] ${msg}\n`);
-  const fail = (step: string, reason: string): CopyPathResult => {
-    log(`✗ ${step}: ${reason}`);
-    return { mode: 'none', reason: `${step}:${reason}` };
-  };
-
-  log('Checking copy-path eligibility...');
-
-  // ── 1. Export mode must be video+audio ───────────────────────────────────
-  const exportMode = (config.timeline as any).exportMode || 'video+audio';
-  if (exportMode !== 'video+audio') {
-    return fail('exportMode', `"${exportMode}" (requires "video+audio")`);
-  }
-  log(`✓ [Check:exportMode] video+audio`);
-
-  // ── 2. Track composition and overlay checks ────────────────────────────────
-  const allVideo   = config.items.filter(i => i.type === 'video');
-  const allAudio   = config.items.filter(i => i.type === 'audio');
-  const allImage   = config.items.filter(i => i.type === 'image'    && i.visible !== false);
-  const allSubtitle= config.items.filter(i => i.type === 'subtitle' && i.visible !== false);
-  const allText    = config.items.filter(i => {
-    if (i.type !== 'text') return false;
-    if (i.visible === false) return false;
-    const val = typeof i.text?.value === 'string' ? i.text.value.trim() : '';
-    return val.length > 0;
-  });
-
-  const visibleVideos    = allVideo.filter(i => i.visible !== false);
-  const activeAudioItems = allAudio.filter(i => !(i.audioMix?.mute === true));
-  if (visibleVideos.length !== 1) {
-    return fail('videoCount', `need exactly 1 visible video (found ${visibleVideos.length})`);
-  }
-  const videoItem = visibleVideos[0];
-  const videoAudioActive = !(videoItem.audioMix?.mute === true);
-  const activeAudioSourceCount = activeAudioItems.length + (videoAudioActive ? 1 : 0);
-
-  log(`  Video tracks total=${allVideo.length}, visible=${visibleVideos.length}, videoAudioActive=${videoAudioActive ? 'yes' : 'no'}`);
-  log(`  Audio tracks total=${allAudio.length}, active (non-muted)=${activeAudioItems.length}`);
-  log(`  Active audio sources total=${activeAudioSourceCount} (videoAudio=${videoAudioActive ? 1 : 0}, audioTracks=${activeAudioItems.length})`);
-  log(`  Image tracks visible=${allImage.length}`);
-  log(`  Subtitle tracks visible=${allSubtitle.length}`);
-  log(`  Text tracks visible with content=${allText.length}`);
-
-  if (activeAudioSourceCount <= 0) {
-    return fail('audioSourceCount', 'no active audio source');
-  }
-  if (allImage.length > 0) {
-    return fail('overlay:image', `${allImage.length} visible image track(s)`);
-  }
-  if (allSubtitle.length > 0) {
-    return fail('overlay:subtitle', `${allSubtitle.length} visible subtitle track(s)`);
-  }
-  if (allText.length > 0) {
-    return fail('overlay:text', `${allText.length} visible text track(s)`);
-  }
-  log(`✓ [Check:tracks] 1 visible video, ${activeAudioSourceCount} active audio source(s), no image/subtitle/text overlays`);
-
-  // ── 3. Video must have identity transform (no encode-requiring effects) ───
-  const t = videoItem.transform;
-  const issues: string[] = [];
-
-  const scaleVal = t?.scale ?? 1;
-  // scale stored as fraction (1.0) or percent (100) both accepted
-  const scaleNorm = scaleVal > 2 ? scaleVal / 100 : scaleVal;
-  if (Math.abs(scaleNorm - 1) > 0.001)     issues.push(`scale=${scaleVal}`);
-  if (Math.abs((t?.rotation ?? 0)) > 0.01) issues.push(`rotation=${t?.rotation}`);
-  if (Math.abs((t?.opacity ?? 100) - 100) > 0.1) issues.push(`opacity=${t?.opacity}`);
-  if ((t?.mirror ?? 'none') !== 'none')     issues.push(`mirror=${t?.mirror}`);
-
-  const cropX = t?.crop?.x ?? 0;
-  const cropY = t?.crop?.y ?? 0;
-  const cropW = t?.crop?.w ?? 100;
-  const cropH = t?.crop?.h ?? 100;
-  if (Math.abs(cropX) > 0.1 || Math.abs(cropY) > 0.1) issues.push(`crop offset(${cropX},${cropY})`);
-  if (Math.abs(cropW - 100) > 0.1 || Math.abs(cropH - 100) > 0.1) issues.push(`crop size(${cropW}x${cropH})`);
-
-  if (videoItem.mask) issues.push(`mask=${videoItem.mask.type}`);
-  if (Array.isArray(videoItem.effects) && videoItem.effects.length > 0) issues.push(`${videoItem.effects.length} effect(s)`);
-
-  if (issues.length > 0) {
-    return fail('videoTransform', issues.join(', '));
-  }
-  log(`✓ [Check:videoTransform] identity (no scale/crop/rotation/mirror/mask/effects)`);
-
-  // ── 4. No timeline trimming or start offset on video ─────────────────────
-  const vTimeline = videoItem.timeline ?? {};
-  const vTrimStart = Math.max(0, vTimeline.trimStart ?? 0);
-  const vTrimEnd   = Math.max(0, vTimeline.trimEnd   ?? 0);
-  const vStart     = Math.max(0, vTimeline.start      ?? 0);
-  if (vTrimStart > 0.01) return fail('videoTimeline', `trimStart=${vTrimStart}`);
-  if (vTrimEnd   > 0.01) return fail('videoTimeline', `trimEnd=${vTrimEnd}`);
-  if (vStart     > 0.01) return fail('videoTimeline', `start=${vStart}`);
-  log(`✓ [Check:videoTimeline] no trim, no start offset`);
-
-  // ── 5. No timeline trimming or start offset on contributing audio sources ─
-  // Audio trim/delay need precise timeline splicing — blocks even hybrid copy.
-  const audioContributors = [
-    ...(videoAudioActive ? [{ kind: 'video' as const, item: videoItem }] : []),
-    ...activeAudioItems.map(item => ({ kind: 'audio' as const, item }))
-  ];
-  for (const contributor of audioContributors) {
-    const aTimeline = contributor.item.timeline ?? {};
-    const aTrimStart = Math.max(0, aTimeline.trimStart ?? 0);
-    const aTrimEnd   = Math.max(0, aTimeline.trimEnd   ?? 0);
-    const aStart     = Math.max(0, aTimeline.start     ?? 0);
-    const aDelay     = Math.max(0, contributor.item.audioMix?.delay ?? 0);
-    const label = `${contributor.kind}:${contributor.item.id}`;
-    if (aTrimStart > 0.01) return fail('audioTimeline', `${label} trimStart=${aTrimStart}`);
-    if (aTrimEnd   > 0.01) return fail('audioTimeline', `${label} trimEnd=${aTrimEnd}`);
-    if (aStart     > 0.01) return fail('audioTimeline', `${label} start=${aStart}`);
-    if (aDelay     > 0.01) return fail('audioTimeline', `${label} delay=${aDelay}`);
-  }
-  log(`✓ [Check:audioTimeline] ${audioContributors.length} source(s), no trim/start/delay`);
-
-  // ── 6. No segment offset (outputStart must be 0) ─────────────────────────
-  const outputStartVal = Number.isFinite(opts?.outputStart) ? Number(opts!.outputStart) : 0;
-  if (outputStartVal > 0.01) {
-    return fail('outputStart', `${outputStartVal.toFixed(3)}s (copy path requires 0)`);
-  }
-  log(`✓ [Check:outputStart] 0`);
-
-  // ── 7. Resolve video path and optional single external audio path ────────
-  const videoPathFromRef = resolveRenderInputPath(videoItem.source?.ref, config.inputsMap);
-  const videoPath = videoPathFromRef ?? (videoItem.source?.path ? resolveSafePath(videoItem.source.path) : null);
-  if (!videoPath) return fail('videoPath', 'unresolvable');
-  log(`✓ [Check:videoPath] ${videoPath}`);
-
-  let externalSingleAudioPath: string | null = null;
-  if (!videoAudioActive && activeAudioItems.length === 1) {
-    const audioItem = activeAudioItems[0];
-    const audioPathFromRef = resolveRenderInputPath(audioItem.source?.ref, config.inputsMap);
-    externalSingleAudioPath = audioPathFromRef ?? (audioItem.source?.path ? resolveSafePath(audioItem.source.path) : null);
-    if (!externalSingleAudioPath) return fail('audioPath', 'single external audio source unresolvable');
-    log(`✓ [Check:audioPath] ${externalSingleAudioPath}`);
-  }
-
-  // ── 8. Determine output duration ─────────────────────────────────────────
-  const timelineDuration = Number.isFinite(config.timeline.duration) && Number(config.timeline.duration) > 0
-    ? Number(config.timeline.duration) : null;
-  if (!timelineDuration || timelineDuration <= 0) {
-    return fail('duration', `timeline.duration=${timelineDuration}`);
-  }
-  log(`✓ [Check:duration] ${timelineDuration.toFixed(3)}s`);
-
-  // ── 9. Determine full-copy vs hybrid-copy (audio-only pipeline) ──────────
-  let needsAudioEncode = activeAudioSourceCount !== 1;
-  const audioReasons: string[] = [];
-  if (activeAudioSourceCount !== 1) audioReasons.push(`audioSourceCount=${activeAudioSourceCount}`);
-  for (const contributor of audioContributors) {
-    const mix = contributor.item.audioMix ?? {};
-    const gainDb = Number(mix.gainDb ?? 0);
-    const levelCtrl = (mix as any).levelControl ?? (config.timeline as any).levelControl ?? 'gain';
-    const fadeIn = Math.max(0, mix.fadeIn ?? 0);
-    const fadeOut = Math.max(0, mix.fadeOut ?? 0);
-    const muteSegments = mix.muteSegments ?? [];
-    if (Math.abs(gainDb) > 0.01) {
-      needsAudioEncode = true;
-      audioReasons.push(`${contributor.item.id}.gainDb=${gainDb}`);
-    }
-    if (levelCtrl === 'lufs') {
-      needsAudioEncode = true;
-      audioReasons.push(`${contributor.item.id}.levelControl=lufs`);
-    }
-    if (fadeIn > 0) {
-      needsAudioEncode = true;
-      audioReasons.push(`${contributor.item.id}.fadeIn=${fadeIn}`);
-    }
-    if (fadeOut > 0) {
-      needsAudioEncode = true;
-      audioReasons.push(`${contributor.item.id}.fadeOut=${fadeOut}`);
-    }
-    if (muteSegments.length > 0) {
-      needsAudioEncode = true;
-      audioReasons.push(`${contributor.item.id}.muteSegments=${muteSegments.length}`);
-    }
-  }
-
-  if (!needsAudioEncode) {
-    const audioFromVideo = videoAudioActive;
-    log(`✓ [Check:audioProcess] no audio processing required`);
-    log(`→ mode=FULL (-c:v copy -c:a copy) — fully lossless, skipping all encode.`);
-    return {
-      mode: 'full',
-      videoPath,
-      duration: timelineDuration,
-      audioFromVideo,
-      ...(audioFromVideo ? {} : { audioPath: externalSingleAudioPath ?? undefined })
-    };
-  }
-
-  log(`✓ [Check:audioProcess] requires audio re-encode: ${audioReasons.join(', ')}`);
-  log(`→ mode=HYBRID (audio-only render + video copy mux) — video remains lossless.`);
-  return { mode: 'hybrid', videoPath, duration: timelineDuration, activeAudioSourceCount };
-};
-
-const buildRenderV2FfmpegArgs = async (
-  config: RenderConfigV2,
-  outputPath: string,
-  tmpDir: string,
-  options?: {
-    includeAudio?: boolean;
-    outputStart?: number;
-    outputDuration?: number;
-    allowShortDuration?: boolean;
-    debugEnabled?: boolean;
-    debugLabel?: string;
-    onLog?: (chunk: string) => void;
-    /** ffmpeg binary path forwarded to the filter graph for LUFS measurement */
-    ffmpegPath?: string;
-    /** Shared LUFS cache forwarded to the filter graph; populated on first use */
-    lufsCache?: Map<string, number>;
-  }
-) => {
-  // buildRenderV2FfmpegArgs always uses the standard encode pipeline.
-  // Stream copy fast-path is handled at the runRenderV2Task level (bypasses segmentation).
-  const graph = await buildRenderV2FilterGraph(config, tmpDir, options);
-  const threadCount = RENDER_V2_FFMPEG_THREADS;
-  const codec = RENDER_V2_CODEC === 'h265' ? 'libx265' : 'libx264';
-  const preset = RENDER_V2_PRESET;
-  const crf = RENDER_V2_CRF;
-  const tune = RENDER_V2_TUNE;
-  let gop = RENDER_V2_GOP;
-  if (!Number.isFinite(gop) || gop <= 0) {
-    const fr = Number(graph.framerate);
-    if (Number.isFinite(fr) && fr > 0) gop = Math.round(fr * 2);
-  }
-  const isAudioOnlyMode = !graph.videoLabel && graph.audioMap.length > 0;
-  const args = [
-    '-y',
-    ...graph.inputArgs,
-    ...(graph.filterComplex ? ['-filter_complex', graph.filterComplex] : []),
-    ...(graph.videoLabel ? ['-map', graph.videoLabel] : []),
-    ...graph.audioMap,
-    ...(graph.videoLabel ? [
-      '-c:v', codec,
-      '-preset', preset,
-      '-crf', String(crf),
-      ...(tune ? ['-tune', tune] : []),
-      ...(gop && gop > 0 ? ['-g', String(Math.round(gop))] : []),
-      '-pix_fmt', 'yuv420p',
-      '-r', String(graph.framerate)
-    ] : isAudioOnlyMode ? [
-      // Audio-only output: suppress video stream, encode to mp3
-      '-vn',
-      '-c:a', 'libmp3lame',
-      '-q:a', '2'
-    ] : []),
-    ...(threadCount ? ['-threads', String(threadCount)] : []),
-    '-t', String(graph.outputDuration),
-    outputPath
-  ];
-
-  return { args, outputDuration: graph.outputDuration };
-};
-
-const parseFfmpegProgressSeconds = (text: string) => {
-  const match = text.match(/time=\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-  if (!match) return null;
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  const s = Number(match[3]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || !Number.isFinite(s)) return null;
-  return h * 3600 + m * 60 + s;
-};
-
-const runFfmpegLoggedCommand = async (
-  ffmpegPath: string,
-  args: string[],
-  label: string,
-  onLog?: (chunk: string) => void,
-  onSpawn?: (proc: ReturnType<typeof spawn>) => void,
-  onProgressSeconds?: (seconds: number) => void
-) => {
-  const commandLine = [ffmpegPath, ...args].map(formatArg).join(' ');
-  onLog?.(`COMMAND (${label}): ${commandLine}\n`);
-  let lastProgressSeconds = 0;
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    onSpawn?.(proc);
-    proc.stdout.on('data', data => onLog?.(data.toString()));
-    proc.stderr.on('data', data => {
-      const text = data.toString();
-      onLog?.(text);
-      if (!onProgressSeconds) return;
-      const seconds = parseFfmpegProgressSeconds(text);
-      if (seconds === null) return;
-      if (seconds <= lastProgressSeconds) return;
-      lastProgressSeconds = seconds;
-      onProgressSeconds(seconds);
-    });
-    proc.on('error', reject);
-    proc.on('close', code => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited with code ${code}`));
-    });
-  });
-};
-
-const buildRenderInputFingerprints = async (config: RenderConfigV2) => {
-  const sourceItems = config.items.filter(item => (
-    item.type === 'video'
-    || item.type === 'audio'
-    || item.type === 'image'
-    || item.type === 'subtitle'
-  ));
-  const fingerprints: Array<{ resolvedPath: string; size: number; mtimeMs: number }> = [];
-  const missing: string[] = [];
-  const seen = new Set<string>();
-  for (const item of sourceItems) {
-    const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
-    const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path) : null);
-    if (!sourcePath) {
-      missing.push(`${item.id}:${item.source?.ref ?? item.source?.path ?? ''}`);
-      continue;
-    }
-    if (seen.has(sourcePath)) continue;
-    seen.add(sourcePath);
-    try {
-      const stats = await fs.stat(sourcePath);
-      fingerprints.push({
-        resolvedPath: sourcePath,
-        size: Number(stats.size),
-        mtimeMs: Math.round(Number(stats.mtimeMs))
-      });
-    } catch {
-      missing.push(`${item.id}:${sourcePath}`);
-    }
-  }
-  fingerprints.sort((a, b) => a.resolvedPath.localeCompare(b.resolvedPath));
-  missing.sort((a, b) => a.localeCompare(b));
-  return { fingerprints, missing };
-};
-
-const buildRenderV2Signature = async (config: RenderConfigV2) => {
-  const inputFingerprints = await buildRenderInputFingerprints(config);
-  const payload = {
-    version: 1,
-    segmentSeconds: RENDER_V2_SEGMENT_SECONDS,
-    inputs: inputFingerprints,
-    config
-  };
-  const signature = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 20);
-  return { signature, payload };
-};
-
-const isReusableRenderSegment = async (segmentPath: string, expectedDuration: number) => {
-  try {
-    const stats = await fs.stat(segmentPath);
-    if (!stats.isFile() || stats.size <= 0) return false;
-    const duration = await runFfprobe(segmentPath).catch(() => 0);
-    if (!Number.isFinite(duration) || duration <= 0) return false;
-    const tolerance = Math.max(0.5, expectedDuration * 0.03);
-    return Math.abs(duration - expectedDuration) <= tolerance;
-  } catch {
-    return false;
-  }
-};
-
-const escapeConcatFilePath = (value: string) => value.replace(/'/g, `'\\''`);
 
 const runRenderV2Task = async (
   config: RenderConfigV2,
@@ -2453,7 +814,7 @@ const runRenderV2Task = async (
     // Check before segmentation. If video is copy-eligible, bypass the entire
     // segment+concat pipeline entirely — one single FFmpeg pass.
     const configStart = Number.isFinite(config.timeline.start) ? Math.max(0, Number(config.timeline.start)) : 0;
-    const copyResult = checkCopyPathEligibility(config, {
+    const copyResult = checkCopyPathEligibility(config, MEDIA_VAULT_ROOT, {
       outputStart: configStart,
       onLog
     });
@@ -2497,6 +858,15 @@ const runRenderV2Task = async (
         hybridAudioConfig,
         hybridAudioTempPath,
         tmpDir,
+        MEDIA_VAULT_ROOT,
+        {
+          codec: RENDER_V2_CODEC === 'h265' ? 'libx265' : 'libx264',
+          preset: RENDER_V2_PRESET,
+          crf: RENDER_V2_CRF,
+          tune: RENDER_V2_TUNE,
+          gop: RENDER_V2_GOP,
+          threads: RENDER_V2_FFMPEG_THREADS
+        },
         {
           debugEnabled: LOG_RENDER_V2_DEBUG,
           debugLabel: 'copypath-hybrid-audio',
@@ -2551,7 +921,14 @@ const runRenderV2Task = async (
     onLog?.(`[CopyPath] mode=NONE (${(copyResult as { mode: 'none'; reason: string }).reason}) — using standard segment pipeline.\n`);
 
     // ── Standard segment+encode pipeline ──────────────────────────────────
-    const { outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir, {
+    const { outputDuration } = await buildRenderV2FfmpegArgs(config, outputPath, tmpDir, MEDIA_VAULT_ROOT, {
+      codec: RENDER_V2_CODEC === 'h265' ? 'libx265' : 'libx264',
+      preset: RENDER_V2_PRESET,
+      crf: RENDER_V2_CRF,
+      tune: RENDER_V2_TUNE,
+      gop: RENDER_V2_GOP,
+      threads: RENDER_V2_FFMPEG_THREADS
+    }, {
       debugEnabled: LOG_RENDER_V2_DEBUG,
       debugLabel: 'render-total',
       onLog,
@@ -2562,8 +939,8 @@ const runRenderV2Task = async (
     if (totalSeconds <= 0) {
       throw new Error('Render has no output duration');
     }
-    const { signature, payload } = await buildRenderV2Signature(config);
-    const segmentSeconds = Math.min(payload.segmentSeconds, Math.max(1, totalSeconds));
+    const { signature, payload } = await buildRenderV2Signature(config, MEDIA_VAULT_ROOT, RENDER_V2_SEGMENT_SECONDS);
+    const segmentSeconds = Math.min(RENDER_V2_SEGMENT_SECONDS, Math.max(1, totalSeconds));
     const cacheRoot = path.join(projectRoot, RENDER_V2_CACHE_DIRNAME, signature);
 
     if (forceNew) {
@@ -2632,14 +1009,21 @@ const runRenderV2Task = async (
             config,
             partialPath,
             segTmpDir,
+            MEDIA_VAULT_ROOT,
+            {
+              codec: RENDER_V2_CODEC === 'h265' ? 'libx265' : 'libx264',
+              preset: RENDER_V2_PRESET,
+              crf: RENDER_V2_CRF,
+              tune: RENDER_V2_TUNE,
+              gop: RENDER_V2_GOP,
+              threads: RENDER_V2_FFMPEG_THREADS
+            },
             {
               outputStart: configStart + localStartSeconds,
               outputDuration: expectedDuration,
               allowShortDuration: true,
               debugEnabled: LOG_RENDER_V2_DEBUG,
               debugLabel: `render-segment-${segmentIndex + 1}`,
-              // Only relay FFmpeg filter-graph logs for segment 0 (they are
-              // identical for all segments; logging every one wastes output).
               onLog: segmentIndex === 0 ? onLog : undefined,
               ffmpegPath,
               lufsCache
@@ -3474,43 +1858,7 @@ const ensureThumbCache = async () => {
 
 ensureThumbCache().catch(() => null);
 
-const isOutputFile = (filePath: string, name: string) => {
-  const lowered = `${filePath}/${name}`.toLowerCase();
-  if (lowered.includes('/output/') || lowered.includes('/outputs/') || lowered.includes('/export/') || lowered.includes('/exports/')) {
-    return true;
-  }
-  return lowered.includes('output') || lowered.includes('export') || lowered.includes('render') || lowered.includes('subbed');
-};
-
-const detectType = (filePath: string, name: string) => {
-  const ext = path.extname(name).toLowerCase();
-  if (VIDEO_EXT.has(ext)) return 'video';
-  if (AUDIO_EXT.has(ext)) return 'audio';
-  if (SUB_EXT.has(ext)) return 'subtitle';
-  if (IMAGE_EXT.has(ext)) return 'image';
-  if (isOutputFile(filePath, name)) return 'output';
-  return 'other';
-};
-
 const isKnownSubdir = (dirName: string) => KNOWN_SUBDIRS.has(dirName.toLowerCase());
-
-const parseTimeToSeconds = (value: string) => {
-  const parts = value.replace(',', '.').split(':');
-  if (parts.length < 3) return 0;
-  const [hh, mm, ss] = parts;
-  const seconds = Number.parseFloat(ss);
-  return Number(hh) * 3600 + Number(mm) * 60 + seconds;
-};
-
-const parseSubtitleDuration = (content: string) => {
-  const regex = /(\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?)\s*-->\s*(\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?)/g;
-  let match: RegExpExecArray | null = null;
-  let lastEnd = '';
-  while ((match = regex.exec(content))) {
-    lastEnd = match[2];
-  }
-  return lastEnd ? parseTimeToSeconds(lastEnd) : 0;
-};
 
 const computeOverlapSecondsFromSegments = (segments: Array<{ start: number; end: number }>) => {
   if (!segments.length) return 0;
@@ -3553,114 +1901,6 @@ const buildTtsOutputName = (inputFullPath: string, settings: TtsOutputSettings) 
     outputSignature: signature
   };
 };
-
-const runFfprobeWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
-  const args = [
-    '-v', 'error',
-    '-show_entries', 'format=duration',
-    '-of', 'default=noprint_wrappers=1:nokey=1',
-    input
-  ];
-  const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  let error = '';
-  proc.stdout.on('data', data => { output += data.toString(); });
-  proc.stderr.on('data', data => { error += data.toString(); });
-  proc.on('error', reject);
-  proc.on('close', code => {
-    if (code !== 0) {
-      reject(new Error(error || `ffprobe exited with code ${code}`));
-      return;
-    }
-    const value = Number.parseFloat(output.trim());
-    resolve(Number.isFinite(value) ? value : 0);
-  });
-});
-
-const runFfprobeSampleRateWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
-  const args = [
-    '-v', 'error',
-    '-select_streams', 'a:0',
-    '-show_entries', 'stream=sample_rate',
-    '-of', 'default=noprint_wrappers=1:nokey=1',
-    input
-  ];
-  const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  let error = '';
-  proc.stdout.on('data', data => { output += data.toString(); });
-  proc.stderr.on('data', data => { error += data.toString(); });
-  proc.on('error', reject);
-  proc.on('close', code => {
-    if (code !== 0) {
-      reject(new Error(error || `ffprobe exited with code ${code}`));
-      return;
-    }
-    const value = Number.parseInt(output.trim(), 10);
-    resolve(Number.isFinite(value) ? value : 0);
-  });
-});
-
-const runFfprobeStreamSamplesWithBin = (bin: string, input: string) => new Promise<{ durationTs: number; sampleRate: number; timeBase: string }>((resolve, reject) => {
-  const args = [
-    '-v', 'error',
-    '-select_streams', 'a:0',
-    '-show_entries', 'stream=duration_ts,sample_rate,time_base',
-    '-of', 'default=noprint_wrappers=1:nokey=0',
-    input
-  ];
-  const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  let error = '';
-  proc.stdout.on('data', data => { output += data.toString(); });
-  proc.stderr.on('data', data => { error += data.toString(); });
-  proc.on('error', reject);
-  proc.on('close', code => {
-    if (code !== 0) {
-      reject(new Error(error || `ffprobe exited with code ${code}`));
-      return;
-    }
-    const values = new Map<string, string>();
-    output.split(/\r?\n/).forEach(raw => {
-      const line = raw.trim();
-      if (!line) return;
-      const idx = line.indexOf('=');
-      if (idx <= 0) return;
-      values.set(line.slice(0, idx), line.slice(idx + 1));
-    });
-    const sampleRate = Number.parseInt(values.get('sample_rate') ?? '', 10);
-    const durationTs = Number.parseInt(values.get('duration_ts') ?? '', 10);
-    const timeBase = values.get('time_base') ?? '0/1';
-    resolve({
-      durationTs: Number.isFinite(durationTs) ? durationTs : 0,
-      sampleRate: Number.isFinite(sampleRate) ? sampleRate : 0,
-      timeBase
-    });
-  });
-});
-
-const runFfprobeStartTimeWithBin = (bin: string, input: string) => new Promise<number>((resolve, reject) => {
-  const args = [
-    '-v', 'error',
-    '-show_entries', 'format=start_time',
-    '-of', 'default=noprint_wrappers=1:nokey=1',
-    input
-  ];
-  const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  let error = '';
-  proc.stdout.on('data', data => { output += data.toString(); });
-  proc.stderr.on('data', data => { error += data.toString(); });
-  proc.on('error', reject);
-  proc.on('close', code => {
-    if (code !== 0) {
-      reject(new Error(error || `ffprobe exited with code ${code}`));
-      return;
-    }
-    const value = Number.parseFloat(output.trim());
-    resolve(Number.isFinite(value) ? value : 0);
-  });
-});
 
 type TtsTaskResult = {
   outputPath: string;
@@ -4455,174 +2695,6 @@ const runTtsTask = async (inputFullPath: string, outputDir: string, options?: {
   };
 };
 
-const runFfprobe = async (input: string) => {
-  try {
-    return await runFfprobeWithBin(process.env.FFPROBE_PATH ?? 'ffprobe', input);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('ENOENT')) {
-      return await runFfprobeWithBin('/usr/bin/ffprobe', input);
-    }
-    throw error;
-  }
-};
-
-const runFfprobeSampleRate = async (input: string) => {
-  try {
-    return await runFfprobeSampleRateWithBin(process.env.FFPROBE_PATH ?? 'ffprobe', input);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('ENOENT')) {
-      return await runFfprobeSampleRateWithBin('/usr/bin/ffprobe', input);
-    }
-    throw error;
-  }
-};
-
-const runFfprobeStreamSamples = async (input: string) => {
-  try {
-    return await runFfprobeStreamSamplesWithBin(process.env.FFPROBE_PATH ?? 'ffprobe', input);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('ENOENT')) {
-      return await runFfprobeStreamSamplesWithBin('/usr/bin/ffprobe', input);
-    }
-    throw error;
-  }
-};
-
-const runFfprobeStartTime = async (input: string) => {
-  try {
-    return await runFfprobeStartTimeWithBin(process.env.FFPROBE_PATH ?? 'ffprobe', input);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('ENOENT')) {
-      return await runFfprobeStartTimeWithBin('/usr/bin/ffprobe', input);
-    }
-    throw error;
-  }
-};
-
-const getDurationSeconds = async (fullPath: string, type: VaultFileDTO['type'], stats: { mtimeMs: number }) => {
-  if (type !== 'video' && type !== 'audio' && type !== 'subtitle') return undefined;
-  const cacheKey = `${fullPath}:${type}`;
-  const cached = durationCache.get(cacheKey);
-  if (cached && cached.mtimeMs === stats.mtimeMs) return cached.duration;
-
-  try {
-    let duration = 0;
-    if (type === 'subtitle') {
-      const content = await fs.readFile(fullPath, 'utf-8');
-      duration = parseSubtitleDuration(content);
-    } else {
-      duration = await runFfprobe(fullPath);
-    }
-    if (duration > 0) {
-      durationCache.set(cacheKey, { mtimeMs: stats.mtimeMs, duration });
-      return duration;
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-};
-
-const readFilesFromDir = async (
-  dirPath: string,
-  basePath: string,
-  includeSubdir = false,
-  uvrMeta?: Map<string, VaultFileDTO['uvr']>,
-  ttsMeta?: Map<string, VaultFileDTO['tts']>
-) => {
-  const entries = await fs.readdir(dirPath, { withFileTypes: true });
-  const files: VaultFileDTO[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    const fullPath = path.join(dirPath, entry.name);
-    const stats = await fs.stat(fullPath);
-    const relativePath = path.relative(basePath, fullPath);
-    const type = detectType(dirPath, entry.name);
-    const durationSeconds = await getDurationSeconds(fullPath, type, stats);
-    files.push({
-      name: entry.name,
-      relativePath,
-      sizeBytes: stats.size,
-      modifiedAt: stats.mtime.toISOString(),
-      type: includeSubdir && type !== 'subtitle' && type !== 'video' && type !== 'audio'
-        && type !== 'image'
-        ? 'output'
-        : type,
-      extension: path.extname(entry.name).toLowerCase(),
-      durationSeconds,
-      uvr: uvrMeta?.get(relativePath),
-      tts: ttsMeta?.get(relativePath),
-      linkedTo: ttsMeta?.get(relativePath)?.sourceRelativePath ?? uvrMeta?.get(relativePath)?.sourceRelativePath
-    });
-  }
-
-  return files;
-};
-
-const buildUvrOutputMap = (uvrMeta: Map<string, VaultFileDTO['uvr']>) => {
-  const outputMap = new Map<string, VaultFileDTO['uvr']>();
-  for (const [sourceRelativePath, meta] of uvrMeta.entries()) {
-    if (!meta?.outputs?.length) continue;
-    meta.outputs.forEach(outputPath => {
-      outputMap.set(outputPath, { ...meta, role: 'output', sourceRelativePath });
-    });
-  }
-  return outputMap;
-};
-
-const buildTtsOutputMap = (ttsMeta: Map<string, VaultFileDTO['tts']>) => {
-  const outputMap = new Map<string, VaultFileDTO['tts']>();
-  for (const [sourceRelativePath, meta] of ttsMeta.entries()) {
-    if (!meta?.outputs?.length) continue;
-    meta.outputs.forEach(outputPath => {
-      const details = meta.outputDetails?.[outputPath];
-      outputMap.set(outputPath, {
-        ...meta,
-        processedAt: details?.processedAt || meta.processedAt,
-        voice: details?.voice ?? meta.voice,
-        rate: details?.rate ?? meta.rate,
-        pitch: details?.pitch ?? meta.pitch,
-        overlapSeconds: details?.overlapSeconds ?? meta.overlapSeconds,
-        overlapMode: details?.overlapMode ?? meta.overlapMode,
-        removeLineBreaks: details?.removeLineBreaks ?? meta.removeLineBreaks,
-        outputSignature: details?.outputSignature ?? meta.outputSignature,
-        role: 'output',
-        sourceRelativePath
-      });
-    });
-  }
-  return outputMap;
-};
-
-const readProjectTtsMeta = async (projectRoot: string) => {
-  const metaFile = path.join(projectRoot, '.mediaforge', 'tts.json');
-  try {
-    const raw = await fs.readFile(metaFile, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed) {
-      return parsed as Record<string, VaultFileDTO['tts']>;
-    }
-  } catch {
-    return {};
-  }
-  return {};
-};
-
-const readProjectUvrMeta = async (projectRoot: string) => {
-  const metaFile = path.join(projectRoot, '.mediaforge', 'uvr.json');
-  try {
-    const raw = await fs.readFile(metaFile, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed) {
-      return parsed as Record<string, VaultFileDTO['uvr']>;
-    }
-  } catch {
-    return {};
-  }
-  return {};
-};
-
 const readVault = async (): Promise<VaultFolderDTO[]> => {
   const rootEntries = await fs.readdir(MEDIA_VAULT_ROOT, { withFileTypes: true });
   const folders: VaultFolderDTO[] = [];
@@ -4769,7 +2841,7 @@ app.delete('/api/vault/file', async (req, res) => {
     return;
   }
   const normalized = relativePathRaw.replace(/\\/g, '/');
-  const fullPath = resolveSafePath(normalized);
+  const fullPath = safeResolvePath(normalized);
   if (!fullPath) {
     res.status(400).json({ error: 'Invalid file path' });
     return;
@@ -4901,42 +2973,6 @@ app.get('/api/fonts', async (_req, res) => {
   }
 });
 
-app.post('/api/auth/register', async (req, res) => {
-  if (!REGISTER_MODE) {
-    return res.status(403).json({ ok: false, error: 'Register disabled' });
-  }
-  const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  const username = normalizeUsername(rawUsername);
-  if (!isValidUsername(username)) {
-    return res.status(400).json({ ok: false, error: 'Invalid username' });
-  }
-  if (!isValidPassword(password)) {
-    return res.status(400).json({ ok: false, error: 'Invalid password' });
-  }
-
-  const existing = db.exec('SELECT id FROM users WHERE username = ? LIMIT 1', [username]);
-  if (existing[0]?.values?.length) {
-    return res.status(409).json({ ok: false, error: 'Username already exists' });
-  }
-
-  const createdAt = new Date().toISOString();
-  const passwordHash = hashPassword(password);
-  db.run('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)', [
-    username,
-    passwordHash,
-    createdAt
-  ]);
-  const idRow = db.exec('SELECT last_insert_rowid() as id');
-  const id = idRow[0]?.values?.[0]?.[0] ?? null;
-  await persistDb();
-  return res.json({ ok: true, user: { id, username, createdAt } });
-});
-
-app.get('/api/auth/config', (_req, res) => {
-  res.json({ registerEnabled: REGISTER_MODE });
-});
-
 app.get('/api/auth/me', (req, res) => {
   const session = (req as any).authUser as AuthSession | undefined;
   if (!session) {
@@ -4946,65 +2982,6 @@ app.get('/api/auth/me', (req, res) => {
     ok: true,
     user: { id: session.userId, username: session.username, createdAt: session.createdAt }
   });
-});
-
-app.post('/api/auth/logout', (req, res) => {
-  const cookies = parseCookies(req.headers.cookie);
-  const sessionId = cookies[AUTH_SESSION_COOKIE];
-  if (sessionId) {
-    sessions.delete(sessionId);
-    try {
-      db.run('DELETE FROM sessions WHERE id = ?', [sessionId]);
-      schedulePersistDb();
-    } catch {
-      // ignore
-    }
-  }
-  clearSessionCookie(res);
-  return res.json({ ok: true });
-});
-
-app.post('/api/auth/login', (req, res) => {
-  const rawUsername = typeof req.body?.username === 'string' ? req.body.username : '';
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  const username = normalizeUsername(rawUsername);
-  if (!isValidUsername(username) || !password) {
-    return res.status(400).json({ ok: false, error: 'Invalid credentials' });
-  }
-
-  const result = db.exec(
-    'SELECT id, username, password_hash, created_at FROM users WHERE username = ? LIMIT 1',
-    [username]
-  );
-  const row = result[0]?.values?.[0];
-  if (!row) {
-    return res.status(401).json({ ok: false, error: 'Invalid credentials' });
-  }
-  const [id, dbUsername, passwordHash, createdAt] = row as [number, string, string, string];
-  if (!verifyPassword(password, passwordHash)) {
-    return res.status(401).json({ ok: false, error: 'Invalid credentials' });
-  }
-  const sessionId = crypto.randomBytes(24).toString('hex');
-  const createdAtIso = new Date().toISOString();
-  const session = {
-    id: sessionId,
-    userId: id,
-    username: dbUsername,
-    createdAt,
-    expiresAt: Date.now() + AUTH_SESSION_TTL_MS
-  } as AuthSession;
-  sessions.set(sessionId, session);
-  try {
-    db.run(
-      'INSERT OR REPLACE INTO sessions (id, user_id, username, created_at, expires_at) VALUES (?, ?, ?, ?, ?)',
-      [sessionId, id, dbUsername, createdAt, session.expiresAt]
-    );
-    schedulePersistDb();
-  } catch {
-    // ignore
-  }
-  setSessionCookie(res, sessionId);
-  return res.json({ ok: true, user: { id, username: dbUsername, createdAt } });
 });
 
 app.get('/api/pipelines', async (_req, res) => {
@@ -5715,7 +3692,7 @@ app.post('/api/render-v2/check-status', async (req, res) => {
   const projectName = typeof req.body?.projectName === 'string' ? req.body.projectName.trim() : '';
   if (!config) return res.status(400).json({ error: 'Missing config' });
   try {
-    const { signature } = await buildRenderV2Signature(config);
+    const { signature } = await buildRenderV2Signature(config, MEDIA_VAULT_ROOT, RENDER_V2_SEGMENT_SECONDS);
     let hasCache = false;
 
     if (projectName) {
@@ -5746,7 +3723,7 @@ app.post('/api/render-v2/check-status', async (req, res) => {
       // 2. Fallback: So sánh cấu hình (phòng trường hợp job cũ chưa có signature trong params)
       const jConfig = jRenderParams.configV2;
       if (jConfig) {
-        const { signature: computedSig } = await buildRenderV2Signature(jConfig);
+        const { signature: computedSig } = await buildRenderV2Signature(jConfig, MEDIA_VAULT_ROOT, RENDER_V2_SEGMENT_SECONDS);
         if (computedSig === signature) {
           match = j;
           break;
@@ -6100,7 +4077,7 @@ app.post('/api/jobs/run', async (req, res) => {
         res.status(400).json({ error: 'Missing inputPath' });
         return;
       }
-      const fullPath = resolveSafePath(inputPath);
+      const fullPath = safeResolvePath(inputPath);
       if (!fullPath) {
         res.status(400).json({ error: 'Invalid inputPath' });
         return;
@@ -6172,7 +4149,7 @@ app.post('/api/jobs/run', async (req, res) => {
       if (renderAudioPath) renderPayload.audioPath = renderAudioPath;
       if (renderSubtitlePath) renderPayload.subtitlePath = renderSubtitlePath;
       if (renderConfigV2) {
-        const { signature } = await buildRenderV2Signature(renderConfigV2);
+        const { signature } = await buildRenderV2Signature(renderConfigV2, MEDIA_VAULT_ROOT, RENDER_V2_SEGMENT_SECONDS);
         renderPayload.configV2 = renderConfigV2;
         renderPayload.signature = signature;
       }
@@ -6714,7 +4691,7 @@ app.post('/api/tasks/vr', async (req, res) => {
     return;
   }
 
-  const fullPath = resolveSafePath(inputPath);
+  const fullPath = safeResolvePath(inputPath);
   if (!fullPath) {
     res.status(400).json({ error: 'Invalid inputPath' });
     return;
@@ -6767,44 +4744,6 @@ app.post('/api/tasks/vr', async (req, res) => {
   }
 });
 
-const resolveSafePath = (relativePath: string) => {
-  const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
-  const fullPath = path.resolve(MEDIA_VAULT_ROOT, normalized);
-  const rootPath = path.resolve(MEDIA_VAULT_ROOT);
-  if (!fullPath.startsWith(`${rootPath}${path.sep}`) && fullPath !== rootPath) {
-    return null;
-  }
-  return fullPath;
-};
-
-const getContentType = (ext: string) => {
-  const map: Record<string, string> = {
-    '.mp4': 'video/mp4',
-    '.mkv': 'video/x-matroska',
-    '.mov': 'video/quicktime',
-    '.webm': 'video/webm',
-    '.mp3': 'audio/mpeg',
-    '.wav': 'audio/wav',
-    '.aac': 'audio/aac',
-    '.flac': 'audio/flac',
-    '.m4a': 'audio/mp4',
-    '.ogg': 'audio/ogg',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.webp': 'image/webp',
-    '.gif': 'image/gif',
-    '.bmp': 'image/bmp',
-    '.tif': 'image/tiff',
-    '.tiff': 'image/tiff',
-    '.srt': 'text/plain; charset=utf-8',
-    '.vtt': 'text/vtt; charset=utf-8',
-    '.ass': 'text/plain; charset=utf-8',
-    '.ssa': 'text/plain; charset=utf-8'
-  };
-  return map[ext.toLowerCase()] ?? 'application/octet-stream';
-};
-
 app.get('/api/vault/stream', async (req, res) => {
   const relPath = typeof req.query.path === 'string' ? req.query.path : '';
   const preview = req.query.preview === '1';
@@ -6813,7 +4752,7 @@ app.get('/api/vault/stream', async (req, res) => {
     return;
   }
 
-  const fullPath = resolveSafePath(relPath);
+  const fullPath = safeResolvePath(relPath);
   if (!fullPath) {
     res.status(400).json({ error: 'Invalid path' });
     return;
@@ -6899,7 +4838,7 @@ app.get('/api/vault/text', async (req, res) => {
     return;
   }
 
-  const fullPath = resolveSafePath(relPath);
+  const fullPath = safeResolvePath(relPath);
   if (!fullPath) {
     res.status(400).json({ error: 'Invalid path' });
     return;
@@ -6934,7 +4873,7 @@ app.post('/api/vault/subtitle/save', async (req, res) => {
     savePath = savePath.replace(/\.[^/.]+$/, '') + '.sktproject';
   }
 
-  const fullPath = resolveSafePath(savePath);
+  const fullPath = safeResolvePath(savePath);
   if (!fullPath) {
     res.status(400).json({ error: 'Invalid path' });
     return;
@@ -6955,11 +4894,6 @@ app.post('/api/vault/subtitle/save', async (req, res) => {
   }
 });
 
-const isVideoFile = (filePath: string) => VIDEO_EXT.has(path.extname(filePath).toLowerCase());
-const isAudioFile = (filePath: string) => AUDIO_EXT.has(path.extname(filePath).toLowerCase());
-const isSubtitleFile = (filePath: string) => SUB_EXT.has(path.extname(filePath).toLowerCase());
-const isImageFile = (filePath: string) => IMAGE_EXT.has(path.extname(filePath).toLowerCase());
-
 const getFfmpegPath = async () => {
   return await fs.access('/usr/bin/ffmpeg').then(() => '/usr/bin/ffmpeg').catch(() => 'ffmpeg');
 };
@@ -6975,76 +4909,11 @@ const runFfmpeg = async (input: string, output: string) => new Promise<void>(asy
   });
 });
 
-const escapeFilterPath = (value: string) => value.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
-
-/** libass: avoid charenc on UTF-8 ASS; original_size should match PlayRes for correct placement when video is scaled. */
-const buildSubtitlesVideoFilter = (subtitlePath: string, assOriginalSize?: { w: number; h: number }) => {
-  const escaped = escapeFilterPath(subtitlePath);
-  const lower = subtitlePath.toLowerCase();
-  const isAss = lower.endsWith('.ass') || lower.endsWith('.ssa');
-  if (isAss) {
-    let f = `subtitles='${escaped}'`;
-    if (assOriginalSize && assOriginalSize.w > 0 && assOriginalSize.h > 0) {
-      f += `:original_size=${assOriginalSize.w}x${assOriginalSize.h}`;
-    }
-    return f;
-  }
-  return `subtitles='${escaped}':charenc=UTF-8`;
-};
-
 /** Solid black JPEG (320×240) when ffmpeg cannot produce a preview frame. */
 const RENDER_PREVIEW_BLACK_JPEG = Buffer.from(
   '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzU4LjU0LjEwMAD/2wBDAAg+Pkk+SVVVVVVVVWRdZGhoaGRkZGRoaGhwcHCDg4NwcHBoaHBwfHyDg4+Tj4eHg4eTk5ubm7q6srLZ2eD/////xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAPABQAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//9k=',
   'base64'
 );
-
-const clampRender = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
-
-const parseBlurRegionEffects = (raw: unknown): BlurRegionEffect[] => {
-  if (!Array.isArray(raw)) return [];
-  const out: BlurRegionEffect[] = [];
-  raw.forEach(item => {
-    if (!item || typeof item !== 'object') return;
-    const o = item as Record<string, unknown>;
-    if (o.type !== 'blur_region') return;
-    const sigma = o.sigma === undefined || o.sigma === null ? 15 : clampRender(Number(o.sigma), 0.5, 80);
-    if (!Number.isFinite(sigma)) return;
-    const feather = o.feather === undefined || o.feather === null ? 0 : clampRender(Number(o.feather), 0, BLUR_FEATHER_MAX);
-    if (!Number.isFinite(feather)) return;
-
-    let left: number;
-    let right: number;
-    let top: number;
-    let bottom: number;
-    if (
-      o.left !== undefined ||
-      o.right !== undefined ||
-      o.top !== undefined ||
-      o.bottom !== undefined
-    ) {
-      left = clampRender(Number(o.left), 0, 100);
-      right = clampRender(Number(o.right), 0, 100);
-      top = clampRender(Number(o.top), 0, 100);
-      bottom = clampRender(Number(o.bottom), 0, 100);
-    } else {
-      const x = clampRender(Number(o.x), 0, 100);
-      const y = clampRender(Number(o.y), 0, 100);
-      const w = clampRender(Number(o.w), 0, 100);
-      const h = clampRender(Number(o.h), 0, 100);
-      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return;
-      if (w <= 0 || h <= 0) return;
-      left = x;
-      top = y;
-      right = clampRender(100 - x - w, 0, 100);
-      bottom = clampRender(100 - y - h, 0, 100);
-    }
-
-    if (!Number.isFinite(left) || !Number.isFinite(right) || !Number.isFinite(top) || !Number.isFinite(bottom)) return;
-    if (left + right >= 100 || top + bottom >= 100) return;
-    out.push({ type: 'blur_region', left, right, top, bottom, sigma, feather });
-  });
-  return out;
-};
 
 app.get('/api/vault/thumb', async (req, res) => {
   const relPath = typeof req.query.path === 'string' ? req.query.path : '';
@@ -7053,7 +4922,7 @@ app.get('/api/vault/thumb', async (req, res) => {
     return;
   }
 
-  const fullPath = resolveSafePath(relPath);
+  const fullPath = safeResolvePath(relPath);
   if (!fullPath || !isVideoFile(fullPath)) {
     res.status(400).json({ error: 'Invalid video path' });
     return;
@@ -7118,7 +4987,7 @@ app.post('/api/render-preview-v2', async (req, res) => {
         previewOutputStart
       }));
     }
-    const graph = await buildRenderV2FilterGraph(config, tmpDir, {
+    const graph = await buildRenderV2FilterGraph(config, tmpDir, MEDIA_VAULT_ROOT, {
       includeAudio: false,
       outputStart: previewOutputStart,
       outputDuration: frameDuration,
