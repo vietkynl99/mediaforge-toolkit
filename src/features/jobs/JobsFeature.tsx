@@ -204,6 +204,21 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
     }
   }, [loadJobs, showToast]);
 
+  const retryJob = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch(`/api/jobs/${jobId}/retry`, { method: 'POST' });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error((data as any).error || 'Unable to retry job');
+      }
+      showToast('Job queued for retry', 'success');
+      await loadJobs();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to retry job';
+      showToast(message, 'error');
+    }
+  }, [loadJobs, showToast]);
+
   useEffect(() => {
     const previousJobs = previousJobsRef.current;
     if (previousJobs.length === 0) {
@@ -349,6 +364,7 @@ export const JobsFeature = forwardRef<JobsHandle, JobsFeatureProps>(function Job
         }}
         cancelJob={cancelJob}
         deleteJob={deleteJob}
+        retryJob={retryJob}
       />
     </>
   );

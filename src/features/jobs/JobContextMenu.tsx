@@ -22,6 +22,7 @@ interface JobContextMenuProps {
   openJobLog: (jobId: string) => void;
   cancelJob: (id: string) => void;
   deleteJob: (id: string) => void;
+  retryJob: (id: string) => void;
 }
 
 const MENU_HEIGHT_ESTIMATE = 180;
@@ -40,7 +41,8 @@ export function JobContextMenu({
   openSubtitleStudioFromJob,
   openJobLog,
   cancelJob,
-  deleteJob
+  deleteJob,
+  retryJob
 }: JobContextMenuProps) {
   if (!menu.open || !job) return null;
 
@@ -112,6 +114,17 @@ export function JobContextMenu({
         >
           Run again
         </button>
+        {(job.status === 'failed' || job.status === 'cancelled') && (
+          <button
+            className="w-full px-3 py-2 text-left text-xs text-emerald-300 hover:bg-emerald-500/10 rounded-md"
+            onClick={() => {
+              setMenu(prev => ({ ...prev, open: false }));
+              retryJob(job.id);
+            }}
+          >
+            Retry
+          </button>
+        )}
         <button
           className="w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900 rounded-md"
           onClick={() => {

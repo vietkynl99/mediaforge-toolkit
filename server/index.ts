@@ -5753,6 +5753,108 @@ app.post('/api/jobs/:id/cancel', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/jobs/:id/retry', async (req, res) => {
+  const job = getJobById(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: 'Job not found' });
+    return;
+  }
+  if (job.status !== 'failed' && job.status !== 'cancelled') {
+    res.status(400).json({ error: 'Only failed or cancelled jobs can be retried' });
+    return;
+  }
+
+  // Restore internal params from job.params before resetting
+  const jobParams = job.params ?? {};
+  
+  // Restore translate params
+  if (jobParams.translate) {
+    const t = jobParams.translate;
+    if (t.subtitleFile) (job as any).__translateSubtitleFile = t.subtitleFile;
+    if (t.preset) (job as any).__translatePreset = t.preset;
+    if (t.batchSize) (job as any).__translateBatchSize = t.batchSize;
+    if (t.targetIds) (job as any).__translateTargetIds = t.targetIds;
+  }
+  
+  // Restore render params
+  if (jobParams.render?.configV2) {
+    (job as any).__renderConfigV2 = jobParams.render.configV2;
+  }
+  
+  // Restore TTS params
+  if (jobParams.tts) {
+    if (jobParams.tts.voice) (job as any).__ttsVoice = jobParams.tts.voice;
+    if (jobParams.tts.rate !== undefined) (job as any).__ttsRate = jobParams.tts.rate;
+    if (jobParams.tts.pitch !== undefined) (job as any).__ttsPitch = jobParams.tts.pitch;
+    if (jobParams.tts.overlapMode) (job as any).__ttsOverlapMode = jobParams.tts.overlapMode;
+    if (jobParams.tts.removeLineBreaks) (job as any).__ttsRemoveLineBreaks = jobParams.tts.removeLineBreaks;
+  }
+  
+  // Restore UVR params
+  if (jobParams.uvr) {
+    if (jobParams.uvr.backend) (job as any).__backend = jobParams.uvr.backend;
+    if (jobParams.uvr.model) (job as any).__model = jobParams.uvr.model;
+    if (jobParams.uvr.outputFormat) (job as any).__outputFormat = jobParams.uvr.outputFormat;
+  }
+  
+  // Restore download params
+  if (jobParams.download) {
+    if (jobParams.download.url) (job as any).__downloadUrl = jobParams.download.url;
+    if (jobParams.download.mode) (job as any).__downloadMode = jobParams.download.mode;
+    if (jobParams.download.noPlaylist !== undefined) (job as any).__downloadNoPlaylist = jobParams.download.noPlaylist;
+    if (jobParams.download.subLangs) (job as any).__downloadSubLangs = jobParams.download.subLangs;
+  }
+  
+  // Restore project paths
+  if (jobParams.inputRelativePath) {
+    (job as any).__inputRelativePath = jobParams.inputRelativePath;
+    const projectName = jobParams.projectName || job.projectName;
+    if (projectName) {
+      const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
+      (job as any).__projectRoot = projectRoot;
+      (job as any).__projectRelativePath = projectName;
+      (job as any).__outputDir = path.join(MEDIA_VAULT_ROOT, projectName, UVR_OUTPUT_DIRNAME);
+      // Restore download directories for download jobs
+      (job as any).__downloadSourceDir = path.join(projectRoot, 'source');
+      (job as any).__downloadRuntimeDir = path.join(projectRoot, '.mediaforge', 'download');
+    }
+  }
+
+  // Reset job state
+  job.status = 'queued';
+  job.progress = 0;
+  job.error = undefined;
+  job.finishedAt = undefined;
+  job.durationMs = undefined;
+  job.startedAt = undefined;
+  (job as any).__cancelRequested = undefined;
+  (job as any).__abortController = undefined;
+  (job as any).__activeProcess = undefined;
+
+  // Reset task states
+  job.tasks.forEach(task => {
+    task.status = 'pending';
+    task.progress = 0;
+    (task as any).processed = undefined;
+    (task as any).total = undefined;
+  });
+
+  appendJobLog(job, '--- Job retried ---\n');
+  scheduleJobPersist(job);
+
+  // Determine queue based on job type
+  const hasDownload = job.tasks.some(t => t.type.startsWith('download'));
+  if (hasDownload) {
+    downloadQueue.push(job.id);
+    setImmediate(processNextDownload);
+  } else {
+    jobQueue.push(job.id);
+    setImmediate(processNextJob);
+  }
+
+  res.json({ ok: true, id: job.id });
+});
+
 app.post('/api/render-v2/check-status', async (req, res) => {
   const config = req.body?.config as RenderConfigV2;
   const projectName = typeof req.body?.projectName === 'string' ? req.body.projectName.trim() : '';
