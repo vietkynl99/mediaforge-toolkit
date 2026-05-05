@@ -39,11 +39,12 @@ export const formatDurationFine = (seconds?: number) => {
 };
 
 export const formatDurationMs = (ms: number) => {
-  if (!ms || ms <= 0) return '00:00';
+  if (!ms || ms <= 0) return '00:00:00';
   const totalSeconds = Math.floor(ms / 1000);
-  const mins = Math.floor(totalSeconds / 60);
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
   const secs = totalSeconds % 60;
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 };
 
 export const formatLocalDateTime = (iso: string) => {
