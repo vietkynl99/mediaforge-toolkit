@@ -5,7 +5,26 @@ import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
 import { MEDIA_VAULT_ROOT, UVR_OUTPUT_DIRNAME } from './constants.js';
-import { parseAssCues, parseSrtVttCues, stripUtf8Bom, type SubtitleCue } from './subtitleCues.js';
+import { parseAssCues, parseSrtVttCues, parseSktProjectCues, stripUtf8Bom, type SubtitleCue } from './subtitleCues.js';
+import {
+  DEFAULT_TTS_VOICE,
+  DEFAULT_TTS_OUTPUT_EXT,
+  TTS_CUE_OUTPUT_EXT,
+  TTS_INTERNAL_SAMPLE_RATE,
+  TTS_INTERNAL_CHANNELS,
+  TTS_PITCH_BASE_HZ,
+  TTS_CUE_CACHE_DIRNAME,
+  TTS_CUE_CONCURRENCY,
+  TTS_MIX_SEGMENT_SECONDS,
+  TTS_MP3_BITRATE_KBPS,
+  TTS_DEBUG_TIMING,
+  EDGE_TTS_MAX_RETRIES,
+  EDGE_TTS_RETRY_DELAY_MS,
+  formatTtsRate,
+  formatTtsPitch,
+  sanitizeRateFactor,
+  sanitizePitchSemitones,
+} from './ttsUtils.js';
 
 type TtsRequestBody = {
   text?: string;
@@ -17,43 +36,7 @@ type TtsRequestBody = {
   removeLineBreaks?: boolean;
 };
 
-const TTS_CUE_CONCURRENCY = Math.max(
-  1,
-  Math.min(
-    8,
-    Number.isFinite(Number(process.env.TTS_CUE_CONCURRENCY))
-      ? Number(process.env.TTS_CUE_CONCURRENCY)
-      : 3
-  )
-);
-const DEFAULT_VOICE = 'vi-VN-HoaiMyNeural';
-const DEFAULT_OUTPUT_EXT = 'mp3';
-const TTS_CUE_OUTPUT_EXT = 'wav';
-const TTS_INTERNAL_SAMPLE_RATE = 48000;
-const TTS_INTERNAL_CHANNELS = 1;
-const TTS_MIX_SEGMENT_SECONDS = Math.max(
-  120,
-  Math.min(
-    300,
-    Number.isFinite(Number(process.env.TTS_MIX_SEGMENT_SECONDS))
-      ? Number(process.env.TTS_MIX_SEGMENT_SECONDS)
-      : 180
-  )
-);
-const TTS_MP3_BITRATE_KBPS = Math.max(
-  64,
-  Math.min(
-    320,
-    Number.isFinite(Number(process.env.TTS_MP3_BITRATE_KBPS))
-      ? Number(process.env.TTS_MP3_BITRATE_KBPS)
-      : 128
-  )
-);
-const TTS_DEBUG_TIMING =
-  ['1', 'true', 'yes', 'on'].includes((process.env.TTS_DEBUG_TIMING ?? '').toLowerCase());
-const SUBTITLE_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub']);
-const PITCH_BASE_HZ = 200;
-const TTS_CUE_CACHE_DIRNAME = '.mediaforge/tts-cue-cache';
+const SUBTITLE_EXT = new Set(['.srt', '.vtt', '.ass', '.ssa', '.sub', '.sktproject']);
 
 export const ttsRouter = express.Router();
 
@@ -71,26 +54,7 @@ const resolveSafePath = (value: string) => {
   return fullPath;
 };
 
-const formatRate = (value?: number) => {
-  if (value === undefined || value === null) return undefined;
-  if (!Number.isFinite(value) || value <= 0) return undefined;
-  if (value === 1) return undefined;
-  const percent = Math.round((value - 1) * 100);
-  return `${percent >= 0 ? '+' : ''}${percent}%`;
-};
-
-const formatPitch = (value?: number) => {
-  if (value === undefined || value === null) return undefined;
-  if (!Number.isFinite(value)) return undefined;
-  if (value === 0) return undefined;
-  const ratio = Math.pow(2, value / 12);
-  const deltaHz = Math.round(PITCH_BASE_HZ * (ratio - 1));
-  const signed = deltaHz >= 0 ? `+${deltaHz}` : `${deltaHz}`;
-  return `${signed}Hz`;
-};
-
-const EDGE_TTS_MAX_RETRIES = Number(process.env.EDGE_TTS_MAX_RETRIES ?? 5);
-const EDGE_TTS_RETRY_DELAY_MS = 700;
+// Use formatTtsRate and formatTtsPitch from ttsUtils.js
 
 type CueCacheIdentity = {
   cueText: string;
@@ -200,16 +164,6 @@ const upsertCueCacheEntry = async (
 
 const sameCueIdentity = (left: CueCacheIdentity, right: CueCacheIdentity) =>
   left.cueText === right.cueText;
-
-const sanitizeRateFactor = (value?: number) => {
-  if (value === undefined || value === null || !Number.isFinite(value) || value <= 0) return 1;
-  return value;
-};
-
-const sanitizePitchSemitones = (value?: number) => {
-  if (value === undefined || value === null || !Number.isFinite(value)) return 0;
-  return value;
-};
 
 const roundFactor = (value: number) => Math.round(value * 1_000_000) / 1_000_000;
 
@@ -572,12 +526,12 @@ ttsRouter.post('/', async (req, res) => {
     return;
   }
 
-  const voice = body.voice?.trim() || DEFAULT_VOICE;
+  const voice = body.voice?.trim() || DEFAULT_TTS_VOICE;
   const safeText = text ?? '';
-  const outputExt = DEFAULT_OUTPUT_EXT;
+  const outputExt = DEFAULT_TTS_OUTPUT_EXT;
   const cueOutputExt = TTS_CUE_OUTPUT_EXT;
-  const rate = formatRate(body.rate);
-  const pitch = formatPitch(body.pitch);
+  const rate = formatTtsRate(body.rate);
+  const pitch = formatTtsPitch(body.pitch);
   const fxRate = sanitizeRateFactor(body.rate);
   const fxPitch = sanitizePitchSemitones(body.pitch);
   const overlapMode = body.overlapMode === 'overlap' ? 'overlap' : 'truncate';
@@ -610,9 +564,13 @@ ttsRouter.post('/', async (req, res) => {
         return;
       }
       const raw = stripUtf8Bom(await fs.readFile(fullPath, 'utf-8'));
-      subtitleCues = ext === '.ass' || ext === '.ssa'
-        ? parseAssCues(raw, removeLineBreaks)
-        : parseSrtVttCues(raw, removeLineBreaks);
+      if (ext === '.sktproject') {
+        subtitleCues = parseSktProjectCues(raw, removeLineBreaks);
+      } else if (ext === '.ass' || ext === '.ssa') {
+        subtitleCues = parseAssCues(raw, removeLineBreaks);
+      } else {
+        subtitleCues = parseSrtVttCues(raw, removeLineBreaks);
+      }
       if (!subtitleCues.length) {
         res.status(400).json({ error: 'Subtitle file has no usable cues' });
         return;

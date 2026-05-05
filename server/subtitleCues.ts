@@ -157,3 +157,42 @@ export const parseAssCues = (content: string, removeLineBreaks: boolean) => {
   });
   return cues;
 };
+
+type SktProjectSegment = {
+  id: number;
+  start: string;
+  end: string;
+  original: string;
+  translated: string;
+};
+
+type SktProject = {
+  version: string;
+  segments: SktProjectSegment[];
+};
+
+/**
+ * Parse .sktproject JSON format into SubtitleCue[].
+ * Uses translated text if available, falls back to original text.
+ */
+export const parseSktProjectCues = (content: string, removeLineBreaks: boolean) => {
+  const cues: SubtitleCue[] = [];
+  try {
+    const json: SktProject = JSON.parse(content);
+    if (!json.segments || !Array.isArray(json.segments)) return cues;
+    for (const seg of json.segments) {
+      const start = parseSrtTimestamp(seg.start);
+      const end = parseSrtTimestamp(seg.end);
+      if (start === null || end === null) continue;
+      if (end <= start) continue;
+      // Always use translated text
+      const rawText = seg.translated || '';
+      const text = sanitizeCueText(rawText, removeLineBreaks);
+      if (!text) continue;
+      cues.push({ start, end, text });
+    }
+  } catch {
+    // Invalid JSON, return empty
+  }
+  return cues;
+};
