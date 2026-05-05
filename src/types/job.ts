@@ -73,5 +73,18 @@ export interface MediaJob {
       batchSize?: number;
       targetIds?: string[];
     };
+    optimize?: {
+      subtitleFile?: string;
+      preset?: {
+        reference?: {
+          title_or_summary?: string;
+        };
+        genres?: string[];
+        character_names?: string[];
+        humor_level?: number;
+      };
+      batchSize?: number;
+      targetIds?: string[];
+    };
   };
 }

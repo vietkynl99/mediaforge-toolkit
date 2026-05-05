@@ -288,5 +288,185 @@ export class TranslateTaskExecutor extends TaskExecutor {
   }
 }
 
+/**
+ * Executor for AI Optimization
+ */
+export class OptimizeTaskExecutor extends TaskExecutor {
+  readonly type = 'optimize';
+
+  async execute(task: TaskNode, context: ExecutorContext): Promise<TaskResult> {
+    const {
+      projectName,
+      subtitleFile, // Relative path to subtitle file
+      preset,
+      batchSize = 20,
+      targetIds // Array of IDs to optimize (optional)
+    } = task.params;
+
+    if (!projectName || !subtitleFile) {
+      throw new Error('Missing required params: projectName, subtitleFile');
+    }
+
+    const fullPath = path.join(MEDIA_VAULT_ROOT, subtitleFile);
+    context.onLog(`Reading subtitle file: ${subtitleFile}`);
+
+    let subtitleData: any;
+    let isSktProject = false;
+    let originalProject: any = null;
+
+    try {
+      const content = await fs.readFile(fullPath, 'utf-8');
+      const parsed = JSON.parse(content);
+
+      if (parsed && parsed.version === "1.0" && Array.isArray(parsed.segments)) {
+        isSktProject = true;
+        originalProject = parsed;
+        subtitleData = parsed.segments.map((s: any) => ({
+          id: String(s.id),
+          startTime: s.start,
+          endTime: s.end,
+          originalText: s.original,
+          translatedText: s.translated,
+          text: s.translated
+        }));
+      } else if (Array.isArray(parsed)) {
+        subtitleData = parsed.map((s: any) => ({
+          ...s,
+          id: String(s.id)
+        }));
+      } else {
+        throw new Error('Invalid subtitle format: expected an array of cues or a .sktproject object');
+      }
+    } catch (err) {
+      const errorMsg = `Failed to read or parse subtitle file at ${fullPath}: ${err instanceof Error ? err.message : String(err)}`;
+      context.onLog(`ERROR: ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    const totalCues = subtitleData.length;
+    context.onLog(`Total cues in file: ${totalCues}`);
+
+    // Filter segments to optimize (only translated ones)
+    let cuesToOptimize = subtitleData;
+    if (Array.isArray(targetIds)) {
+      // Specific IDs requested
+      const idSet = new Set(targetIds.map(id => String(id)));
+      cuesToOptimize = subtitleData.filter((c: any) => idSet.has(String(c.id)));
+      context.onLog(`Filtering job to ${cuesToOptimize.length} specific segments based on targetIds.`);
+    } else {
+      // No targetIds = optimize all translated segments
+      cuesToOptimize = subtitleData.filter((c: any) => {
+        const hasTranslation = (c.translatedText && c.translatedText.trim()) ||
+                               (c.translated && c.translated.trim());
+        return hasTranslation;
+      });
+      context.onLog(`Optimizing ${cuesToOptimize.length} translated segments (out of ${totalCues} total).`);
+    }
+
+    const totalToOptimize = cuesToOptimize.length;
+    if (totalToOptimize === 0) {
+      context.onLog('No translated segments found to optimize. Skipping.');
+      return { success: true, outputs: [subtitleFile] };
+    }
+
+    // Process in batches
+    for (let i = 0; i < totalToOptimize; i += batchSize) {
+      checkAborted(context.signal);
+
+      const batch = cuesToOptimize.slice(i, i + batchSize);
+
+      context.onLog(`Optimizing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(totalToOptimize / batchSize)} (${batch.length} segments)...`);
+
+      try {
+        // Prepare segments for AI fix
+        const segmentsForAI = batch.map((c: any) => ({
+          id: c.id,
+          text: c.translatedText || c.text || c.translated
+        }));
+
+        const result = await SubtitleAI.aiFixSegments({
+          segments: segmentsForAI,
+          preset
+        });
+
+        // Parse AI response
+        if (result && typeof result.text === 'string') {
+          let fixedItems: any[] = [];
+          try {
+            fixedItems = JSON.parse(result.text);
+          } catch (parseErr) {
+            context.onLog(`ERROR: Failed to parse AI response as JSON: ${parseErr}`);
+          }
+
+          if (!Array.isArray(fixedItems)) {
+            context.onLog(`ERROR: Parsed response is not an array`);
+            fixedItems = [];
+          }
+
+          let matchedCount = 0;
+          for (const item of fixedItems) {
+            const cue = subtitleData.find((c: any) => String(c.id) === String(item.id));
+            if (cue && item.fixedText) {
+              matchedCount++;
+              // Store optimize history
+              if (!cue.optimizeHistory) cue.optimizeHistory = [];
+              cue.optimizeHistory.push(cue.translatedText || cue.text);
+              // Update with fixed text
+              cue.translatedText = item.fixedText;
+              cue.text = item.fixedText;
+              cue.translated = item.fixedText;
+            }
+
+            // Update originalProject.segments if it's an sktproject
+            if (isSktProject && originalProject?.segments) {
+              const originalSeg = originalProject.segments.find((s: any) => String(s.id) === String(item.id));
+              if (originalSeg && item.fixedText) {
+                if (!originalSeg.optimize_history) originalSeg.optimize_history = [];
+                originalSeg.optimize_history.push(originalSeg.translated);
+                originalSeg.translated = item.fixedText;
+              }
+            }
+          }
+          context.onLog(`Matched and optimized ${matchedCount} segments.`);
+        }
+      } catch (aiErr) {
+        const aiErrorMsg = `AI Optimization failed for batch: ${aiErr instanceof Error ? aiErr.message : JSON.stringify(aiErr)}`;
+        context.onLog(`CRITICAL ERROR: ${aiErrorMsg}`);
+        throw new Error(aiErrorMsg);
+      }
+
+      const progress = Math.round(((i + batch.length) / totalToOptimize) * 100);
+      const processed = Math.min(i + batchSize, totalToOptimize);
+      context.onProgress(progress, `Optimized ${processed}/${totalToOptimize} segments`, processed, totalToOptimize);
+
+      // Save progress after each batch
+      try {
+        if (isSktProject) {
+          originalProject.segments = subtitleData.map((s: any) => ({
+            id: s.id,
+            start: s.startTime,
+            end: s.endTime,
+            original: s.originalText || s.original || "",
+            translated: s.translatedText || s.text || s.translated || "",
+            optimize_history: s.optimizeHistory || []
+          }));
+          originalProject.updated_at = new Date().toISOString();
+          await fs.writeFile(fullPath, JSON.stringify(originalProject, null, 2), 'utf-8');
+        } else {
+          await fs.writeFile(fullPath, JSON.stringify(subtitleData, null, 2), 'utf-8');
+        }
+      } catch (saveErr) {
+        context.onLog(`WARNING: Failed to save intermediate results: ${saveErr instanceof Error ? saveErr.message : String(saveErr)}`);
+      }
+    }
+
+    return {
+      success: true,
+      outputs: [subtitleFile]
+    };
+  }
+}
+
 // Register built-in executors
 executorRegistry.register(new TranslateTaskExecutor());
+executorRegistry.register(new OptimizeTaskExecutor());

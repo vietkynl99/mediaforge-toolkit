@@ -10,7 +10,7 @@ import {
   performLocalFix, generateSRT, timeToSeconds, parseFileName, generateExportFileName,
   calculateCPS
 } from './services/subtitleLogic';
-import { translateBatch, aiFixSegments, analyzeTranslationStyle } from './services/geminiService';
+import { translateBatch, analyzeTranslationStyle, splitToTwoLinesIfLong } from './services/geminiService';
 import { SubtitleSegment, TranslationPreset, SubtitleAppSettings, ApiUsage, DEFAULT_SUBTITLE_SETTINGS, SubtitleStatus, AnalysisResult } from './types';
 import { Layout } from './components/Layout';
 import { SegmentList } from './components/SegmentList';
@@ -71,6 +71,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [settings, setSettings] = useState<SubtitleAppSettings>(DEFAULT_SUBTITLE_SETTINGS);
   const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
+  const [optimizeHistorySegmentId, setOptimizeHistorySegmentId] = useState<number | null>(null);
+  const [optimizeHistoryIndex, setOptimizeHistoryIndex] = useState<number>(0);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -165,6 +167,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [pageInputValue, setPageInputValue] = useState<string>('1');
   const [showClearModal, setShowClearModal] = useState<boolean>(false);
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [showRemoveQuotesModal, setShowRemoveQuotesModal] = useState<boolean>(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState<boolean>(true);
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [focusSegmentId, setFocusSegmentId] = useState<number | null>(null);
@@ -226,6 +229,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentJobIdRef = useRef<string | null>(null);
+  const isLoadingFileRef = useRef<boolean>(false);
 
   const stopRequestedRefCurrent = stopRequestedRef.current;
   const optimizeStopRequestedRefCurrent = optimizeStopRequestedRef.current;
@@ -242,6 +246,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const handleSelectFile = async (file: VaultFile, options?: { silent?: boolean }) => {
     try {
       setFileLoading(true);
+      isLoadingFileRef.current = true;
       setSelectedFileId(file.id);
 
       // Update URL with deeplink
@@ -315,6 +320,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       showToast('error', (err as Error).message);
     } finally {
       setFileLoading(false);
+      isLoadingFileRef.current = false;
+      setIsDirty(false); // File is fresh from disk, not dirty
     }
   };
 
@@ -400,6 +407,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     if (filter === 'untranslated') {
       return processedSegments.filter(s => (s.translatedText || '').trim() === '');
     }
+    if (filter === 'optimized') {
+      return processedSegments.filter(s => (s.optimizeHistory?.length || 0) > 0);
+    }
     if (filter === 'timeline') {
       return processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('overlap')));
     }
@@ -418,7 +428,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     if (filter === 'lang') {
       return processedSegments.filter(s => s.issueList.some(i => {
         const issue = i.toLowerCase();
-        return (issue.includes('non-chinese') || issue.includes('non-vietnamese characters')) && 
+        return (issue.includes('non-chinese') || issue.includes('non-vietnamese characters')) &&
                !issue.includes('word');
       }));
     }
@@ -478,11 +488,167 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     const last = undoStackRef.current.pop();
     if (!last) return;
     setSegments(cloneSegments(last));
-    setSelectedIds(new Set());
-    showToast('success', 'Undo applied.');
   }, [cloneSegments]);
 
-  // File handling
+  // Optimize history helper
+  const appendOptimizeHistory = useCallback((history: string[] | undefined, prevText: string, nextText: string) => {
+    let nextHistory = history ? [...history] : [];
+    if (nextText.trim()) {
+      if (nextHistory.length === 0) {
+        if (prevText.trim()) nextHistory.push(prevText);
+        nextHistory.push(nextText);
+      } else {
+        const last = nextHistory[nextHistory.length - 1];
+        if (last !== nextText) nextHistory.push(nextText);
+      }
+    }
+    return nextHistory;
+  }, []);
+
+  const commitSegmentText = useCallback((id: number, text: string, prevTextOverride?: string) => {
+    commitSegmentsChange(prev => prev.map(s => {
+      if (s.id !== id) return s;
+      const prevText = prevTextOverride ?? (s.translatedText || '');
+      const nextText = text;
+      if (prevText === nextText) return s;
+
+      const nextHistory = appendOptimizeHistory(s.optimizeHistory, prevText, nextText);
+      return { ...s, translatedText: nextText, optimizeHistory: nextHistory };
+    }));
+  }, [commitSegmentsChange, appendOptimizeHistory]);
+
+  // Optimize history modal
+  const optimizeHistorySegment = useMemo(() => {
+    if (optimizeHistorySegmentId === null) return null;
+    return segments.find(seg => seg.id === optimizeHistorySegmentId) || null;
+  }, [segments, optimizeHistorySegmentId]);
+
+  const handleShowOptimizeHistory = useCallback((id: number) => {
+    setOptimizeHistorySegmentId(id);
+    const seg = segments.find(s => s.id === id);
+    const history = seg?.optimizeHistory || [];
+    const currentText = seg?.translatedText || '';
+    // Find last index manually for compatibility
+    let matchedIndex = -1;
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i] === currentText) {
+        matchedIndex = i;
+        break;
+      }
+    }
+    const lastIndex = Math.max(0, history.length - 1);
+    setOptimizeHistoryIndex(matchedIndex >= 0 ? matchedIndex : lastIndex);
+  }, [segments]);
+
+  const handleRestoreOptimizeHistory = useCallback((text: string) => {
+    if (optimizeHistorySegmentId === null) return;
+    commitSegmentText(optimizeHistorySegmentId, text);
+    setOptimizeHistorySegmentId(null);
+    showToast('success', 'Restored from history.');
+  }, [optimizeHistorySegmentId, commitSegmentText, showToast]);
+
+  // Translation quote removal (from old project)
+  const translationQuoteTargets = useMemo(
+    () => processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('quote'))),
+    [processedSegments]
+  );
+  const translationQuoteCount = translationQuoteTargets.length;
+
+  const handleRemoveTranslationQuotesRequest = useCallback(() => {
+    setShowRemoveQuotesModal(true);
+  }, []);
+
+  const handleRemoveTranslationQuotesConfirm = useCallback(() => {
+    if (translationQuoteCount === 0) {
+      setShowRemoveQuotesModal(false);
+      showToast('info', 'No translation quotes to remove.');
+      return;
+    }
+    const targetIds = new Set(translationQuoteTargets.map(seg => seg.id));
+    commitSegmentsChange(prev => prev.map(seg => {
+      if (!targetIds.has(seg.id)) return seg;
+      const current = seg.translatedText || '';
+      const cleaned = current.replace(/['"]/g, '');
+      if (cleaned === current) return seg;
+      const nextHistory = appendOptimizeHistory(seg.optimizeHistory, current, cleaned);
+      return { ...seg, translatedText: cleaned, optimizeHistory: nextHistory };
+    }));
+    showToast('success', `Removed quotes from ${translationQuoteCount} segment(s).`);
+    setShowRemoveQuotesModal(false);
+  }, [translationQuoteTargets, translationQuoteCount, commitSegmentsChange, appendOptimizeHistory, showToast]);
+
+  // Auto-split long lines (from old project)
+  const countWordsLocal = useCallback((text: string) => {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (!normalized) return 0;
+    return normalized.split(' ').length;
+  }, []);
+
+  const hasLongLine = useCallback((text: string, maxWords: number) => {
+    if (!text) return false;
+    const normalized = text.replace(/\s*\n\s*/g, '\n').replace(/[ \t]+/g, ' ').trim();
+    if (!normalized) return false;
+    return normalized.split('\n').some(line => countWordsLocal(line) > maxWords);
+  }, [countWordsLocal]);
+
+  const countLongLineSegments = useCallback((list: SubtitleSegment[], maxWords: number) => {
+    return list.reduce((total, seg) => {
+      const original = seg.originalText || '';
+      const translated = seg.translatedText || '';
+      const hasSplit = (original && original.includes('\n')) || (translated && translated.includes('\n'));
+      if (hasSplit) return total;
+      const originalNeedsCheck = original && !original.includes('\n');
+      const translatedNeedsCheck = translated && !translated.includes('\n');
+      const shouldCheck = (originalNeedsCheck || translatedNeedsCheck);
+      if (!shouldCheck) return total;
+      return total + (hasLongLine(original, maxWords) || hasLongLine(translated, maxWords) ? 1 : 0);
+    }, 0);
+  }, [hasLongLine]);
+
+  const applyAutoSplit = useCallback((list: SubtitleSegment[], maxWords: number) => {
+    return list.map(seg => ({
+      ...seg,
+      originalText: seg.originalText
+        ? (seg.originalText.includes('\n') ? seg.originalText : splitToTwoLinesIfLong(seg.originalText, maxWords))
+        : seg.originalText,
+      translatedText: seg.translatedText
+        ? (seg.translatedText.includes('\n') ? seg.translatedText : splitToTwoLinesIfLong(seg.translatedText, maxWords))
+        : seg.translatedText
+    }));
+  }, []);
+
+  const autoSplitScope = useMemo(() => {
+    const mode = selectedIds.size > 0 ? 'selected' as const : 'all' as const;
+    const scopeSegments = mode === 'selected'
+      ? segments.filter(s => selectedIds.has(s.id))
+      : filteredSegments;
+    const longLineCount = countLongLineSegments(scopeSegments, settings.maxSingleLineWords);
+    return { mode, scopeSegments, longLineCount };
+  }, [segments, selectedIds, filteredSegments, countLongLineSegments, settings.maxSingleLineWords]);
+
+  const handleAutoSplitLongLines = useCallback(() => {
+    if (autoSplitScope.longLineCount === 0) return;
+    const splitSegments = applyAutoSplit(autoSplitScope.scopeSegments, settings.maxSingleLineWords);
+    const splitMap = new Map(splitSegments.map(seg => [seg.id, seg]));
+    commitSegmentsChange(prev => prev.map(seg => splitMap.get(seg.id) || seg));
+    const selectedSuffix = autoSplitScope.mode === 'selected' ? ` (${selectedIds.size})` : '';
+    showToast(
+      'success',
+      autoSplitScope.mode === 'selected'
+        ? `Auto-split applied to selected segments${selectedSuffix}.`
+        : `Auto-split applied to all filtered segments.`
+    );
+  }, [
+    autoSplitScope.longLineCount,
+    autoSplitScope.mode,
+    autoSplitScope.scopeSegments,
+    applyAutoSplit,
+    settings.maxSingleLineWords,
+    commitSegmentsChange,
+    selectedIds.size,
+    showToast
+  ]);
+
   const processFile = useCallback((file: File) => {
     const ext = file.name.toLowerCase();
     if (!ext.endsWith('.srt') && !ext.endsWith('.sktproject') && !ext.endsWith('.json')) {
@@ -614,8 +780,10 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 subtitleFile: currentFile.relativePath,
                 preset: translationPreset,
                 batchSize: settings.translationBatchSize || 20,
-                // Only send targetIds for specific selection, not for 'all' mode
-                targetIds: aiScope.mode === 'selected' ? aiScope.untranslated.map(s => s.id) : undefined
+                // Send targetIds when: selection mode OR filter is active (not 'all')
+                targetIds: (aiScope.mode === 'selected' || filter !== 'all')
+                  ? aiScope.untranslated.map(s => s.id)
+                  : undefined
               }
             }
           ],
@@ -662,13 +830,28 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         if (!response.ok) return;
         const job = await response.json();
 
+        // Detect job type from tasks
+        const isOptimizeJob = job.tasks?.some((t: any) => t.type === 'optimize');
+        const task = job.tasks?.find((t: any) => isOptimizeJob ? t.type === 'optimize' : t.type === 'translate');
+        const processed = task?.processed ?? 0;
+        const total = task?.total ?? 0;
+
         if (job.status === 'completed') {
           if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
           currentJobIdRef.current = null;
-          setTranslationState(prev => ({ ...prev, status: 'completed', processed: prev.total }));
+
+          if (isOptimizeJob) {
+            setIsOptimizing(false);
+            setIsStoppingOptimize(false);
+            setOptimizeState({ processed: total, total });
+            showToast('success', "Optimization completed via Job System.");
+          } else {
+            setTranslationState(prev => ({ ...prev, status: 'completed', processed: prev.total }));
+            showToast('success', "Translation completed via Job System.");
+          }
+
           setProgress(100);
           setStatus('success');
-          showToast('success', "Translation completed via Job System.");
 
           // Reload file to get final content
           const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
@@ -678,9 +861,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         } else if (job.status === 'failed' || job.status === 'cancelled') {
           if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
           currentJobIdRef.current = null;
-          setTranslationState(prev => ({ ...prev, status: job.status === 'failed' ? 'error' : 'stopped' }));
+
+          if (isOptimizeJob) {
+            setIsOptimizing(false);
+            setIsStoppingOptimize(false);
+            setOptimizeState({ processed: 0, total: 0 });
+          } else {
+            setTranslationState(prev => ({ ...prev, status: job.status === 'failed' ? 'error' : 'stopped' }));
+          }
+
           setStatus(job.status === 'failed' ? 'error' : 'success');
-          showToast(job.status === 'failed' ? 'error' : 'info', `Translation job ${job.status}: ${job.error || ''}`);
+          showToast(job.status === 'failed' ? 'error' : 'info', `${isOptimizeJob ? 'Optimization' : 'Translation'} job ${job.status}: ${job.error || ''}`);
 
           // Even on failure, reload what we have
           const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
@@ -689,12 +880,21 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           }
         } else if (job.status === 'processing') {
           const newProgress = job.progress || 0;
-          setTranslationState(prev => ({
-            ...prev,
-            status: 'running',
-            processed: job.processed ?? prev.processed,
-            total: job.total ?? prev.total
-          }));
+
+          if (isOptimizeJob) {
+            setOptimizeState(prev => ({
+              processed: processed ?? prev.processed,
+              total: total ?? prev.total
+            }));
+            setIsOptimizing(true);
+          } else {
+            setTranslationState(prev => ({
+              ...prev,
+              status: 'running',
+              processed: processed ?? prev.processed,
+              total: total ?? prev.total
+            }));
+          }
           setProgress(newProgress);
 
           // Reload file content on every progress update for live updates
@@ -704,6 +904,13 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
               handleSelectFile(currentFile, { silent: true });
               lastLoadedProgressRef.current = newProgress;
             }
+          }
+        } else if (job.status === 'pending' || job.status === 'queued') {
+          // Keep initial state while waiting for job to start
+          if (isOptimizeJob) {
+            setIsOptimizing(true);
+          } else {
+            setTranslationState(prev => ({ ...prev, status: 'running' }));
           }
         }
       } catch (err) {
@@ -740,6 +947,12 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       return;
     }
 
+    const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
+    if (!currentFile) {
+      showToast('warning', "No file selected.");
+      return;
+    }
+
     setIsOptimizing(true);
     setIsStoppingOptimize(false);
     optimizeStopRequestedRef.current = false;
@@ -747,64 +960,72 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     setProgress(0);
     setOptimizeState({ processed: 0, total: aiScope.translated.length });
 
-    pushUndoSnapshot(segments);
-    const currentSegments = [...segments];
-
     try {
-      const batchSize = 20;
-      for (let i = 0; i < aiScope.translated.length; i += batchSize) {
-        if (optimizeStopRequestedRef.current) break;
+      const projectName = selectedFolder?.name || '';
+      const payload = {
+        name: `Optimize: ${currentFile.name}`,
+        inputPath: currentFile.relativePath,
+        graph: {
+          nodes: [
+            {
+              id: 'optimize-1',
+              type: 'optimize',
+              label: 'Optimize AI',
+              params: {
+                inputPath: currentFile.relativePath,
+                subtitleFile: currentFile.relativePath,
+                preset: translationPreset,
+                batchSize: settings.translationBatchSize || 20,
+                // Send targetIds when: selection mode OR filter is active (not 'all')
+                targetIds: (aiScope.mode === 'selected' || filter !== 'all')
+                  ? aiScope.translated.map(s => s.id)
+                  : undefined
+              }
+            }
+          ],
+          edges: []
+        }
+      };
 
-        const currentBatch = aiScope.translated.slice(i, i + batchSize);
-        const currentSettings = settingsRef.current;
+      const response = await fetch('/api/jobs/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-        const { segments: fixed, tokens } = await aiFixSegments(
-          currentBatch,
-          translationPreset,
-          currentSettings.aiModel,
-          currentSettings.apiKey
-        );
-
-        fixed.forEach(f => {
-          const idx = currentSegments.findIndex(s => s.id === f.id);
-          if (idx !== -1) {
-            currentSegments[idx] = { ...currentSegments[idx], ...f };
-          }
-        });
-
-        setApiUsage(prev => ({
-          ...prev,
-          optimize: { requests: prev.optimize.requests + 1, tokens: prev.optimize.tokens + tokens }
-        }));
-
-        const progressPercent = Math.floor(((i + currentBatch.length) / aiScope.translated.length) * 100);
-        setOptimizeState({ processed: Math.min(aiScope.translated.length, i + currentBatch.length), total: aiScope.translated.length });
-        setProgress(progressPercent);
-        setSegments([...currentSegments]);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || errorData.message || 'Failed to start optimization job');
       }
 
-      if (!optimizeStopRequestedRef.current) setProgress(100);
-      setStatus('success');
-      setIsOptimizing(false);
-      setIsStoppingOptimize(false);
-      optimizeStopRequestedRef.current = false;
-      setOptimizeState({ processed: 0, total: 0 });
-      showToast('success', "Optimization completed.");
+      const responseData = await response.json();
+      const jobId = responseData.id;
+      currentJobIdRef.current = jobId;
+      showToast('success', "Optimization job queued successfully.");
+
+      // Start polling for job status
+      pollJobStatus(jobId);
     } catch (err: any) {
       setStatus('error');
       setIsOptimizing(false);
-      setIsStoppingOptimize(false);
-      optimizeStopRequestedRef.current = false;
-      setOptimizeState({ processed: 0, total: 0 });
-      showToast('error', `Error: ${err.message || 'Optimization failed'}`);
+      showToast('error', `Error: ${err.message || 'Failed to start job'}`);
     }
   };
 
-  const handleStopOptimize = () => {
+  const handleStopOptimize = async () => {
     if (isStoppingOptimize) return;
     optimizeStopRequestedRef.current = true;
     setIsStoppingOptimize(true);
     showToast('info', "Stopping optimization...");
+
+    // Cancel job via API if we have a running job
+    if (currentJobIdRef.current) {
+      try {
+        await fetch(`/api/jobs/${currentJobIdRef.current}/cancel`, { method: 'POST' });
+      } catch (err) {
+        console.error('Failed to cancel job:', err);
+      }
+    }
   };
 
   // Export
@@ -1136,8 +1357,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     }
   }, [autoSaveEnabled]);
 
-  // Mark as dirty when segments or preset changes
+  // Mark as dirty when segments or preset changes (but not during file load)
   useEffect(() => {
+    if (isLoadingFileRef.current) return; // Skip during file load
     if (fileName && segments.length > 0) {
       setIsDirty(true);
     }
@@ -1664,6 +1886,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                       const counts = {
                         translated: processedSegments.filter(s => (s.translatedText || '').trim() !== '').length,
                         untranslated: processedSegments.filter(s => (s.translatedText || '').trim() === '').length,
+                        optimized: processedSegments.filter(s => (s.optimizeHistory?.length || 0) > 0).length,
                         safe: processedSegments.filter(s => s.severity === 'safe').length,
                         warning: processedSegments.filter(s => s.severity === 'warning').length,
                         critical: processedSegments.filter(s => s.severity === 'critical').length,
@@ -1674,7 +1897,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                         singleLineLong: processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('too many words'))).length,
                         lang: processedSegments.filter(s => s.issueList.some(i => {
                           const issue = i.toLowerCase();
-                          return (issue.includes('non-chinese') || issue.includes('non-vietnamese characters')) && 
+                          return (issue.includes('non-chinese') || issue.includes('non-vietnamese characters')) &&
                                  !issue.includes('word');
                         })).length,
                         translationQuotes: processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('quote'))).length,
@@ -1687,11 +1910,12 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                           className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 border border-slate-700 text-slate-200 outline-none"
                         >
                           <option value="all">All Segments ({processedSegments.length})</option>
-                          
-                          {(counts.translated > 0 || counts.untranslated > 0) && (
+
+                          {(counts.translated > 0 || counts.untranslated > 0 || counts.optimized > 0) && (
                             <optgroup label="Status">
                               {counts.translated > 0 && <option value="translated">Translated ({counts.translated})</option>}
                               {counts.untranslated > 0 && <option value="untranslated">Untranslated ({counts.untranslated})</option>}
+                              {counts.optimized > 0 && <option value="optimized">Optimized ({counts.optimized})</option>}
                             </optgroup>
                           )}
 
@@ -1738,6 +1962,26 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                       <Sparkles size={14} className="relative z-10" />
                       <span className="relative z-10">{aiButtonLabel}</span>
                     </button>
+
+                    {filter === 'translation-quotes' && (
+                      <button
+                        onClick={handleRemoveTranslationQuotesRequest}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-600/70 border border-amber-500/40 text-amber-100 hover:bg-amber-500/70 transition-colors"
+                      >
+                        <X size={12} />
+                        Remove Quotes
+                      </button>
+                    )}
+
+                    {(filter === 'single-line-long' || filter === 'too-long') && autoSplitScope.longLineCount > 0 && (
+                      <button
+                        onClick={handleAutoSplitLongLines}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-600/70 border border-cyan-500/40 text-cyan-100 hover:bg-cyan-500/70 transition-colors"
+                      >
+                        <Wand2 size={12} />
+                        Split Lines ({autoSplitScope.longLineCount})
+                      </button>
+                    )}
                   </div>
 
                   {/* Pagination - positioned on the right side of toolbar */}
@@ -1834,8 +2078,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
                 onUpdateText={updateSegmentText}
-                onCommitText={(id) => {}}
+                onCommitText={commitSegmentText}
                 onUpdateTime={updateSegmentTime}
+                onShowOptimizeHistory={handleShowOptimizeHistory}
                 focusSegmentId={focusSegmentId}
                 onFocusDone={() => setFocusSegmentId(null)}
                 searchQuery={searchQuery}
@@ -1969,6 +2214,91 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                   draftSummary={presetDraftSummary}
                   onDraftSummaryChange={setPresetDraftSummary}
                 />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Optimize History Modal */}
+        {optimizeHistorySegment && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl shadow-2xl p-6 animate-in zoom-in duration-200">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-slate-100">
+                  Optimization History <span className="text-slate-500">#{optimizeHistorySegment.id}</span>
+                </h3>
+                <button
+                  onClick={() => setOptimizeHistorySegmentId(null)}
+                  className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <div className="text-[11px] text-slate-500 uppercase tracking-wider mb-1">Current Text</div>
+                <div className="p-3 bg-slate-800 rounded-lg text-blue-100 text-sm">
+                  {optimizeHistorySegment.translatedText || <span className="text-slate-500 italic">No translation</span>}
+                </div>
+              </div>
+
+              {optimizeHistorySegment.optimizeHistory && optimizeHistorySegment.optimizeHistory.length > 0 && (
+                <div className="mb-4">
+                  <div className="text-[11px] text-slate-500 uppercase tracking-wider mb-2">History ({optimizeHistorySegment.optimizeHistory.length} versions)</div>
+                  <div className="max-h-60 overflow-y-auto space-y-2">
+                    {optimizeHistorySegment.optimizeHistory.map((text, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleRestoreOptimizeHistory(text)}
+                        className={`w-full p-3 rounded-lg text-left text-sm transition-colors ${
+                          idx === optimizeHistoryIndex
+                            ? 'bg-lime-600/20 border border-lime-500/40 text-lime-100'
+                            : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="flex-1 truncate">{text}</span>
+                          <span className="text-[10px] text-slate-500">v{idx + 1}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setOptimizeHistorySegmentId(null)}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold transition-colors text-sm"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Remove Quotes Modal */}
+        {showRemoveQuotesModal && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in duration-200">
+              <h3 className="text-xl font-bold mb-3 text-slate-100">Remove quotes from translations?</h3>
+              <p className="text-slate-400 text-sm">
+                This will remove all ' and " characters in {translationQuoteCount} segment(s).
+              </p>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowRemoveQuotesModal(false)}
+                  className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRemoveTranslationQuotesConfirm}
+                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-colors"
+                >
+                  Confirm
+                </button>
               </div>
             </div>
           </div>

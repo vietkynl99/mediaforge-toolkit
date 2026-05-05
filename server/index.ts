@@ -1009,6 +1009,7 @@ const loadJobsFromDb = () => {
         job.finishedAt = nowIso;
         const base = job.startedAt ?? job.createdAt;
         job.durationMs = new Date(job.finishedAt).getTime() - new Date(base).getTime();
+        appendJobLog(job, `=== JOB FAILED (server restart) ===\n`);
       }
       return job;
     });
@@ -1050,6 +1051,8 @@ const taskNameMap: Record<string, string> = {
   download_merge: 'Merge Video + Audio',
   uvr: 'Vocal Removal',
   tts: 'Text-to-Speech',
+  translate: 'AI Translate',
+  optimize: 'AI Optimize',
   render: 'Render'
 };
 
@@ -2753,6 +2756,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
   job.progress = 0;
   job.startedAt = new Date().toISOString();
   scheduleJobPersist(job);
+  appendJobLog(job, `=== JOB STARTED ===\n`);
   appendJobLog(job, `Job params: ${JSON.stringify(job.params ?? {}, null, 2)}\n`);
 
   try {
@@ -3295,6 +3299,59 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       updateTranslateJobProgress();
     }
 
+    const optimizeTask = job.tasks.find(task => task.type === 'optimize');
+    if (optimizeTask) {
+      const subtitleFile = (job as any).__optimizeSubtitleFile as string | undefined;
+      const projectName = job.projectName;
+      if (!subtitleFile || !projectName) {
+        throw new Error('Missing input for optimize task');
+      }
+      optimizeTask.status = 'active';
+      optimizeTask.progress = 0;
+      const updateOptimizeJobProgress = () => {
+        const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+        job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+      };
+
+      const optimizeAbortController = new AbortController();
+      (job as any).__abortController = optimizeAbortController;
+
+      const optimizeExecutor = new (await import('./job/executor.js')).OptimizeTaskExecutor();
+      const optimizeTaskNode = {
+        id: optimizeTask.id,
+        type: 'optimize' as const,
+        name: optimizeTask.name,
+        status: 'running' as const,
+        progress: 0,
+        dependencies: [],
+        dependents: [],
+        priority: 2,
+        params: {
+          projectName,
+          subtitleFile,
+          preset: (job as any).__optimizePreset,
+          batchSize: (job as any).__optimizeBatchSize,
+          targetIds: (job as any).__optimizeTargetIds
+        }
+      };
+
+      await optimizeExecutor.execute(optimizeTaskNode as any, {
+        signal: optimizeAbortController.signal,
+        onProgress: (p, msg, processed, total) => {
+          optimizeTask.progress = p;
+          if (processed !== undefined) (optimizeTask as any).processed = processed;
+          if (total !== undefined) (optimizeTask as any).total = total;
+          if (msg) appendJobLog(job, msg + '\n');
+          updateOptimizeJobProgress();
+        },
+        onLog: msg => appendJobLog(job, msg + '\n')
+      });
+
+      optimizeTask.status = 'done';
+      optimizeTask.progress = 100;
+      updateOptimizeJobProgress();
+    }
+
     const renderTask = job.tasks.find(task => task.type === 'render');
     if (renderTask) {
       const rawConfig = (job as any).__renderConfigV2 ?? (job.params as any)?.render?.configV2;
@@ -3368,6 +3425,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
     job.progress = 100;
     job.finishedAt = new Date().toISOString();
     job.durationMs = new Date(job.finishedAt).getTime() - new Date(job.startedAt ?? job.createdAt).getTime();
+    appendJobLog(job, `=== JOB COMPLETED ===\nDuration: ${job.durationMs}ms\n`);
     scheduleJobPersist(job);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Job failed';
@@ -3376,12 +3434,13 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       job.error = CANCELLED_ERROR_MESSAGE;
       job.eta = undefined;
       (job as any).__activeProcess = undefined;
-      appendJobLog(job, CANCELLED_ERROR_MESSAGE);
+      appendJobLog(job, `=== JOB CANCELLED ===\n`);
     } else {
       job.status = 'failed';
       job.error = message;
       job.eta = undefined;
       (job as any).__activeProcess = undefined;
+      appendJobLog(job, `=== JOB FAILED ===\nError: ${message}\n`);
       job.log = [job.log, job.error].filter(Boolean).join('\n');
       if (job.log && job.log.length > MAX_JOB_LOG_CHARS) {
         job.log = job.log.slice(-MAX_JOB_LOG_CHARS);
@@ -5739,7 +5798,7 @@ app.post('/api/jobs/:id/cancel', async (req, res) => {
     job.tasks.forEach(task => {
       if (task.status === 'active' || task.status === 'pending') task.status = 'error';
     });
-    appendJobLog(job, CANCELLED_ERROR_MESSAGE);
+    appendJobLog(job, `=== JOB CANCELLED (queued) ===\n`);
     scheduleJobPersist(job);
     res.json({ ok: true });
     return;
@@ -5775,7 +5834,16 @@ app.post('/api/jobs/:id/retry', async (req, res) => {
     if (t.batchSize) (job as any).__translateBatchSize = t.batchSize;
     if (t.targetIds) (job as any).__translateTargetIds = t.targetIds;
   }
-  
+
+  // Restore optimize params
+  if (jobParams.optimize) {
+    const o = jobParams.optimize;
+    if (o.subtitleFile) (job as any).__optimizeSubtitleFile = o.subtitleFile;
+    if (o.preset) (job as any).__optimizePreset = o.preset;
+    if (o.batchSize) (job as any).__optimizeBatchSize = o.batchSize;
+    if (o.targetIds) (job as any).__optimizeTargetIds = o.targetIds;
+  }
+
   // Restore render params
   if (jobParams.render?.configV2) {
     (job as any).__renderConfigV2 = jobParams.render.configV2;
@@ -5839,7 +5907,7 @@ app.post('/api/jobs/:id/retry', async (req, res) => {
     (task as any).total = undefined;
   });
 
-  appendJobLog(job, '--- Job retried ---\n');
+  appendJobLog(job, `=== JOB RETRIED ===\nRe-queued for execution\n`);
   scheduleJobPersist(job);
 
   // Determine queue based on job type
@@ -5959,13 +6027,34 @@ app.post('/api/jobs/run', async (req, res) => {
     ? Math.min(3600, Math.round(renderPreviewSecondsRaw * 1000) / 1000)
     : undefined;
 
-  const translateSubtitleFile = typeof req.body?.subtitleFile === 'string' ? req.body.subtitleFile : undefined;
-  const translatePreset = req.body?.preset;
+  const translateNode = req.body?.graph?.nodes?.find((n: any) => n.type === 'translate');
+  const translateSubtitleFile = typeof req.body?.subtitleFile === 'string'
+    ? req.body.subtitleFile
+    : typeof translateNode?.params?.subtitleFile === 'string'
+      ? translateNode.params.subtitleFile
+      : undefined;
+  const translatePreset = req.body?.preset || translateNode?.params?.preset;
   const translateBatchSize = typeof req.body?.batchSize === 'number'
     ? req.body.batchSize
-    : typeof req.body?.graph?.nodes?.[0]?.params?.batchSize === 'number'
-      ? req.body.graph.nodes[0].params.batchSize
+    : typeof translateNode?.params?.batchSize === 'number'
+      ? translateNode.params.batchSize
       : undefined;
+  const translateTargetIds = req.body?.targetIds || translateNode?.params?.targetIds;
+
+  // Optimize params (can be separate or use same as translate)
+  const optimizeNode = req.body?.graph?.nodes?.find((n: any) => n.type === 'optimize');
+  const optimizeSubtitleFile = typeof req.body?.optimizeSubtitleFile === 'string'
+    ? req.body.optimizeSubtitleFile
+    : typeof optimizeNode?.params?.subtitleFile === 'string'
+      ? optimizeNode.params.subtitleFile
+      : translateSubtitleFile; // Default to same file as translate
+  const optimizePreset = req.body?.optimizePreset || optimizeNode?.params?.preset || translatePreset; // Default to same preset
+  const optimizeBatchSize = typeof req.body?.optimizeBatchSize === 'number'
+    ? req.body.optimizeBatchSize
+    : typeof optimizeNode?.params?.batchSize === 'number'
+      ? optimizeNode.params.batchSize
+      : translateBatchSize; // Default to same batch size
+  const optimizeTargetIds = req.body?.optimizeTargetIds || optimizeNode?.params?.targetIds;
 
   if (LOG_RENDER_V2_DEBUG && renderConfigV2) {
     console.log('RENDER_V2_DEBUG jobs/run received renderConfigV2', JSON.stringify({
@@ -6007,6 +6096,7 @@ app.post('/api/jobs/run', async (req, res) => {
     const hasUvr = tasks.some(task => task.type === 'uvr');
     const hasTts = tasks.some(task => task.type === 'tts');
     const hasTranslate = tasks.some(task => task.type === 'translate');
+    const hasOptimize = tasks.some(task => task.type === 'optimize');
     const hasRender = tasks.some(task => task.type === 'render');
     const createdAt = new Date().toISOString();
     const jobId = `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -6142,9 +6232,13 @@ app.post('/api/jobs/run', async (req, res) => {
       if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
       if (translatePreset) translatePayload.preset = translatePreset;
       if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
-      // Extract targetIds from graph node params or top-level
-      const targetIds = req.body?.targetIds || req.body?.graph?.nodes?.[0]?.params?.targetIds;
-      if (targetIds) translatePayload.targetIds = targetIds;
+      if (translateTargetIds) translatePayload.targetIds = translateTargetIds;
+
+      const optimizePayload: Record<string, any> = {};
+      if (optimizeSubtitleFile) optimizePayload.subtitleFile = optimizeSubtitleFile;
+      if (optimizePreset) optimizePayload.preset = optimizePreset;
+      if (optimizeBatchSize) optimizePayload.batchSize = optimizeBatchSize;
+      if (optimizeTargetIds) optimizePayload.targetIds = optimizeTargetIds;
 
       job = {
         id: jobId,
@@ -6180,6 +6274,7 @@ app.post('/api/jobs/run', async (req, res) => {
             removeLineBreaks: ttsRemoveLineBreaks
           } : undefined,
           translate: hasTranslate && Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
+          optimize: hasOptimize && Object.keys(optimizePayload).length > 0 ? optimizePayload : undefined,
           render: hasRender && Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
@@ -6207,6 +6302,9 @@ app.post('/api/jobs/run', async (req, res) => {
       if (translateSubtitleFile) (job as any).__translateSubtitleFile = translateSubtitleFile;
       if (translatePreset) (job as any).__translatePreset = translatePreset;
       if (translateBatchSize) (job as any).__translateBatchSize = translateBatchSize;
+      if (optimizeSubtitleFile) (job as any).__optimizeSubtitleFile = optimizeSubtitleFile;
+      if (optimizePreset) (job as any).__optimizePreset = optimizePreset;
+      if (optimizeBatchSize) (job as any).__optimizeBatchSize = optimizeBatchSize;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
@@ -6299,9 +6397,13 @@ app.post('/api/jobs/run', async (req, res) => {
       if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
       if (translatePreset) translatePayload.preset = translatePreset;
       if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
-      // Extract targetIds from graph node params or top-level
-      const targetIds = req.body?.targetIds || req.body?.graph?.nodes?.[0]?.params?.targetIds;
-      if (targetIds) translatePayload.targetIds = targetIds;
+      if (translateTargetIds) translatePayload.targetIds = translateTargetIds;
+
+      const optimizePayload: Record<string, any> = {};
+      if (optimizeSubtitleFile) optimizePayload.subtitleFile = optimizeSubtitleFile;
+      if (optimizePreset) optimizePayload.preset = optimizePreset;
+      if (optimizeBatchSize) optimizePayload.batchSize = optimizeBatchSize;
+      if (optimizeTargetIds) optimizePayload.targetIds = optimizeTargetIds;
 
       job = {
         id: jobId,
@@ -6332,6 +6434,7 @@ app.post('/api/jobs/run', async (req, res) => {
             removeLineBreaks: ttsRemoveLineBreaks
           } : undefined,
           translate: hasTranslate && Object.keys(translatePayload).length > 0 ? translatePayload : undefined,
+          optimize: hasOptimize && Object.keys(optimizePayload).length > 0 ? optimizePayload : undefined,
           render: hasRender && Object.keys(renderPayload).length > 0 ? renderPayload : undefined
         }
       };
@@ -6356,6 +6459,11 @@ app.post('/api/jobs/run', async (req, res) => {
       if (translatePayload.preset) (job as any).__translatePreset = translatePayload.preset;
       if (translatePayload.batchSize) (job as any).__translateBatchSize = translatePayload.batchSize;
       if (translatePayload.targetIds) (job as any).__translateTargetIds = translatePayload.targetIds;
+      // Map optimize params
+      if (optimizePayload.subtitleFile) (job as any).__optimizeSubtitleFile = optimizePayload.subtitleFile;
+      if (optimizePayload.preset) (job as any).__optimizePreset = optimizePayload.preset;
+      if (optimizePayload.batchSize) (job as any).__optimizeBatchSize = optimizePayload.batchSize;
+      if (optimizePayload.targetIds) (job as any).__optimizeTargetIds = optimizePayload.targetIds;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
