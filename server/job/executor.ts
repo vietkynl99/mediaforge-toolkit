@@ -10,6 +10,7 @@ import * as SubtitleAI from '../subtitle-ai.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { MEDIA_VAULT_ROOT } from '../constants.js';
+import { parseSrtForTranslation } from '../subtitleCues.js';
 
 export type ProgressCallback = (progress: number, message?: string, processed?: number, total?: number) => void;
 export type LogCallback = (message: string) => void;
@@ -145,26 +146,35 @@ export class TranslateTaskExecutor extends TaskExecutor {
 
     try {
       const content = await fs.readFile(fullPath, 'utf-8');
-      const parsed = JSON.parse(content);
+      const lowerPath = fullPath.toLowerCase();
       
-      if (parsed && parsed.version === "1.0" && Array.isArray(parsed.segments)) {
-        isSktProject = true;
-        originalProject = parsed;
-        subtitleData = parsed.segments.map((s: any) => ({
-          id: String(s.id),
-          startTime: s.start,
-          endTime: s.end,
-          originalText: s.original,
-          translatedText: s.translated,
-          text: s.translated
-        }));
-      } else if (Array.isArray(parsed)) {
-        subtitleData = parsed.map((s: any) => ({
-          ...s,
-          id: String(s.id)
-        }));
+      if (lowerPath.endsWith('.srt')) {
+        // Parse SRT file format
+        subtitleData = parseSrtForTranslation(content);
+        context.onLog(`Parsed as SRT format with ${subtitleData.length} segments`);
       } else {
-        throw new Error('Invalid subtitle format: expected an array of cues or a .sktproject object');
+        // Try JSON parse for .sktproject or .json files
+        const parsed = JSON.parse(content);
+        
+        if (parsed && parsed.version === "1.0" && Array.isArray(parsed.segments)) {
+          isSktProject = true;
+          originalProject = parsed;
+          subtitleData = parsed.segments.map((s: any) => ({
+            id: String(s.id),
+            startTime: s.start,
+            endTime: s.end,
+            originalText: s.original,
+            translatedText: s.translated,
+            text: s.translated
+          }));
+        } else if (Array.isArray(parsed)) {
+          subtitleData = parsed.map((s: any) => ({
+            ...s,
+            id: String(s.id)
+          }));
+        } else {
+          throw new Error('Invalid subtitle format: expected an array of cues or a .sktproject object');
+        }
       }
     } catch (err) {
       const errorMsg = `Failed to read or parse subtitle file at ${fullPath}: ${err instanceof Error ? err.message : String(err)}`;
@@ -347,26 +357,35 @@ export class OptimizeTaskExecutor extends TaskExecutor {
 
     try {
       const content = await fs.readFile(fullPath, 'utf-8');
-      const parsed = JSON.parse(content);
-
-      if (parsed && parsed.version === "1.0" && Array.isArray(parsed.segments)) {
-        isSktProject = true;
-        originalProject = parsed;
-        subtitleData = parsed.segments.map((s: any) => ({
-          id: String(s.id),
-          startTime: s.start,
-          endTime: s.end,
-          originalText: s.original,
-          translatedText: s.translated,
-          text: s.translated
-        }));
-      } else if (Array.isArray(parsed)) {
-        subtitleData = parsed.map((s: any) => ({
-          ...s,
-          id: String(s.id)
-        }));
+      const lowerPath = fullPath.toLowerCase();
+      
+      if (lowerPath.endsWith('.srt')) {
+        // Parse SRT file format
+        subtitleData = parseSrtForTranslation(content);
+        context.onLog(`Parsed as SRT format with ${subtitleData.length} segments`);
       } else {
-        throw new Error('Invalid subtitle format: expected an array of cues or a .sktproject object');
+        // Try JSON parse for .sktproject or .json files
+        const parsed = JSON.parse(content);
+
+        if (parsed && parsed.version === "1.0" && Array.isArray(parsed.segments)) {
+          isSktProject = true;
+          originalProject = parsed;
+          subtitleData = parsed.segments.map((s: any) => ({
+            id: String(s.id),
+            startTime: s.start,
+            endTime: s.end,
+            originalText: s.original,
+            translatedText: s.translated,
+            text: s.translated
+          }));
+        } else if (Array.isArray(parsed)) {
+          subtitleData = parsed.map((s: any) => ({
+            ...s,
+            id: String(s.id)
+          }));
+        } else {
+          throw new Error('Invalid subtitle format: expected an array of cues or a .sktproject object');
+        }
       }
     } catch (err) {
       const errorMsg = `Failed to read or parse subtitle file at ${fullPath}: ${err instanceof Error ? err.message : String(err)}`;

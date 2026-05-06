@@ -16,6 +16,7 @@ import { Layout } from './components/Layout';
 import { SegmentList } from './components/SegmentList';
 import { AnalyzerPanel } from './components/AnalyzerPanel';
 import { PresetPage } from './components/PresetPage';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import { vaultService } from '../../services/vault';
 import { VaultFolder, VaultFile, VaultStatus } from '../../types/vault';
 
@@ -58,7 +59,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   // State
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [workingFilePath, setWorkingFilePath] = useState<string | null>(null); // Actual file path for jobs (may differ from selectedFile if .srt was converted)
   const [fileLoading, setFileLoading] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState<{ open: boolean; srtFile: VaultFile | null; sktProjectPath: string; existingSktProject: VaultFile | null }>({ open: false, srtFile: null, sktProjectPath: '', existingSktProject: null });
   const [deeplinkPending, setDeeplinkPending] = useState<boolean>(() => {
     // Check if there's a deeplink in URL on initial mount
     if (typeof window === 'undefined') return false;
@@ -317,16 +320,48 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   );
 
   const handleSelectFile = async (file: VaultFile, options?: { silent?: boolean }) => {
+    const isSrtFile = file.relativePath?.toLowerCase().endsWith('.srt');
+    
+    // If .srt file, check if .sktproject already exists (skip check if silent mode for auto-reload)
+    if (isSrtFile && selectedFolder && !options?.silent) {
+      const { baseName } = parseFileName(file.name);
+      const sktProjectPath = `${selectedFolder.name}/output/${baseName}.sktproject`;
+      const existingSktProject = selectedFolder.files.find(f => 
+        f.relativePath === sktProjectPath || 
+        f.name.toLowerCase() === `${baseName.toLowerCase()}.sktproject`
+      );
+      
+      if (existingSktProject) {
+        // Show confirmation modal with the existing .sktproject file info
+        setConfirmOverwrite({ open: true, srtFile: file, sktProjectPath, existingSktProject });
+        return;
+      }
+    }
+    
+    // Proceed with normal file loading
+    await proceedWithFileLoad(file, options);
+  };
+
+  // Reload the working file (.sktproject) during job polling
+  const reloadWorkingFile = async () => {
+    if (!workingFilePath) return;
+    try {
+      const { segments: parsedSegments } = await vaultService.loadSubtitleFile(workingFilePath);
+      const fixedSegments = parsedSegments.map(s => ({
+        ...s,
+        originalText: performLocalFix(s.originalText || ""),
+        translatedText: performLocalFix(s.translatedText || "")
+      }));
+      setSegments(fixedSegments);
+    } catch (err) {
+      console.error('Failed to reload working file:', err);
+    }
+  };
+
+  const proceedWithFileLoad = async (file: VaultFile, options?: { silent?: boolean }) => {
     try {
       setFileLoading(true);
       isLoadingFileRef.current = true;
-      setSelectedFileId(file.id);
-
-      // Update URL with deeplink
-      if (typeof window !== 'undefined' && selectedFolderId) {
-        const params = new URLSearchParams({ folderId: selectedFolderId, fileId: file.id });
-        window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
-      }
 
       const { segments: parsedSegments, preset } = await vaultService.loadSubtitleFile(file.relativePath);
 
@@ -346,6 +381,38 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         setTranslationPreset({ ...preset, humor_level: humorLevel });
       }
 
+      // If file is .srt, auto-create .sktproject and switch to it
+      const isSrtFile = file.relativePath?.toLowerCase().endsWith('.srt');
+      let workingFilePathValue = file.relativePath || null;
+      let workingFileId = file.id;
+      let workingFileName = file.name;
+      
+      if (isSrtFile && selectedFolder) {
+        const sktProjectPath = `${selectedFolder.name}/output/${baseName}.sktproject`;
+        const content = generateSktProject(fixedSegments, baseName, preset || translationPreset);
+        await vaultService.saveSubtitleFile(sktProjectPath, content);
+        workingFilePathValue = sktProjectPath;
+        workingFileId = sktProjectPath; // Use the full path as fileId for cleaner URL
+        workingFileName = `${baseName}.sktproject`;
+        
+        // Update file name to reflect .sktproject
+        setFileName(workingFileName);
+        setIsDirty(false);
+        setLastSavedAt(new Date());
+        
+        if (!options?.silent) {
+          showToast('success', `Created project file: ${baseName}.sktproject`);
+        }
+      }
+      
+      // Set the working file ID and update URL deeplink
+      setSelectedFileId(workingFileId);
+      setWorkingFilePath(workingFilePathValue);
+      if (typeof window !== 'undefined' && selectedFolderId) {
+        const params = new URLSearchParams({ folderId: selectedFolderId, fileId: workingFileId });
+        window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+      }
+
       // Only reset translation state if we are NOT in the middle of a job
       setTranslationState(prev => {
         if (prev.status === 'running' || prev.status === 'queued') {
@@ -356,7 +423,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
 
       // Check for running job for this file and restore state if found
       try {
-        const jobsRes = await fetch(`/api/jobs?file=${encodeURIComponent(file.relativePath)}&status=processing,queued&limit=1`);
+        const jobsRes = await fetch(`/api/jobs?file=${encodeURIComponent(workingFilePathValue || '')}&status=processing,queued&limit=1`);
         if (jobsRes.ok) {
           const jobsData = await jobsRes.json();
           if (jobsData.jobs && jobsData.jobs.length > 0) {
@@ -386,7 +453,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       setFilter('all');
       setCurrentPage(1);
       setSelectedIds(new Set());
-      if (!options?.silent) {
+      if (!options?.silent && !isSrtFile) {
         showToast('success', `Loaded ${fixedSegments.length} segments.`);
       }
     } catch (err) {
@@ -451,10 +518,31 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       const folder = vaultFolders.find(f => f.id === folderId);
       if (folder) {
         setSelectedFolderId(folderId);
-        const file = folder.files?.find(f => f.id === fileId);
+        
+        // Try to find file by id first
+        let file = folder.files?.find(f => f.id === fileId);
+        
+        // If not found and fileId looks like a path (contains /), find by relativePath
+        if (!file && fileId.includes('/')) {
+          file = folder.files?.find(f => f.relativePath === fileId);
+        }
+        
         if (file) {
           // Load file immediately, no delay needed
           handleSelectFile(file).finally(() => {
+            setDeeplinkPending(false);
+          });
+        } else if (fileId.includes('/')) {
+          // File not in vault (newly created .sktproject), try to load directly by path
+          // Create a virtual file object
+          const virtualFile: VaultFile = {
+            id: fileId,
+            name: fileId.split('/').pop() || fileId,
+            relativePath: fileId,
+            type: 'subtitle',
+            size: '0 KB'
+          };
+          proceedWithFileLoad(virtualFile).finally(() => {
             setDeeplinkPending(false);
           });
         } else {
@@ -839,11 +927,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       setTranslationState({ status: 'queued', processed: 0, total: needingTranslation.length });
       setProgress(0);
 
+      // Use workingFilePath (set when file was opened, may be .sktproject after .srt conversion)
+      const subtitleFile = workingFilePath;
+      if (!subtitleFile) {
+        throw new Error('File path not found');
+      }
+
       const payload = {
         name: `Translate: ${currentFile.name}`,
         projectName: selectedFolder?.name,
-        inputPath: currentFile.relativePath,
-        subtitleFile: currentFile.relativePath,
+        inputPath: subtitleFile,
+        subtitleFile: subtitleFile,
         preset: translationPreset,
         graph: {
           nodes: [
@@ -852,8 +946,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
               type: 'translate',
               label: 'Translate AI',
               params: {
-                inputPath: currentFile.relativePath,
-                subtitleFile: currentFile.relativePath,
+                inputPath: subtitleFile,
+                subtitleFile: subtitleFile,
                 preset: translationPreset,
                 // Send targetIds when: selection mode OR filter is active (not 'all')
                 targetIds: (aiScope.mode === 'selected' || filter !== 'all')
@@ -973,12 +1067,10 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           setProgress(newProgress);
 
           // Reload file content on every progress update for live updates
-          if (newProgress > lastLoadedProgressRef.current) {
-            const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
-            if (currentFile) {
-              handleSelectFile(currentFile, { silent: true });
-              lastLoadedProgressRef.current = newProgress;
-            }
+          if (newProgress > lastLoadedProgressRef.current && workingFilePath) {
+            // Reload the working file (.sktproject) directly, not the original .srt
+            reloadWorkingFile();
+            lastLoadedProgressRef.current = newProgress;
           }
         } else if (job.status === 'pending' || job.status === 'queued') {
           // Keep initial state while waiting for job to start
@@ -1044,9 +1136,16 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
 
     try {
       const projectName = selectedFolder?.name || '';
+      
+      // Use workingFilePath (set when file was opened, may be .sktproject after .srt conversion)
+      const subtitleFile = workingFilePath;
+      if (!subtitleFile) {
+        throw new Error('File path not found');
+      }
+      
       const payload = {
         name: `Optimize: ${currentFile.name}`,
-        inputPath: currentFile.relativePath,
+        inputPath: subtitleFile,
         graph: {
           nodes: [
             {
@@ -1054,8 +1153,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
               type: 'optimize',
               label: 'Optimize AI',
               params: {
-                inputPath: currentFile.relativePath,
-                subtitleFile: currentFile.relativePath,
+                inputPath: subtitleFile,
+                subtitleFile: subtitleFile,
                 preset: translationPreset,
                 // Send targetIds when: selection mode OR filter is active (not 'all')
                 targetIds: (aiScope.mode === 'selected' || filter !== 'all')
@@ -2391,6 +2490,24 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
             </div>
           </div>
         )}
+
+        {/* Confirm Overwrite Modal */}
+        <ConfirmModal
+          open={confirmOverwrite.open}
+          title="Project file already exists"
+          description="A .sktproject file for this subtitle already exists. Opening this .srt file will overwrite the existing project. Do you want to continue?"
+          confirmLabel="Continue and Overwrite"
+          variant="danger"
+          onClose={() => setConfirmOverwrite({ open: false, srtFile: null, sktProjectPath: '', existingSktProject: null })}
+          onConfirm={async () => {
+            // Open the existing .sktproject file instead of the .srt
+            if (confirmOverwrite.existingSktProject) {
+              await proceedWithFileLoad(confirmOverwrite.existingSktProject);
+            } else if (confirmOverwrite.srtFile) {
+              await proceedWithFileLoad(confirmOverwrite.srtFile);
+            }
+          }}
+        />
       </Layout>
     </div>
   );

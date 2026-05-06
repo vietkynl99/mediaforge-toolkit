@@ -196,3 +196,87 @@ export const parseSktProjectCues = (content: string, removeLineBreaks: boolean) 
   }
   return cues;
 };
+
+/**
+ * Check if text contains Chinese characters
+ */
+const isChinese = (text: string): boolean => {
+  return /[\u4e00-\u9fff]/.test(text);
+};
+
+/**
+ * Check if text is likely Vietnamese (contains Vietnamese-specific characters or patterns)
+ */
+const isLikelyVietnamese = (text: string): boolean => {
+  // Vietnamese-specific characters and tone marks
+  return /[ăâđêôơưàằầèềìòồờùừỳáắấéếíóốớúứýảẳẩẻểỉỏổởủửỷạặậẹệịọộợụựỵãẵẫẽễĩõỗỡũữỹ]/i.test(text);
+};
+
+/**
+ * Format for translation/optimization executor
+ */
+export type SrtTranslationSegment = {
+  id: string;
+  startTime: string;
+  endTime: string;
+  originalText: string | null;
+  translatedText: string | null;
+};
+
+/**
+ * Parse SRT file for translation/optimization jobs.
+ * Returns segments with originalText (Chinese) and translatedText (Vietnamese if present).
+ */
+export const parseSrtForTranslation = (content: string): SrtTranslationSegment[] => {
+  const segments: SrtTranslationSegment[] = [];
+  const blocks = content.trim().split(/\n\s*\n/);
+
+  // Detect if file is Chinese-dominant
+  const allLines = blocks.flatMap(block => block.split('\n').map(l => l.trim()).filter(l => l !== ''));
+  const chineseLineCount = allLines.filter(isChinese).length;
+  const latinLineCount = allLines.filter(line => /[A-Za-z]/.test(line)).length;
+  const chineseDominant = chineseLineCount > latinLineCount;
+
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(l => l !== '');
+    if (lines.length < 2) continue;
+
+    const id = parseInt(lines[0] ?? '', 10);
+    const timeMatch = (lines[1] ?? '').match(/(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})/);
+
+    if (timeMatch && !isNaN(id)) {
+      const startTime = timeMatch[1] ?? '';
+      const endTime = timeMatch[2] ?? '';
+      const contentLines = lines.slice(2);
+
+      const cnLines: string[] = [];
+      const vnLines: string[] = [];
+
+      for (const line of contentLines) {
+        if (chineseDominant) {
+          if (isChinese(line) || !isLikelyVietnamese(line)) {
+            cnLines.push(line);
+          } else {
+            vnLines.push(line);
+          }
+        } else {
+          if (isChinese(line)) {
+            cnLines.push(line);
+          } else {
+            vnLines.push(line);
+          }
+        }
+      }
+
+      segments.push({
+        id: String(id),
+        startTime,
+        endTime,
+        originalText: cnLines.length > 0 ? cnLines.join('\n') : null,
+        translatedText: vnLines.length > 0 ? vnLines.join('\n') : null
+      });
+    }
+  }
+
+  return segments;
+};
