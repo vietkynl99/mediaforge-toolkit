@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { MEDIA_VAULT_ROOT } from '../constants.js';
 import { parseSrtForTranslation } from '../subtitleCues.js';
+import { normalizeAiText, splitToTwoLinesIfLong, collapseToSingleLineIfShort } from '../../shared/text-utils.js';
 
 /**
  * Attempts to repair common JSON errors from AI responses
@@ -306,16 +307,27 @@ ${result.text}`);
             const cue = subtitleData.find((c: any) => String(c.id) === String(item.id));
             if (cue) {
               matchedCount++;
-              cue.translatedText = item.text;
-              cue.text = item.text;
-              cue.translated = item.text; // Ensure all variants are set
+              // Normalize, split long lines, and collapse short lines
+              let processedText = normalizeAiText(item.text);
+              if (effectiveAutoSplitLongLines) {
+                processedText = splitToTwoLinesIfLong(processedText, effectiveMaxSingleLineWords);
+              }
+              processedText = collapseToSingleLineIfShort(processedText, effectiveMaxSingleLineWords);
+              cue.translatedText = processedText;
+              cue.text = processedText;
+              cue.translated = processedText; // Ensure all variants are set
             }
 
             // ALSO update the originalProject.segments directly if it's an sktproject
             if (isSktProject && originalProject?.segments) {
               const originalSeg = originalProject.segments.find((s: any) => String(s.id) === String(item.id));
               if (originalSeg) {
-                originalSeg.translated = item.text;
+                let processedText = normalizeAiText(item.text);
+                if (effectiveAutoSplitLongLines) {
+                  processedText = splitToTwoLinesIfLong(processedText, effectiveMaxSingleLineWords);
+                }
+                processedText = collapseToSingleLineIfShort(processedText, effectiveMaxSingleLineWords);
+                originalSeg.translated = processedText;
               }
             }
           }

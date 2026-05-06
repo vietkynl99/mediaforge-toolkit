@@ -94,21 +94,69 @@ export class OpenRouterProvider implements AiProvider {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
     };
 
-    // Add structured output if responseSchema is provided
+    // Try structured output first, fallback to json_object if not supported
+    let useStructuredOutput = false;
     if (params.responseMimeType === 'application/json' && params.responseSchema) {
-      const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
-      chatRequest.responseFormat = {
-        type: 'json_schema',
-        jsonSchema: {
-          name: 'response',
-          strict: true,
-          schema: jsonSchema,
-        },
-      };
+      try {
+        const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
+        chatRequest.responseFormat = {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'response',
+            strict: true,
+            schema: jsonSchema,
+          },
+        };
+        useStructuredOutput = true;
+      } catch (schemaError) {
+        console.warn('Failed to convert schema, falling back to json_object mode:', schemaError);
+      }
+    }
+
+    // Fallback to json_object mode for JSON requests without valid schema
+    if (params.responseMimeType === 'application/json' && !useStructuredOutput) {
+      chatRequest.responseFormat = { type: 'json_object' };
     }
 
     // Call the model using the SDK
-    const response = await this.client.chat.send({ chatRequest });
+    let response: any;
+    try {
+      response = await this.client.chat.send({ chatRequest });
+    } catch (apiError: any) {
+      // Log detailed error info
+      console.error('[OpenRouter] API call failed:', {
+        message: apiError.message,
+        rawMessage: apiError.rawMessage,
+        rawValue: apiError.rawValue,
+        model: this.model,
+        useStructuredOutput,
+      });
+
+      // If structured output failed, try again with json_object fallback
+      if (useStructuredOutput && (
+        apiError.message?.includes('validation') ||
+        apiError.message?.includes('schema') ||
+        apiError.rawMessage?.includes('validation')
+      )) {
+        console.warn('[OpenRouter] Structured output failed, falling back to json_object mode');
+        chatRequest.responseFormat = { type: 'json_object' };
+        try {
+          response = await this.client.chat.send({ chatRequest });
+        } catch (fallbackError: any) {
+          console.error('[OpenRouter] Fallback json_object mode also failed:', {
+            message: fallbackError.message,
+            rawValue: fallbackError.rawValue,
+          });
+          // Extract upstream error message if available
+          const upstreamError = fallbackError.rawValue?.error?.message || fallbackError.message;
+          throw new Error(`OpenRouter API failed: ${upstreamError}`);
+        }
+      } else {
+        // Extract upstream error message if available
+        const upstreamError = apiError.rawValue?.error?.message || apiError.message;
+        throw new Error(`OpenRouter API failed: ${upstreamError}`);
+      }
+    }
 
     // Get the text response
     let text = response.choices?.[0]?.message?.content || '';

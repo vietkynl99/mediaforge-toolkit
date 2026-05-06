@@ -10,7 +10,8 @@ import {
   performLocalFix, generateSRT, timeToSeconds, parseFileName, generateExportFileName,
   calculateCPS
 } from './services/subtitleLogic';
-import { translateBatch, analyzeTranslationStyle, splitToTwoLinesIfLong } from './services/geminiService';
+import { translateBatch, analyzeTranslationStyle } from './services/geminiService';
+import { splitToTwoLinesIfLong } from '../../../shared/text-utils.js';
 import { SubtitleSegment, TranslationPreset, SubtitleAppSettings, ApiUsage, DEFAULT_SUBTITLE_SETTINGS, SubtitleStatus, AnalysisResult } from './types';
 import { Layout } from './components/Layout';
 import { SegmentList } from './components/SegmentList';
