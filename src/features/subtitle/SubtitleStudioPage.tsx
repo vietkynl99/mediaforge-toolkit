@@ -2501,10 +2501,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           variant="danger"
           onClose={() => setConfirmOverwrite({ open: false, srtFile: null, sktProjectPath: '', existingSktProject: null })}
           onConfirm={async () => {
-            // Open the existing .sktproject file instead of the .srt
-            if (confirmOverwrite.existingSktProject) {
-              await proceedWithFileLoad(confirmOverwrite.existingSktProject);
-            } else if (confirmOverwrite.srtFile) {
+            // Load the .srt file to create a fresh project (overwriting existing .sktproject)
+            if (confirmOverwrite.srtFile) {
               await proceedWithFileLoad(confirmOverwrite.srtFile);
             }
           }}
