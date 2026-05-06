@@ -909,6 +909,14 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
 
   const handleTranslate = async () => {
     if (segments.length === 0) return;
+
+    // Check if translation preset is configured (has title_or_summary)
+    if (!translationPreset?.reference?.title_or_summary?.trim()) {
+      showToast('warning', "Please configure Translation Style before translating.");
+      setShowTranslationStylePopup(true);
+      return;
+    }
+
     const needingTranslation = aiScope.untranslated;
     if (needingTranslation.length === 0) {
       showToast('info', "All segments are already translated.");
@@ -1104,6 +1112,13 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
 
   // Optimize
   const handleAiOptimize = async () => {
+    // Check if translation preset is configured (has title_or_summary)
+    if (!translationPreset?.reference?.title_or_summary?.trim()) {
+      showToast('warning', "Please configure Translation Style before optimizing.");
+      setShowTranslationStylePopup(true);
+      return;
+    }
+
     // Check for API key based on provider
     const provider = settingsRef.current.provider || 'gemini';
     const apiKey = provider === 'openrouter' 
