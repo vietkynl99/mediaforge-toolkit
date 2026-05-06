@@ -5180,7 +5180,7 @@ export default function App() {
       }
     }
 
-    const sendPipeline = async (overwrite: boolean, continueIfExists: boolean = false) => {
+    const sendPipeline = async (continueIfExists: boolean = false) => {
       const pipelinePayload: Record<string, any> = runPipelineHasDownload
         ? {
           url: downloadUrl.trim(),
@@ -5279,9 +5279,6 @@ export default function App() {
       if (options?.forceNew) {
         pipelinePayload.forceNew = true;
       }
-      if (overwrite) {
-        pipelinePayload.overwrite = true;
-      }
       if (continueIfExists) {
         pipelinePayload.continueIfExists = true;
       }
@@ -5329,61 +5326,24 @@ export default function App() {
         body: JSON.stringify(pipelinePayload)
       });
       const data = await response.json().catch(() => ({}));
-      if (response.status === 409) {
-        return { conflict: true, data };
-      }
       if (!response.ok) {
         throw new Error(data.error || 'Unable to run pipeline');
       }
       if (data?.skipped) {
         showToast(data.message || 'Project already exists. Skipped download.', 'warning');
         setShowRunPipeline(false);
-        return { conflict: false, done: true };
+        return;
       }
       await jobsHandleRef.current?.reloadJobs();
       showToast('Pipeline queued', 'success');
       setShowRunPipeline(false);
       navigateTab('dashboard');
-      return { conflict: false, done: true };
     };
 
     setRunPipelineSubmitting(true);
     try {
-      const result = await sendPipeline(false);
-      if (result?.conflict) {
-        setRunPipelineSubmitting(false);
-        openConfirm(
-          {
-            title: 'Existing output detected',
-            description: 'Output already exists. Choose an action:',
-            confirmLabel: 'Overwrite',
-            secondaryLabel: 'Continue',
-            variant: 'danger'
-          },
-          async () => {
-            setRunPipelineSubmitting(true);
-            try {
-              await sendPipeline(true, false);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : 'Unable to run pipeline';
-              showToast(message, 'error');
-            } finally {
-              setRunPipelineSubmitting(false);
-            }
-          },
-          async () => {
-            setRunPipelineSubmitting(true);
-            try {
-              await sendPipeline(false, true);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : 'Unable to run pipeline';
-              showToast(message, 'error');
-            } finally {
-              setRunPipelineSubmitting(false);
-            }
-          }
-        );
-      }
+      // Always continue with existing outputs without prompting
+      await sendPipeline(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to run pipeline';
       showToast(message, 'error');

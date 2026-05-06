@@ -3765,7 +3765,6 @@ app.post('/api/jobs/run', async (req, res) => {
   const outputFormat = typeof req.body?.outputFormat === 'string' ? req.body.outputFormat : 'Mp3';
   const ttsOverlapMode = req.body?.overlapMode === 'overlap' ? 'overlap' : 'truncate';
   const ttsRemoveLineBreaks = req.body?.removeLineBreaks !== false;
-  const overwrite = req.body?.overwrite === true;
   const continueIfExists = req.body?.continueIfExists === true;
   const ttsVoice = typeof req.body?.voice === 'string' ? req.body.voice.trim() : '';
   const ttsRate = typeof req.body?.rate === 'number' ? req.body.rate : undefined;
@@ -3925,39 +3924,16 @@ app.post('/api/jobs/run', async (req, res) => {
         
         // If download is fully complete, treat as existing project
         if (isDownloadFullyComplete) {
-          if (!overwrite && !continueIfExists) {
+          if (!continueIfExists) {
             res.status(409).json({ error: 'Download already completed. Project outputs already exist.', kind: 'download' });
             return;
           }
         } else {
           // Download is not complete - check if there are other outputs (UVR, etc.)
           const hasUvrOutputs = await hasFiles(outputDir);
-          if (hasUvrOutputs && !overwrite && !continueIfExists) {
+          if (hasUvrOutputs && !continueIfExists) {
             res.status(409).json({ error: 'Project has existing outputs (UVR, etc.).', kind: 'download' });
             return;
-          }
-        }
-        
-        // Clean old outputs when overwrite is requested
-        if (overwrite) {
-          const hasUvr = tasks.some(task => task.type === 'uvr');
-          if (hasUvr) {
-            try {
-              const existing = await fs.readdir(outputDir).catch(() => []);
-              for (const name of existing) {
-                const itemPath = path.join(outputDir, name);
-                const stat = await fs.stat(itemPath).catch(() => null);
-                if (stat) {
-                  if (stat.isDirectory()) {
-                    await fs.rm(itemPath, { recursive: true, force: true }).catch(() => null);
-                  } else {
-                    await fs.unlink(itemPath).catch(() => null);
-                  }
-                }
-              }
-            } catch (err) {
-              console.error('Failed to clean old outputs for overwrite:', err);
-            }
           }
         }
       }
@@ -4024,8 +4000,7 @@ app.post('/api/jobs/run', async (req, res) => {
             url: downloadUrl,
             mode: downloadMode,
             noPlaylist: downloadNoPlaylist,
-            subLangs: downloadSubLangs,
-            overwrite
+            subLangs: downloadSubLangs
           },
           uvr: hasUvr ? {
             backend,
@@ -4093,36 +4068,8 @@ app.post('/api/jobs/run', async (req, res) => {
       const outputDir = path.join(projectRoot, UVR_OUTPUT_DIRNAME);
       await fs.mkdir(outputDir, { recursive: true });
 
-      // Clean old outputs when overwrite is requested to avoid UVR CLI reusing stale split folders
-      if (overwrite) {
-        const baseName = path.parse(fullPath).name.toLowerCase();
-        const hasUvr = tasks.some(task => task.type === 'uvr');
-        const hasTts = tasks.some(task => task.type === 'tts');
-        
-        if (hasUvr || hasTts) {
-          try {
-            const existing = await fs.readdir(outputDir).catch(() => []);
-            // Delete old UVR outputs and split folders that match the input file
-            for (const name of existing) {
-              const nameLower = name.toLowerCase();
-              if (nameLower.includes(baseName) || nameLower.startsWith('uvr_cli_split_')) {
-                const itemPath = path.join(outputDir, name);
-                const stat = await fs.stat(itemPath).catch(() => null);
-                if (stat) {
-                  if (stat.isDirectory()) {
-                    await fs.rm(itemPath, { recursive: true, force: true }).catch(() => null);
-                  } else {
-                    await fs.unlink(itemPath).catch(() => null);
-                  }
-                }
-              }
-            }
-          } catch (err) {
-            console.error('Failed to clean old outputs for overwrite:', err);
-          }
-        }
-      } else if (!continueIfExists) {
-        // Only check for existing outputs if not continuing
+      // Check for existing outputs if not continuing
+      if (!continueIfExists) {
         const existing = await fs.readdir(outputDir).catch(() => []);
         const baseName = path.parse(fullPath).name.toLowerCase();
         const hasUvr = tasks.some(task => task.type === 'uvr');
