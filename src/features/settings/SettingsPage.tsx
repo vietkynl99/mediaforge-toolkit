@@ -258,35 +258,20 @@ export function SettingsPage() {
                 <span className="w-2 h-2 rounded-full bg-blue-500" />
                 Gemini Configuration
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                    Model
-                  </label>
-                  <select
-                    value={config.ai?.geminiModel || config.ai?.model || 'gemini-2.5-flash'}
-                    onChange={e => updateAiSetting('geminiModel', e.target.value)}
-                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast)</option>
-                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Balanced)</option>
-                    <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                    <option value="gemini-3-pro-preview">Gemini 3 Pro Preview (Highest Quality)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                    Translation Batch Size
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={500}
-                    value={config.ai?.translationBatchSize || 100}
-                    onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
-                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+              <div>
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  Model
+                </label>
+                <select
+                  value={config.ai?.geminiModel || config.ai?.model || 'gemini-2.5-flash'}
+                  onChange={e => updateAiSetting('geminiModel', e.target.value)}
+                  className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (Balanced)</option>
+                  <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                  <option value="gemini-3-pro-preview">Gemini 3 Pro Preview (Highest Quality)</option>
+                </select>
               </div>
               <div className="relative">
                 <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
@@ -319,35 +304,20 @@ export function SettingsPage() {
                 <span className="w-2 h-2 rounded-full bg-purple-500" />
                 OpenRouter Configuration
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                    Model
-                  </label>
-                  <input
-                    type="text"
-                    value={config.ai?.openrouterModel || 'openrouter/auto'}
-                    onChange={e => updateAiSetting('openrouterModel', e.target.value)}
-                    placeholder="e.g., openrouter/auto, anthropic/claude-3-opus"
-                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
-                  />
-                  <p className="text-[10px] text-zinc-500 mt-1">
-                    Browse models at <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/models</a>.
-                  </p>
-                </div>
-                <div>
-                  <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                    Translation Batch Size
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={500}
-                    value={config.ai?.translationBatchSize || 100}
-                    onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
-                    className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+              <div>
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  Model
+                </label>
+                <input
+                  type="text"
+                  value={config.ai?.openrouterModel || 'openrouter/auto'}
+                  onChange={e => updateAiSetting('openrouterModel', e.target.value)}
+                  placeholder="e.g., openrouter/auto, anthropic/claude-3-opus"
+                  className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+                <p className="text-[10px] text-zinc-500 mt-1">
+                  Browse models at <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/models</a>.
+                </p>
               </div>
               <div className="relative">
                 <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
@@ -376,7 +346,20 @@ export function SettingsPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-zinc-800">
+          <div className="grid grid-cols-3 gap-4 pt-2 border-t border-zinc-800">
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                Translation Batch Size
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={config.ai?.translationBatchSize || 100}
+                onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
+                className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+              />
+            </div>
             <div>
               <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
                 Max Words per Line
