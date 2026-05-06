@@ -3,7 +3,13 @@ import { SubtitleSegment, TranslationPreset, AiModel } from "../types";
 import { timeToSeconds } from "./subtitleLogic";
 
 function normalizeAiText(raw: string): string {
-  return raw.replace(/\r\n/g, '\n').replace(/\\n/g, '\n');
+  return raw
+    .replace(/\r\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\n/g, '\n')  // Handle double-escaped \n
+    .replace(/\n+/g, '\n')  // Normalize multiple newlines to single
+    .replace(/\s*\n\s*/g, '\n')  // Remove spaces around newlines
+    .trim();
 }
 
 function countWords(text: string): number {
@@ -16,7 +22,12 @@ function countWords(text: string): number {
 
 export function splitToTwoLinesIfLong(text: string, maxWords: number): string {
   if (!text) return text;
-  const normalized = text.replace(/\s*\n\s*/g, '\n').replace(/[ \t]+/g, ' ').trim();
+  // Normalize: ensure clean newlines and spaces
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\s*\n\s*/g, '\n')  // Remove spaces around newlines
+    .replace(/[ \t]+/g, ' ')     // Normalize spaces
+    .trim();
   if (!normalized) return text;
 
   const strongPunct = /[.!?…。！？]+$/;
@@ -87,19 +98,19 @@ export function splitToTwoLinesIfLong(text: string, maxWords: number): string {
     const line1Words = countWords(lines[0]);
     const line2Words = countWords(lines[1]);
     const totalWords = line1Words + line2Words;
-    // If total words fit in a single line, merge them
+    // If total words fit in a single line, merge them with space
     if (totalWords <= maxWords) {
-      return `${lines[0]} ${lines[1]}`.replace(/\s+/g, ' ').trim();
+      return lines.join(' ').replace(/\s+/g, ' ').trim();
     }
     // If one line exceeds maxWords, rebalance
     if (totalWords <= maxWords * 2 && (line1Words > maxWords || line2Words > maxWords)) {
-      const merged = `${lines[0]} ${lines[1]}`.replace(/\s+/g, ' ').trim();
+      const merged = lines.join(' ').replace(/\s+/g, ' ').trim();
       const rebalanced = splitLine(merged);
       if (rebalanced.length === 2) return rebalanced.join('\n');
     }
   }
   if (lines.length > 2) {
-    lines = [lines.join(' ')];
+    lines = [lines.join(' ').replace(/\s+/g, ' ').trim()];
   }
   const finalLines = lines.flatMap(splitLine);
   return finalLines.join('\n');
@@ -107,7 +118,9 @@ export function splitToTwoLinesIfLong(text: string, maxWords: number): string {
 
 function collapseToSingleLineIfShort(text: string, maxWords: number = 10): string {
   if (!text.includes('\n')) return text;
-  const singleLine = text.replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  // Ensure space between lines when merging
+  const singleLine = lines.join(' ').replace(/\s+/g, ' ').trim();
   if (countWords(singleLine) <= maxWords) return singleLine;
   return text;
 }
