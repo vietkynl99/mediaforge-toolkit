@@ -845,7 +845,6 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         inputPath: currentFile.relativePath,
         subtitleFile: currentFile.relativePath,
         preset: translationPreset,
-        batchSize: settings.translationBatchSize || 20,
         graph: {
           nodes: [
             {
@@ -856,7 +855,6 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 inputPath: currentFile.relativePath,
                 subtitleFile: currentFile.relativePath,
                 preset: translationPreset,
-                batchSize: settings.translationBatchSize || 20,
                 // Send targetIds when: selection mode OR filter is active (not 'all')
                 targetIds: (aiScope.mode === 'selected' || filter !== 'all')
                   ? aiScope.untranslated.map(s => s.id)
@@ -1059,7 +1057,6 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 inputPath: currentFile.relativePath,
                 subtitleFile: currentFile.relativePath,
                 preset: translationPreset,
-                batchSize: settings.translationBatchSize || 20,
                 // Send targetIds when: selection mode OR filter is active (not 'all')
                 targetIds: (aiScope.mode === 'selected' || filter !== 'all')
                   ? aiScope.translated.map(s => s.id)

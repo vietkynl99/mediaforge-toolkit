@@ -5,7 +5,7 @@
  * Each executor handles its own process spawning, progress tracking, and cancellation.
  */
 
-import { TaskNode, TaskResult } from './types.js';
+import { TaskNode, TaskResult, ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG } from './types.js';
 import * as SubtitleAI from '../subtitle-ai.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -19,6 +19,7 @@ export interface ExecutorContext {
   onProgress: ProgressCallback;
   onLog: LogCallback;
   onSpawn?: (process: any) => void;
+  config?: ConcurrencyConfig;
 }
 
 /**
@@ -111,11 +112,25 @@ export class TranslateTaskExecutor extends TaskExecutor {
       projectName, 
       subtitleFile, // Relative path to subtitle file
       preset,
-      maxSingleLineWords = 12,
-      autoSplitLongLines = false,
-      batchSize = 20,
+      maxSingleLineWords,
+      autoSplitLongLines,
       targetIds // Array of IDs to translate (optional)
     } = task.params;
+
+    // Get settings from config
+    const config = context.config ?? DEFAULT_CONCURRENCY_CONFIG;
+    const aiConfig = config.ai ?? {};
+    const provider = aiConfig.provider ?? 'gemini';
+    const model = provider === 'openrouter' 
+      ? (aiConfig.openrouterModel ?? 'openrouter/auto')
+      : (aiConfig.geminiModel ?? aiConfig.model ?? 'gemini-2.5-flash');
+    const batchSize = aiConfig.translationBatchSize ?? 20;
+    const effectiveMaxSingleLineWords = maxSingleLineWords ?? aiConfig.maxSingleLineWords ?? 12;
+    const effectiveAutoSplitLongLines = autoSplitLongLines ?? aiConfig.autoSplitLongLines ?? false;
+
+    // Log all AI settings being used
+    context.onLog(`AI Settings: provider=${provider}, model=${model}`);
+    context.onLog(`Translation Settings: batchSize=${batchSize}, maxSingleLineWords=${effectiveMaxSingleLineWords}, autoSplitLongLines=${effectiveAutoSplitLongLines}`);
 
     if (!projectName || !subtitleFile) {
       throw new Error('Missing required params: projectName, subtitleFile');
@@ -210,8 +225,8 @@ export class TranslateTaskExecutor extends TaskExecutor {
           contextBefore,
           contextAfter,
           preset,
-          maxSingleLineWords,
-          autoSplitLongLines
+          maxSingleLineWords: effectiveMaxSingleLineWords,
+          autoSplitLongLines: effectiveAutoSplitLongLines
         });
 
         // Parse AI response - result.text is a JSON string
@@ -303,9 +318,21 @@ export class OptimizeTaskExecutor extends TaskExecutor {
       projectName,
       subtitleFile, // Relative path to subtitle file
       preset,
-      batchSize = 20,
       targetIds // Array of IDs to optimize (optional)
     } = task.params;
+
+    // Get settings from config
+    const config = context.config ?? DEFAULT_CONCURRENCY_CONFIG;
+    const aiConfig = config.ai ?? {};
+    const provider = aiConfig.provider ?? 'gemini';
+    const model = provider === 'openrouter' 
+      ? (aiConfig.openrouterModel ?? 'openrouter/auto')
+      : (aiConfig.geminiModel ?? aiConfig.model ?? 'gemini-2.5-flash');
+    const batchSize = aiConfig.translationBatchSize ?? 20;
+
+    // Log all AI settings being used
+    context.onLog(`AI Settings: provider=${provider}, model=${model}`);
+    context.onLog(`Optimization Settings: batchSize=${batchSize}`);
 
     if (!projectName || !subtitleFile) {
       throw new Error('Missing required params: projectName, subtitleFile');

@@ -1750,13 +1750,13 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
           projectName,
           subtitleFile,
           preset: (job as any).__translatePreset,
-          batchSize: (job as any).__translateBatchSize,
           targetIds: (job as any).__translateTargetIds
         }
       };
 
       await translateExecutor.execute(translateTaskNode as any, {
         signal: translateAbortController.signal,
+        config: concurrencyConfig,
         onProgress: (p, msg, processed, total) => {
           translateTask.progress = p;
           if (processed !== undefined) (translateTask as any).processed = processed;
@@ -1803,13 +1803,13 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
           projectName,
           subtitleFile,
           preset: (job as any).__optimizePreset,
-          batchSize: (job as any).__optimizeBatchSize,
           targetIds: (job as any).__optimizeTargetIds
         }
       };
 
       await optimizeExecutor.execute(optimizeTaskNode as any, {
         signal: optimizeAbortController.signal,
+        config: concurrencyConfig,
         onProgress: (p, msg, processed, total) => {
           optimizeTask.progress = p;
           if (processed !== undefined) (optimizeTask as any).processed = processed;
@@ -3702,7 +3702,6 @@ app.post('/api/jobs/:id/retry', async (req, res) => {
     const t = jobParams.translate;
     if (t.subtitleFile) (job as any).__translateSubtitleFile = t.subtitleFile;
     if (t.preset) (job as any).__translatePreset = t.preset;
-    if (t.batchSize) (job as any).__translateBatchSize = t.batchSize;
     if (t.targetIds) (job as any).__translateTargetIds = t.targetIds;
   }
 
@@ -3711,7 +3710,6 @@ app.post('/api/jobs/:id/retry', async (req, res) => {
     const o = jobParams.optimize;
     if (o.subtitleFile) (job as any).__optimizeSubtitleFile = o.subtitleFile;
     if (o.preset) (job as any).__optimizePreset = o.preset;
-    if (o.batchSize) (job as any).__optimizeBatchSize = o.batchSize;
     if (o.targetIds) (job as any).__optimizeTargetIds = o.targetIds;
   }
 
@@ -3906,11 +3904,6 @@ app.post('/api/jobs/run', async (req, res) => {
       ? translateNode.params.subtitleFile
       : undefined;
   const translatePreset = req.body?.preset || translateNode?.params?.preset;
-  const translateBatchSize = typeof req.body?.batchSize === 'number'
-    ? req.body.batchSize
-    : typeof translateNode?.params?.batchSize === 'number'
-      ? translateNode.params.batchSize
-      : undefined;
   const translateTargetIds = req.body?.targetIds || translateNode?.params?.targetIds;
 
   // Optimize params (can be separate or use same as translate)
@@ -3921,11 +3914,6 @@ app.post('/api/jobs/run', async (req, res) => {
       ? optimizeNode.params.subtitleFile
       : translateSubtitleFile; // Default to same file as translate
   const optimizePreset = req.body?.optimizePreset || optimizeNode?.params?.preset || translatePreset; // Default to same preset
-  const optimizeBatchSize = typeof req.body?.optimizeBatchSize === 'number'
-    ? req.body.optimizeBatchSize
-    : typeof optimizeNode?.params?.batchSize === 'number'
-      ? optimizeNode.params.batchSize
-      : translateBatchSize; // Default to same batch size
   const optimizeTargetIds = req.body?.optimizeTargetIds || optimizeNode?.params?.targetIds;
 
   if (LOG_RENDER_V2_DEBUG && renderConfigV2) {
@@ -4080,13 +4068,11 @@ app.post('/api/jobs/run', async (req, res) => {
       const translatePayload: Record<string, any> = {};
       if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
       if (translatePreset) translatePayload.preset = translatePreset;
-      if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
       if (translateTargetIds) translatePayload.targetIds = translateTargetIds;
 
       const optimizePayload: Record<string, any> = {};
       if (optimizeSubtitleFile) optimizePayload.subtitleFile = optimizeSubtitleFile;
       if (optimizePreset) optimizePayload.preset = optimizePreset;
-      if (optimizeBatchSize) optimizePayload.batchSize = optimizeBatchSize;
       if (optimizeTargetIds) optimizePayload.targetIds = optimizeTargetIds;
 
       job = {
@@ -4149,10 +4135,8 @@ app.post('/api/jobs/run', async (req, res) => {
       if (renderConfigV2) (job as any).__renderConfigV2 = renderConfigV2;
       if (translateSubtitleFile) (job as any).__translateSubtitleFile = translateSubtitleFile;
       if (translatePreset) (job as any).__translatePreset = translatePreset;
-      if (translateBatchSize) (job as any).__translateBatchSize = translateBatchSize;
       if (optimizeSubtitleFile) (job as any).__optimizeSubtitleFile = optimizeSubtitleFile;
       if (optimizePreset) (job as any).__optimizePreset = optimizePreset;
-      if (optimizeBatchSize) (job as any).__optimizeBatchSize = optimizeBatchSize;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;
@@ -4211,13 +4195,11 @@ app.post('/api/jobs/run', async (req, res) => {
       }
       if (translateSubtitleFile) translatePayload.subtitleFile = translateSubtitleFile;
       if (translatePreset) translatePayload.preset = translatePreset;
-      if (translateBatchSize) translatePayload.batchSize = translateBatchSize;
       if (translateTargetIds) translatePayload.targetIds = translateTargetIds;
 
       const optimizePayload: Record<string, any> = {};
       if (optimizeSubtitleFile) optimizePayload.subtitleFile = optimizeSubtitleFile;
       if (optimizePreset) optimizePayload.preset = optimizePreset;
-      if (optimizeBatchSize) optimizePayload.batchSize = optimizeBatchSize;
       if (optimizeTargetIds) optimizePayload.targetIds = optimizeTargetIds;
 
       job = {
@@ -4273,12 +4255,10 @@ app.post('/api/jobs/run', async (req, res) => {
       // Map translation params from the consolidated payload
       if (translatePayload.subtitleFile) (job as any).__translateSubtitleFile = translatePayload.subtitleFile;
       if (translatePayload.preset) (job as any).__translatePreset = translatePayload.preset;
-      if (translatePayload.batchSize) (job as any).__translateBatchSize = translatePayload.batchSize;
       if (translatePayload.targetIds) (job as any).__translateTargetIds = translatePayload.targetIds;
       // Map optimize params
       if (optimizePayload.subtitleFile) (job as any).__optimizeSubtitleFile = optimizePayload.subtitleFile;
       if (optimizePayload.preset) (job as any).__optimizePreset = optimizePayload.preset;
-      if (optimizePayload.batchSize) (job as any).__optimizeBatchSize = optimizePayload.batchSize;
       if (optimizePayload.targetIds) (job as any).__optimizeTargetIds = optimizePayload.targetIds;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
