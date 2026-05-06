@@ -235,17 +235,28 @@ ${JSON.stringify(segments)}
 export async function analyzeTranslationStyle(params: { titleOrSummary: string }) {
   const { titleOrSummary } = params;
   const taxonomy = [
-    "Tu tiên", "Tiên hiệp", "Huyền huyễn", "Hệ thống", "Xuyên không", 
-    "Trọng sinh", "Dị giới", "Dị năng", "Thần thoại", "Quỷ dị", 
-    "Huyền nghi", "Mạt thế", "Đô thị", "Tổng tài", "Thương chiến", 
-    "Hắc đạo", "Gia đấu", "Học đường", "Showbiz", "Hành động", 
-    "Chiến đấu", "Sinh tồn", "Báo thù", "Trinh thám", "Kịch tính", 
+    "Tu tiên", "Tiên hiệp", "Huyền huyễn", "Hệ thống", "Xuyên không",
+    "Trọng sinh", "Dị giới", "Dị năng", "Thần thoại", "Quỷ dị",
+    "Huyền nghi", "Mạt thế", "Đô thị", "Tổng tài", "Thương chiến",
+    "Hắc đạo", "Gia đấu", "Học đường", "Showbiz", "Hành động",
+    "Chiến đấu", "Sinh tồn", "Báo thù", "Trinh thám", "Kịch tính",
     "Hài hước", "Hài hước đen", "Parody", "Châm biếm"
   ];
 
-  const prompt = `Phân tích thể loại dựa trên tiêu đề hoặc bản tóm tắt sau: ${titleOrSummary}.
-Chỉ được phép chọn từ danh sách sau:
-Genres: ${taxonomy.join(', ')}`;
+  const prompt = `Phân tích thể loại dựa trên tiêu đề hoặc bản tóm tắt sau: ${titleOrSummary}
+
+Chỉ được phép chọn thể loại từ danh sách sau:
+${taxonomy.join(', ')}
+
+Trả về JSON với format chính xác sau:
+{
+  "genres": ["thể loại 1", "thể loại 2"],
+  "humor_level": số từ 0 đến 10
+}
+
+Quy tắc:
+- genres: chọn 1-5 thể loại phù hợp nhất từ danh sách
+- humor_level: 0-2 (nghiêm túc), 3-5 (tự nhiên), 6-8 (hài hước nhẹ), 9-10 (hài hước cao)`;
 
   return callAi({
     prompt,
@@ -253,12 +264,12 @@ Genres: ${taxonomy.join(', ')}`;
     responseSchema: {
       type: Type.OBJECT,
       properties: {
-        genres: { 
-          type: Type.ARRAY, 
+        genres: {
+          type: Type.ARRAY,
           items: { type: Type.STRING },
           description: "1-5 thể loại phù hợp nhất từ danh sách."
         },
-        humor_level: { 
+        humor_level: {
           type: Type.NUMBER,
           description: "Mức độ hài hước từ 0 đến 10"
         }

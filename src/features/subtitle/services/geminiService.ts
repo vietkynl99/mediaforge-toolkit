@@ -200,22 +200,40 @@ export async function extractTitleFromFilename(filename: string, model: AiModel,
 }
 
 export async function analyzeTranslationStyle(titleOrSummary: string, model: string, apiKey: string): Promise<{ preset: TranslationPreset, tokens: number }> {
-  
+
   try {
     const result = await callBackendAi('/api/subtitle/ai/analyze-style', {
       titleOrSummary
     });
-    
-    const parsed = JSON.parse(result.text || "{}");
+
+    const rawText = result.text || "{}";
+    let parsed: any = {};
+
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (parseError) {
+      console.error("Failed to parse analyze-style response:", rawText);
+      throw new Error("AI returned invalid JSON response");
+    }
+
     const tokens = result.usage?.totalTokenCount || 0;
-    
+
+    // Validate that we got actual data from AI
+    const genres = Array.isArray(parsed.genres) ? parsed.genres : [];
+    const humorLevel = typeof parsed.humor_level === 'number' ? parsed.humor_level : 0;
+
+    // Log warning if AI returned incomplete data
+    if (genres.length === 0 && humorLevel === 0) {
+      console.warn("Analyze style returned empty data. Raw response:", rawText);
+    }
+
     const preset: TranslationPreset = {
       reference: {
         title_or_summary: titleOrSummary
       },
-      genres: parsed.genres || [],
+      genres,
       character_names: [],
-      humor_level: parsed.humor_level || 0
+      humor_level: humorLevel
     };
 
     return { preset, tokens };

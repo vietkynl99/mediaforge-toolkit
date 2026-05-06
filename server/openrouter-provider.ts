@@ -8,6 +8,50 @@ export interface OpenRouterConfig {
 }
 
 /**
+ * Convert Gemini-style schema (with Type enum) to standard JSON Schema
+ */
+function convertGeminiSchemaToJsonSchema(geminiSchema: any): any {
+  if (!geminiSchema) return undefined;
+
+  const result: any = {};
+
+  // Map Gemini Type enum values to JSON Schema type strings
+  const typeMap: Record<string, string> = {
+    'STRING': 'string',
+    'NUMBER': 'number',
+    'INTEGER': 'integer',
+    'BOOLEAN': 'boolean',
+    'OBJECT': 'object',
+    'ARRAY': 'array',
+  };
+
+  // Handle type - could be enum value or string
+  if (geminiSchema.type !== undefined) {
+    const typeValue = typeof geminiSchema.type === 'string'
+      ? geminiSchema.type.toUpperCase()
+      : String(geminiSchema.type).toUpperCase();
+    result.type = typeMap[typeValue] || String(geminiSchema.type).toLowerCase();
+  }
+
+  // Copy over standard JSON Schema properties
+  if (geminiSchema.description) result.description = geminiSchema.description;
+  if (geminiSchema.properties) {
+    result.properties = {};
+    for (const [key, value] of Object.entries(geminiSchema.properties)) {
+      result.properties[key] = convertGeminiSchemaToJsonSchema(value);
+    }
+  }
+  if (geminiSchema.required) result.required = geminiSchema.required;
+  if (geminiSchema.items) result.items = convertGeminiSchemaToJsonSchema(geminiSchema.items);
+  if (geminiSchema.enum) result.enum = geminiSchema.enum;
+  if (geminiSchema.additionalProperties !== undefined) {
+    result.additionalProperties = geminiSchema.additionalProperties;
+  }
+
+  return result;
+}
+
+/**
  * OpenRouter AI Provider implementation
  * Supports multiple AI models through OpenRouter API
  */
@@ -34,26 +78,42 @@ export class OpenRouterProvider implements AiProvider {
 
     // Build messages array
     const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
-    
+
     // Add system instruction to ensure JSON output
     const systemBase = params.systemInstruction || 'You are a helpful assistant.';
-    const jsonInstruction = params.responseMimeType === 'application/json' 
+    const jsonInstruction = params.responseMimeType === 'application/json'
       ? '\n\nIMPORTANT: You must respond with valid JSON only. Do not include any markdown code blocks, explanations, or other text outside the JSON.'
       : '';
-    
+
     messages.push({ role: 'system', content: systemBase + jsonInstruction });
     messages.push({ role: 'user', content: params.prompt });
 
-    // Call the model
-    const result = this.client.callModel({
+    // Build chat request
+    const chatRequest: any = {
       model: this.model,
-      input: messages,
-    });
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+    };
+
+    // Add structured output if responseSchema is provided
+    if (params.responseMimeType === 'application/json' && params.responseSchema) {
+      const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
+      chatRequest.responseFormat = {
+        type: 'json_schema',
+        jsonSchema: {
+          name: 'response',
+          strict: true,
+          schema: jsonSchema,
+        },
+      };
+    }
+
+    // Call the model using the SDK
+    const response = await this.client.chat.send({ chatRequest });
 
     // Get the text response
-    let text = await result.getText();
-    
-    // Strip markdown code blocks if present (models often wrap JSON in ```json ... ```)
+    let text = response.choices?.[0]?.message?.content || '';
+
+    // Strip markdown code blocks if present (fallback for models that don't support structured output)
     if (text) {
       text = text.trim();
       // Remove ```json or ``` at the start
@@ -68,16 +128,13 @@ export class OpenRouterProvider implements AiProvider {
       }
       text = text.trim();
     }
-    
-    // Get usage info from the response
-    const response = await result.getResponse();
-    
+
     return {
       text: text || '',
-      usage: response?.usage ? {
-        totalTokenCount: (response.usage as any).totalTokens || (response.usage as any).total_tokens,
-        promptTokenCount: (response.usage as any).promptTokens || (response.usage as any).prompt_tokens,
-        candidatesTokenCount: (response.usage as any).completionTokens || (response.usage as any).completion_tokens,
+      usage: response.usage ? {
+        totalTokenCount: (response.usage as any).total_tokens,
+        promptTokenCount: (response.usage as any).prompt_tokens,
+        candidatesTokenCount: (response.usage as any).completion_tokens,
       } : undefined,
     };
   }

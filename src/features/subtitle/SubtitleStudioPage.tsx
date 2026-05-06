@@ -1310,10 +1310,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           tokens: prev.style.tokens + tokens
         }
       }));
-      showToast('success', "DNA analysis complete. Translation style initialized.");
-    } catch (err) {
+
+      // Check if AI returned valid style data
+      if (preset.genres.length === 0 && preset.humor_level === 0) {
+        showToast('warning', "Analysis incomplete. AI returned no style data. Please try again or adjust the input.");
+      } else {
+        showToast('success', "DNA analysis complete. Translation style initialized.");
+      }
+    } catch (err: any) {
       console.error("DNA analysis failed", err);
-      showToast('error', "Failed to analyze translation style.");
+      const errorMsg = err?.message || err?.error || 'Unknown error';
+      showToast('error', `Failed to analyze translation style: ${errorMsg}`);
     } finally {
       setIsPresetLoading(false);
     }
