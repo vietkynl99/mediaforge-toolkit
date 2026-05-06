@@ -50,15 +50,21 @@ export const PresetPage: React.FC<PresetPageProps> = ({
   draftSummary,
   onDraftSummaryChange
 }) => {
-  const [titleInput, setTitleInput] = useState('');
+  const [titleInput, setTitleInput] = useState(() => draftSummary || displayFileName || '');
   const [genreInput, setGenreInput] = useState('');
   const [warning, setWarning] = useState<string | null>(null);
+  const hasSetDefault = React.useRef(false);
 
   useEffect(() => {
-    if (draftSummary !== titleInput) {
+    // Set default value from displayFileName once on mount if draftSummary is empty
+    if (!hasSetDefault.current && !draftSummary && displayFileName) {
+      setTitleInput(displayFileName);
+      onDraftSummaryChange(displayFileName);
+      hasSetDefault.current = true;
+    } else if (draftSummary && draftSummary !== titleInput) {
       setTitleInput(draftSummary);
     }
-  }, [draftSummary, titleInput]);
+  }, [draftSummary, displayFileName, titleInput, onDraftSummaryChange]);
 
   const handleAddTag = (type: 'genres', value: string) => {
     if (!preset) return;
