@@ -4636,6 +4636,8 @@ const runUvrTask = async (
     model,
     '--save-format',
     outputFormat,
+    '--output-name',
+    '[VR]{suffix}_{orig_base}{ext}',
     '--both',
     '--yes',
   ];
