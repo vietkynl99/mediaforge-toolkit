@@ -939,7 +939,7 @@ export default function App() {
         body: JSON.stringify({ username: authUsername, password: authPassword })
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.ok || !data?.user) {
+      if (!response.ok || !data?.ok) {
         throw new Error(data?.error || 'Register failed.');
       }
       setAuthPassword('');
@@ -988,7 +988,7 @@ export default function App() {
         const response = await fetch('/api/auth/config');
         const data = await response.json().catch(() => ({}));
         if (cancelled) return;
-        setRegisterEnabled(Boolean(data?.registerEnabled));
+        setRegisterEnabled(Boolean(data?.registerMode));
       } catch {
         if (!cancelled) {
           setRegisterEnabled(false);

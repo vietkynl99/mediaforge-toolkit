@@ -142,6 +142,7 @@ export const authMiddleware = (req: express.Request, res: express.Response, next
     path === '/auth/login' ||
     path === '/auth/register' ||
     path === '/auth/config' ||
+    path === '/auth/status' ||
     path === '/auth/logout'
   ) {
     return next();
@@ -164,6 +165,15 @@ export const createAuthRouter = (registerMode: boolean) => {
 
   router.get('/auth/config', (_req, res) => {
     res.json({ registerMode });
+  });
+
+  router.get('/auth/status', (req, res) => {
+    const session = getSessionFromRequest(req);
+    if (!session) {
+      res.status(401).json({ ok: false });
+      return;
+    }
+    res.json({ ok: true, user: { username: session.username, isAdmin: false } });
   });
 
   router.post('/auth/login', async (req, res) => {
@@ -211,7 +221,7 @@ export const createAuthRouter = (registerMode: boolean) => {
       const session: AuthSession = { id: sessionId, userId, username, createdAt, expiresAt };
       sessions.set(sessionId, session);
       setSessionCookie(res, sessionId);
-      res.json({ ok: true, username });
+      res.json({ ok: true, user: { username, isAdmin: false } });
     } catch (err) {
       res.status(500).json({ ok: false, error: 'Login failed' });
     }
@@ -252,6 +262,7 @@ export const createAuthRouter = (registerMode: boolean) => {
       schedulePersistDb();
       res.json({ ok: true });
     } catch (err: any) {
+      console.error('[auth] Registration error:', err);
       if (err?.message?.includes('UNIQUE constraint')) {
         res.status(409).json({ ok: false, error: 'Username already exists' });
         return;

@@ -19,7 +19,7 @@ export const AuthPage: React.FC = () => {
       try {
         const response = await fetch('/api/auth/config');
         const data = await response.json();
-        setRegisterEnabled(Boolean(data?.registerEnabled));
+        setRegisterEnabled(Boolean(data?.registerMode));
       } catch {
         setRegisterEnabled(false);
       }
