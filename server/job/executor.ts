@@ -12,6 +12,38 @@ import path from 'path';
 import { MEDIA_VAULT_ROOT } from '../constants.js';
 import { parseSrtForTranslation } from '../subtitleCues.js';
 
+/**
+ * Attempts to repair common JSON errors from AI responses
+ */
+function tryRepairJson(text: string): string {
+  let repaired = text.trim();
+  
+  // 1. Remove markdown code blocks (always safe)
+  repaired = repaired.replace(/^```json\s*/, '').replace(/```$/, '').trim();
+
+  // 2. Fix the specific error: "id":5" -> "id":5
+  // ONLY fix if it's immediately followed by the next expected key "text" or "fixedText"
+  // This ensures we are targeting the structural part of JSON, not the content of a string.
+  repaired = repaired.replace(/(^|[{,])\s*"id":\s*(\d+)"\s*(?=,\s*"text":|,\s*"fixedText":)/g, '$1"id":$2');
+  
+  // 3. If it's an array and missing the closing bracket due to truncation
+  if (repaired.startsWith('[') && !repaired.endsWith(']')) {
+    const lastObjectEnd = repaired.lastIndexOf('}');
+    if (lastObjectEnd !== -1) {
+      const potentiallyRepaired = repaired.substring(0, lastObjectEnd + 1) + ']';
+      try {
+        // Only apply if the result is actually valid JSON
+        JSON.parse(potentiallyRepaired);
+        repaired = potentiallyRepaired;
+      } catch {
+        // Not repairable this way
+      }
+    }
+  }
+
+  return repaired;
+}
+
 export type ProgressCallback = (progress: number, message?: string, processed?: number, total?: number) => void;
 export type LogCallback = (message: string) => void;
 
@@ -242,13 +274,24 @@ export class TranslateTaskExecutor extends TaskExecutor {
         // Parse AI response - result.text is a JSON string
         if (result && typeof result.text === 'string') {
           let translatedItems: any[] = [];
+          
           try {
+            // First attempt: Parse original text
             translatedItems = JSON.parse(result.text);
-          } catch (parseErr) {
-            context.onLog(`ERROR: Failed to parse AI response as JSON: ${parseErr}`);
-            context.onLog(`ERROR: AI response text (first 500 chars): ${result.text.substring(0, 500)}`);
-            context.onLog(`ERROR: Full AI response length: ${result.text.length} characters`);
-            throw new Error(`Failed to parse AI response as JSON. Response was: ${result.text.substring(0, 200)}...`);
+          } catch (firstParseErr) {
+            // Second attempt: Try to repair and parse again
+            const repairedText = tryRepairJson(result.text);
+            try {
+              translatedItems = JSON.parse(repairedText);
+              context.onLog(`NOTICE: Recovered from malformed AI JSON response using repair utility.`);
+            } catch (secondParseErr) {
+              context.onLog(`ERROR: Failed to parse AI response as JSON even after repair attempt.`);
+              context.onLog(`ERROR: Original error: ${firstParseErr}`);
+              context.onLog(`ERROR: Repair error: ${secondParseErr}`);
+              context.onLog(`ERROR: Full AI response (${result.text.length} chars):
+${result.text}`);
+              throw new Error(`Failed to parse AI response as JSON (see full response in log above)`);
+            }
           }
           
           if (!Array.isArray(translatedItems)) {
@@ -442,13 +485,24 @@ export class OptimizeTaskExecutor extends TaskExecutor {
         // Parse AI response
         if (result && typeof result.text === 'string') {
           let fixedItems: any[] = [];
+          
           try {
+            // First attempt: Parse original text
             fixedItems = JSON.parse(result.text);
-          } catch (parseErr) {
-            context.onLog(`ERROR: Failed to parse AI response as JSON: ${parseErr}`);
-            context.onLog(`ERROR: AI response text (first 500 chars): ${result.text.substring(0, 500)}`);
-            context.onLog(`ERROR: Full AI response length: ${result.text.length} characters`);
-            throw new Error(`Failed to parse AI response as JSON. Response was: ${result.text.substring(0, 200)}...`);
+          } catch (firstParseErr) {
+            // Second attempt: Try to repair and parse again
+            const repairedText = tryRepairJson(result.text);
+            try {
+              fixedItems = JSON.parse(repairedText);
+              context.onLog(`NOTICE: Recovered from malformed AI JSON response using repair utility.`);
+            } catch (secondParseErr) {
+              context.onLog(`ERROR: Failed to parse AI response as JSON even after repair attempt.`);
+              context.onLog(`ERROR: Original error: ${firstParseErr}`);
+              context.onLog(`ERROR: Repair error: ${secondParseErr}`);
+              context.onLog(`ERROR: Full AI response (${result.text.length} chars):
+${result.text}`);
+              throw new Error(`Failed to parse AI response as JSON (see full response in log above)`);
+            }
           }
 
           if (!Array.isArray(fixedItems)) {
