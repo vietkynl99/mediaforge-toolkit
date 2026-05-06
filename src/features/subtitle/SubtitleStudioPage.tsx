@@ -238,6 +238,11 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [baseFileName, setBaseFileName] = useState<string>('');
   const [editedCount, setEditedCount] = useState<number>(0);
   const [filter, setFilter] = useState<string>('all');
+  
+  // Keep filterRef in sync with filter state
+  useEffect(() => {
+    filterRef.current = filter;
+  }, [filter]);
   const [folderQuery, setFolderQuery] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isPageEditing, setIsPageEditing] = useState<boolean>(false);
@@ -307,6 +312,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentJobIdRef = useRef<string | null>(null);
   const isLoadingFileRef = useRef<boolean>(false);
+  const filterRef = useRef<string>(filter);
+  const lastReloadTimeRef = useRef<number>(0);
+  const isReloadingRef = useRef<boolean>(false);
 
   const stopRequestedRefCurrent = stopRequestedRef.current;
   const optimizeStopRequestedRefCurrent = optimizeStopRequestedRef.current;
@@ -346,6 +354,11 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   // Reload the working file (.sktproject) during job polling
   const reloadWorkingFile = async () => {
     if (!workingFilePath) return;
+    
+    // Prevent concurrent reloads
+    if (isReloadingRef.current) return;
+    isReloadingRef.current = true;
+    
     try {
       const { segments: parsedSegments } = await vaultService.loadSubtitleFile(workingFilePath);
       const fixedSegments = parsedSegments.map(s => ({
@@ -353,9 +366,16 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         originalText: performLocalFix(s.originalText || ""),
         translatedText: performLocalFix(s.translatedText || "")
       }));
-      setSegments(fixedSegments);
+      
+      // Only update segments if we have valid data
+      if (fixedSegments.length > 0) {
+        setSegments(fixedSegments);
+      }
+      lastReloadTimeRef.current = Date.now();
     } catch (err) {
       console.error('Failed to reload working file:', err);
+    } finally {
+      isReloadingRef.current = false;
     }
   };
 
