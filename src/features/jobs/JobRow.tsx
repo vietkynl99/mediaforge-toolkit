@@ -7,6 +7,7 @@ import {
   AlertCircle, 
   CheckCircle2, 
   Pause,
+  Square,
   File
 } from 'lucide-react';
 import { MediaJob, TASK_ICONS, JobStatus } from '../../types';
@@ -17,6 +18,7 @@ const StatusBadge = ({ status }: { status: JobStatus }) => {
   const configs = {
     queued: { icon: Clock, color: 'text-zinc-400 bg-zinc-400/10', label: 'Queued', shortLabel: 'Queued' },
     processing: { icon: RefreshCw, color: 'text-blue-400 bg-blue-400/10', label: 'Processing', shortLabel: 'Proc' },
+    stopping: { icon: Square, color: 'text-orange-400 bg-orange-400/10', label: 'Stopping', shortLabel: 'Stop' },
     awaiting_input: { icon: AlertCircle, color: 'text-amber-400 bg-amber-400/10', label: 'Awaiting Review', shortLabel: 'Review' },
     completed: { icon: CheckCircle2, color: 'text-lime-400 bg-lime-400/10', label: 'Completed', shortLabel: 'Done' },
     failed: { icon: AlertCircle, color: 'text-red-400 bg-red-400/10', label: 'Failed', shortLabel: 'Fail' },

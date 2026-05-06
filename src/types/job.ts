@@ -1,4 +1,4 @@
-export type JobStatus = 'queued' | 'processing' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
+export type JobStatus = 'queued' | 'processing' | 'stopping' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
 
 export interface ProcessingTask {
   id: string;

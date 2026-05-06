@@ -330,7 +330,7 @@ let concurrencyConfig: ConcurrencyConfig = DEFAULT_CONCURRENCY_CONFIG;
   }
 })();
 
-type JobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+type JobStatus = 'queued' | 'processing' | 'stopping' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
 type JobTaskStatus = 'pending' | 'active' | 'done' | 'error';
 type JobTask = { id: string; type: string; name: string; status: JobTaskStatus; progress: number; processed?: number; total?: number };
 type JobRecord = {
@@ -3545,7 +3545,7 @@ app.post('/api/jobs/:id/cancel', async (req, res) => {
     res.status(404).json({ error: 'Job not found' });
     return;
   }
-  if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+  if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled' || job.status === 'stopping') {
     res.status(400).json({ error: `Job already ${job.status}` });
     return;
   }
@@ -3567,6 +3567,8 @@ app.post('/api/jobs/:id/cancel', async (req, res) => {
     res.json({ ok: true });
     return;
   }
+  job.status = 'stopping';
+  job.eta = undefined;
   const controller = (job as any).__abortController as AbortController | undefined;
   controller?.abort();
   const proc = (job as any).__activeProcess as ReturnType<typeof spawn> | undefined;

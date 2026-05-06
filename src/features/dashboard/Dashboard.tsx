@@ -5,11 +5,12 @@ import { MediaJob, JobStatus } from '../../types';
 import { JobRow } from '../jobs/JobRow';
 import type { ServerStats } from '../jobs/JobsFeature';
 
-const JOB_STATUSES: JobStatus[] = ['queued', 'processing', 'awaiting_input', 'completed', 'failed', 'cancelled'];
+const JOB_STATUSES: JobStatus[] = ['queued', 'processing', 'stopping', 'awaiting_input', 'completed', 'failed', 'cancelled'];
 
 const STATUS_COLORS: Record<JobStatus, string> = {
   queued: 'bg-zinc-500',
   processing: 'bg-blue-500',
+  stopping: 'bg-orange-500',
   awaiting_input: 'bg-amber-500',
   completed: 'bg-lime-500',
   failed: 'bg-red-500',
