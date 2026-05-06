@@ -368,7 +368,7 @@ export function SettingsPage() {
                 type="number"
                 min={1}
                 max={50}
-                value={config.ai?.maxSingleLineWords || 12}
+                value={config.ai?.maxSingleLineWords || 10}
                 onChange={e => updateAiSetting('maxSingleLineWords', parseInt(e.target.value) || 1)}
                 className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
               />
@@ -377,7 +377,7 @@ export function SettingsPage() {
               <input
                 type="checkbox"
                 id="autoSplit"
-                checked={config.ai?.autoSplitLongLines || false}
+                checked={config.ai?.autoSplitLongLines ?? true}
                 onChange={e => updateAiSetting('autoSplitLongLines', e.target.checked)}
                 className="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-blue-500"
               />

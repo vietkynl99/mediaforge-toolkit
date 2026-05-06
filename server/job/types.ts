@@ -108,8 +108,8 @@ export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
       warningMax: 40,
     },
     translationBatchSize: 100,
-    maxSingleLineWords: 12,
-    autoSplitLongLines: false,
+    maxSingleLineWords: 10,
+    autoSplitLongLines: true,
   },
 };
 
