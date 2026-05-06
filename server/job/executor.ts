@@ -13,6 +13,9 @@ import { MEDIA_VAULT_ROOT } from '../constants.js';
 import { parseSrtForTranslation } from '../subtitleCues.js';
 import { normalizeAiText, splitToTwoLinesIfLong, collapseToSingleLineIfShort } from '../../shared/text-utils.js';
 
+// Debug flag for optimize flow
+const DEBUG_OPTIMIZE = ['1', 'true', 'yes', 'on'].includes((process.env.DEBUG_OPTIMIZE ?? '').toLowerCase());
+
 /**
  * Attempts to repair common JSON errors from AI responses
  */
@@ -483,16 +486,36 @@ export class OptimizeTaskExecutor extends TaskExecutor {
       context.onLog(`Optimizing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(totalToOptimize / batchSize)} (${batch.length} segments)...`);
 
       try {
-        // Prepare segments for AI fix
+        // Prepare segments for AI fix - include both original (cn) and translated (vn) text
         const segmentsForAI = batch.map((c: any) => ({
           id: c.id,
-          text: c.translatedText || c.text || c.translated
+          cn: c.originalText || c.original || "",
+          vn: c.translatedText || c.text || c.translated || ""
         }));
+
+        // Debug: dump request data before sending to AI
+        if (DEBUG_OPTIMIZE) {
+          context.onLog(`[DEBUG_OPTIMIZE] === REQUEST DATA ===`);
+          context.onLog(`[DEBUG_OPTIMIZE] Segments count: ${segmentsForAI.length}`);
+          context.onLog(`[DEBUG_OPTIMIZE] Segments: ${JSON.stringify(segmentsForAI, null, 2)}`);
+          context.onLog(`[DEBUG_OPTIMIZE] Preset: ${JSON.stringify(preset, null, 2)}`);
+        }
 
         const result = await SubtitleAI.aiFixSegments({
           segments: segmentsForAI,
           preset
         });
+
+        // Debug: dump response data from AI
+        if (DEBUG_OPTIMIZE) {
+          context.onLog(`[DEBUG_OPTIMIZE] === PROMPT TO AI ===`);
+          context.onLog(`[DEBUG_OPTIMIZE] Prompt length: ${result.prompt?.length ?? 0}`);
+          context.onLog(`[DEBUG_OPTIMIZE] Prompt: ${result.prompt}`);
+          context.onLog(`[DEBUG_OPTIMIZE] === RESPONSE DATA ===`);
+          context.onLog(`[DEBUG_OPTIMIZE] Result text length: ${result.text?.length ?? 0}`);
+          context.onLog(`[DEBUG_OPTIMIZE] Result text: ${result.text}`);
+          context.onLog(`[DEBUG_OPTIMIZE] Usage: ${JSON.stringify(result.usage, null, 2)}`);
+        }
 
         // Parse AI response
         if (result && typeof result.text === 'string') {

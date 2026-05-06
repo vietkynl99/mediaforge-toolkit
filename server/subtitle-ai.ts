@@ -4,66 +4,25 @@ import { callAi } from "./ai-provider.js";
 // Helper functions for prompt generation (moved from frontend)
 function getHumorRule(humorLevel: number): string {
   if (humorLevel <= 2) {
-    return `
-Neutral narration.
-Translate faithfully with clear Vietnamese subtitles.
-No sarcasm or exaggeration.
-`;
+    return `Neutral narration. Translate faithfully, no sarcasm or exaggeration.`;
   }
   if (humorLevel <= 4) {
-    return `
-Natural conversational narration.
-Subtitles should sound like natural spoken Vietnamese.
-Very mild humor allowed.
-`;
+    return `Natural conversational narration. Sound like natural spoken Vietnamese. Very mild humor allowed.`;
   }
   if (humorLevel <= 6) {
-    return `
-Playful narration style.
-
-Guidelines:
-- Prefer lively spoken Vietnamese
-- Slightly expressive wording allowed
-- Mild humor or playful tone may appear
-`;
+    return `Playful narration. Prefer lively spoken Vietnamese. Mild humor, expressive wording allowed.`;
   }
   if (humorLevel <= 8) {
-    return `
-Energetic recap-style narration.
-
-Guidelines:
-- Prefer expressive and dynamic Vietnamese phrasing
-- Light sarcasm or teasing tone allowed
-- Slight exaggeration allowed if meaning remains accurate
-- Subtitles should feel entertaining and vivid
-`;
+    return `Energetic recap-style narration. Expressive and dynamic phrasing, light sarcasm or exaggeration allowed. Make subtitles feel entertaining and vivid.`;
   }
   return `
 Chaotic comedic narrator mode (MAX LEVEL).
-
-Core Style:
-- Rewrite lines with a strong humorous and expressive narration style
-- Sound like a sarcastic, over-the-top Vietnamese storyteller by default
-
-Humor Behavior:
-- Actively inject humor into lines as a default behavior
-- Use exaggeration, teasing, and playful mockery naturally
-- Add narrator attitude and personality into phrasing
-
-- Express humor by rewriting the sentence, not by adding extra words
-- Replace the original phrasing with a shorter, punchy and expressive version
-- Prefer simplifying and compressing the sentence while keeping strong tone and attitude
-- Do not keep the original sentence structure if it results in longer output
-- Reduce or remove less important details to keep the line concise and impactful
-- Break complex ideas into simpler, punchier phrasing
-
-Reactions:
-- Naturally include short reactions where it fits (e.g. "ủa gì vậy", "ảo thật", "wtf")
-- Integrate reactions into the sentence instead of appending them as extra clauses
-
-Narration feel:
-- Lines should feel like a fast, entertaining recap, not a full or literal translation
-- Avoid plain, flat, or overly complete phrasing
+- Sound like a sarcastic, over-the-top Vietnamese storyteller.
+- Actively inject humor: exaggeration, teasing, mockery, attitude.
+- Rewrite into shorter, punchier Vietnamese — compress meaning, cut filler, break complex ideas into snappy phrases.
+- Do not keep the original sentence structure if it results in longer output.
+- Sprinkle short reactions (e.g. "ủa gì vậy", "ảo thật") woven into the sentence, not appended.
+- Feel like a fast entertaining recap, not a literal translation.
 `;
 }
 
@@ -116,33 +75,23 @@ Next: ${JSON.stringify(contextAfter)}
 ` : "";
 
   const prompt = `
+OUTPUT MUST BE 100% VIETNAMESE. NO Chinese characters allowed in the output.
+
 Translate Chinese subtitles into natural Vietnamese.
-
-Output format:
-JSON array of objects: [{"id": number, "text": string}]
-
-IMPORTANT:
-Return one object per input line using the exact id.
-Do not reorder items.
-Do not omit items.
-
-Core rules:
-1. Speaker & POV consistency: Before translating, check if any name matches a known character. Do NOT add character names not in original text. Keep pronouns consistent.
-2. Preserve meaning: Keep core meaning accurate. Do not invent new story events. Tone adaptation allowed.
-3. Subtitle readability: Natural spoken Vietnamese storytelling subtitles.
-4. Length control + line breaking: Concise (target <1.2x). ${autoSplitLongLines ? `If exceeding ${maxSingleLineWords} words, use "\\n".` : "Line breaks optional."}
-5. Short line rule: Chinese <=4 chars -> Vietnamese 1-3 words.
-6. Dynamic narration: Expressive phrasing, avoid formal language.
-7. Names: Consistent forms. Use character rules if provided.
-8. Word choice: Vivid and entertaining Vietnamese.
-9. No quotes for emphasis.
-10. Context usage: Each subtitle must be independent; neighbor context for reference only.
-11. Style priority: Follow narration style if meaning is preserved.
+Output: JSON array [{"id": number, "text": string}] — one object per input, same order, no omissions.
 
 ${styleBlock}
 ${storyContext}
 ${characterRules}
 ${neighborContext}
+Rules:
+1. Preserve core meaning. Do not invent story events. Tone adaptation allowed.
+2. Length: keep all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → translate fully, do not compress. ${autoSplitLongLines ? `If exceeding ${maxSingleLineWords} words, use "\\n".` : "Line breaks optional."}
+3. Names: Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa). Do NOT use Pinyin ("Zhang", "Wang", "Li" are WRONG).${characterRules ? " Use character rules if provided." : ""}
+4. Each subtitle is independent; neighbor context for reference only.
+5. Style priority: follow narration style above if meaning is preserved.
+
+REMINDER: Output text must be 100% Vietnamese. Any Chinese character in output is a critical error.
 
 Subtitle data:
 ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
@@ -168,7 +117,7 @@ ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
 export async function aiFixSegments(params: {
   segments: any[];
   preset: any;
-}) {
+}): Promise<{ text?: string; usage?: any; prompt?: string }> {
   const { segments, preset } = params;
   const humorLevel = preset?.humor_level ?? 0;
   const humorRule = getHumorRule(humorLevel);
@@ -186,36 +135,34 @@ ${humorRule}
     : "";
 
   const prompt = `
-Optimize Vietnamese subtitles for readability and CPS.
+CRITICAL: OUTPUT MUST BE 100% VIETNAMESE. Any Chinese character in the output is a hard failure.
+
+Fix and optimize Vietnamese subtitles. Translate any remaining Chinese to Vietnamese.
+Output: JSON array [{"id": number, "fixedText": string}]
 
 ${styleBlock}
 ${storyContext}
 ${characterRules}
 
+Input:
+- cn: Original Chinese (reference — use to understand meaning and fix mistranslations)
+- vn: Current Vietnamese draft (may contain untranslated Chinese characters)
+
 Rules:
-- Each segment is independent.
-- Do NOT merge or split segments.
-- Preserve core meaning.
-- Prefer concise Vietnamese.
-- Apply character name normalization strictly.
-- Remove filler words.
-- Output Vietnamese only (Latin script).
-- Translate any remaining Chinese characters.
+1. Translate ALL Chinese characters in vn using cn as reference.
+2. Names/proper nouns: Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa, 问天宗 → Vấn Thiên Tông). Do NOT use Pinyin ("Zhang", "Wang" are WRONG).${characterRules ? " Use character rules if provided." : ""}
+3. Organizations/titles: translate meaningfully using Hán-Việt.
+4. Each segment is independent. Do NOT merge or split segments.
+5. Fix mistranslations by comparing vn against cn. Preserve core meaning.
+6. Length: preserve all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → fix and keep full meaning, do not compress.
 
-Goal:
-- Reduce CPS while preserving meaning and fluency.
-
-Special rule:
-Chinese text length <=4 characters -> output 2-4 Vietnamese words.
-
-Output format:
-JSON array [{id, fixedText}]
+REMINDER: Every fixedText must be pure Vietnamese Latin script. Zero Chinese characters allowed.
 
 Segments:
 ${JSON.stringify(segments)}
 `;
 
-  return callAi({
+  const result = await callAi({
     prompt,
     responseMimeType: "application/json",
     responseSchema: {
@@ -230,6 +177,8 @@ ${JSON.stringify(segments)}
       },
     },
   });
+
+  return { ...result, prompt };
 }
 
 export async function analyzeTranslationStyle(params: { titleOrSummary: string }) {
