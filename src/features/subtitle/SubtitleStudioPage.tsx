@@ -916,25 +916,25 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       return;
     }
 
-    const currentFile = selectedFileId && selectedFolder?.files.find(f => f.id === selectedFileId);
-    if (!currentFile) {
-      showToast('error', "No file selected in vault. Translation via Job System requires a vault file.");
+    // Check if we have a working file path (from .srt conversion or direct .sktproject)
+    if (!workingFilePath) {
+      showToast('error', "No file selected. Translation requires a file to be loaded.");
       return;
     }
+
+    // Get file name for display (from vault or workingFilePath)
+    const currentFile = selectedFileId && selectedFolder?.files.find(f => f.id === selectedFileId);
+    const displayName = currentFile?.name || fileName || workingFilePath.split('/').pop() || 'Unknown';
 
     try {
       setStatus('processing');
       setTranslationState({ status: 'queued', processed: 0, total: needingTranslation.length });
       setProgress(0);
 
-      // Use workingFilePath (set when file was opened, may be .sktproject after .srt conversion)
       const subtitleFile = workingFilePath;
-      if (!subtitleFile) {
-        throw new Error('File path not found');
-      }
 
       const payload = {
-        name: `Translate: ${currentFile.name}`,
+        name: `Translate: ${displayName}`,
         projectName: selectedFolder?.name,
         inputPath: subtitleFile,
         subtitleFile: subtitleFile,
@@ -1121,11 +1121,15 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       return;
     }
 
-    const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
-    if (!currentFile) {
-      showToast('warning', "No file selected.");
+    // Check if we have a working file path
+    if (!workingFilePath) {
+      showToast('warning', "No file selected. Optimization requires a file to be loaded.");
       return;
     }
+
+    // Get file name for display (from vault or workingFilePath)
+    const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
+    const displayName = currentFile?.name || fileName || workingFilePath.split('/').pop() || 'Unknown';
 
     setIsOptimizing(true);
     setIsStoppingOptimize(false);
@@ -1137,14 +1141,11 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     try {
       const projectName = selectedFolder?.name || '';
       
-      // Use workingFilePath (set when file was opened, may be .sktproject after .srt conversion)
+      // Use workingFilePath directly
       const subtitleFile = workingFilePath;
-      if (!subtitleFile) {
-        throw new Error('File path not found');
-      }
       
       const payload = {
-        name: `Optimize: ${currentFile.name}`,
+        name: `Optimize: ${displayName}`,
         inputPath: subtitleFile,
         graph: {
           nodes: [
