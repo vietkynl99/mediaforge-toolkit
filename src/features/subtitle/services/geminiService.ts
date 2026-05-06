@@ -87,6 +87,11 @@ export function splitToTwoLinesIfLong(text: string, maxWords: number): string {
     const line1Words = countWords(lines[0]);
     const line2Words = countWords(lines[1]);
     const totalWords = line1Words + line2Words;
+    // If total words fit in a single line, merge them
+    if (totalWords <= maxWords) {
+      return `${lines[0]} ${lines[1]}`.replace(/\s+/g, ' ').trim();
+    }
+    // If one line exceeds maxWords, rebalance
     if (totalWords <= maxWords * 2 && (line1Words > maxWords || line2Words > maxWords)) {
       const merged = `${lines[0]} ${lines[1]}`.replace(/\s+/g, ' ').trim();
       const rebalanced = splitLine(merged);
