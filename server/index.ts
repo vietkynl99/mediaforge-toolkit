@@ -218,6 +218,67 @@ const moveFilesToSource = async (downloadDir: string, sourceDir: string, filenam
   return moved;
 };
 
+// UVR state for tracking progress and outputs
+type UvrState = {
+  inputPath: string;           // Relative path of input file
+  inputHash?: string;           // Hash of input file for validation
+  backend: string;
+  model: string;
+  outputFormat: string;
+  completed: boolean;           // UVR processing completed
+  outputs: string[];            // Output files moved to uvr-output
+  lastUpdated: string;
+};
+
+const UVR_STATE_FILE = 'uvr-state.json';
+
+const readUvrState = async (uvrDir: string): Promise<UvrState | null> => {
+  try {
+    const statePath = path.join(uvrDir, UVR_STATE_FILE);
+    const content = await fs.readFile(statePath, 'utf-8');
+    return JSON.parse(content) as UvrState;
+  } catch {
+    return null;
+  }
+};
+
+const writeUvrState = async (uvrDir: string, state: UvrState): Promise<void> => {
+  const statePath = path.join(uvrDir, UVR_STATE_FILE);
+  state.lastUpdated = new Date().toISOString();
+  await fs.writeFile(statePath, JSON.stringify(state, null, 2));
+};
+
+// Move UVR outputs from runtime dir to output dir
+const moveUvrOutputs = async (runtimeDir: string, outputDir: string, baseName: string): Promise<string[]> => {
+  const moved: string[] = [];
+  try {
+    const files = await fs.readdir(runtimeDir).catch(() => []);
+    for (const name of files) {
+      // Skip state file and split folders
+      if (name === UVR_STATE_FILE || name.startsWith('uvr_cli_split_')) continue;
+      // Only move output files (vocal, instrument, etc.)
+      const nameLower = name.toLowerCase();
+      if (nameLower.includes('(vocals)') || nameLower.includes('(instrumental)') ||
+          nameLower.includes('[vr]') || nameLower.includes(baseName.toLowerCase())) {
+        const srcPath = path.join(runtimeDir, name);
+        const destPath = path.join(outputDir, name);
+        const stat = await fs.stat(srcPath).catch(() => null);
+        if (stat?.isFile()) {
+          try {
+            await fs.rename(srcPath, destPath);
+            moved.push(name);
+          } catch {
+            // Ignore errors for individual files
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to move UVR outputs:', err);
+  }
+  return moved;
+};
+
 const PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 const PREVIEW_MAX_SECONDS = 60;
 const loadProjectConfig = (): ProjectConfig => {
@@ -243,6 +304,15 @@ const RENDER_V2_SEGMENT_SECONDS = Math.max(
   Number.isFinite(Number(process.env.RENDER_V2_SEGMENT_SECONDS))
     ? Number(process.env.RENDER_V2_SEGMENT_SECONDS)
     : 60
+);
+// UVR chunk size in seconds for splitting long audio files
+// Smaller chunks = less memory per chunk but more processing overhead
+// Default: 600 seconds (10 minutes) - good balance for most cases
+const UVR_MAX_CHUNK_SECONDS = Math.max(
+  60,
+  Number.isFinite(Number(process.env.UVR_MAX_CHUNK_SECONDS))
+    ? Number(process.env.UVR_MAX_CHUNK_SECONDS)
+    : 600
 );
 const RENDER_V2_FFMPEG_THREADS = (() => {
   const valueFromConfig = Number(PROJECT_CONFIG.renderV2?.ffmpegThreads);
@@ -1478,82 +1548,117 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const abortController = new AbortController();
       (job as any).__abortController = abortController;
       const outputDir = (job as any).__outputDir as string;
-      const before = new Set<string>((await fs.readdir(outputDir)).map(name => path.join(outputDir, name)));
-      // Track UVR multi-file progress
-      let uvrTotalFiles = 1; // Default to 1 (single file mode)
-      let uvrCurrentFile = 1;
-      const uvrLog = await runUvrTask(
-        uvrInputPath,
-        outputDir,
-        (job as any).__model,
-        (job as any).__outputFormat,
-        (job as any).__backend ?? 'vr',
-        (chunk) => {
-          appendJobLog(job, chunk);
-          const lines = chunk.split(/\r?\n/);
-          for (const line of lines) {
-            // Parse "Split '...' into N chunk(s)."
-            const splitMatch = line.match(/Split\s+.*\s+into\s+(\d+)\s+chunk/);
-            if (splitMatch) {
-              uvrTotalFiles = Math.max(1, Number(splitMatch[1]));
-              uvrCurrentFile = 1;
-              continue;
-            }
-            // Parse "File X/Y Processing ... Slices..."
-            const fileMatch = line.match(/File\s+(\d+)\/(\d+)\s+Processing/);
-            if (fileMatch) {
-              uvrCurrentFile = Math.max(1, Number(fileMatch[1]));
-              uvrTotalFiles = Math.max(uvrCurrentFile, Number(fileMatch[2]));
-              continue;
-            }
-            // Parse progress bar "X%|..."
-            const match = line.match(/^\s*(\d{1,3})%\|/);
-            if (!match) continue;
-            const percent = Math.min(100, Math.max(0, Number(match[1])));
-            if (!Number.isFinite(percent)) continue;
-            // Calculate overall progress across all files
-            // Formula: ((currentFile - 1) + percent/100) / totalFiles * 100
-            const overallPercent = Math.round(((uvrCurrentFile - 1) + percent / 100) / uvrTotalFiles * 100);
-            if (overallPercent <= (uvrTask.progress ?? 0)) continue;
-            uvrTask.progress = overallPercent;
-            updateUvrJobProgress();
-          }
-        },
-        { signal: abortController.signal, onStart: proc => ((job as any).__activeProcess = proc) }
-      );
-      const resolvedLog = job.log && job.log.trim().length > 0 ? job.log : uvrLog;
-      job.log = resolvedLog || `UVR completed at ${new Date().toISOString()}`;
-      const after = (await fs.readdir(outputDir)).map(name => path.join(outputDir, name));
-      const outputs = after
-        .filter(pathname => !before.has(pathname))
-        .map(pathname => path.relative(MEDIA_VAULT_ROOT, pathname));
-      
-      // Validate UVR outputs - check if any output files were generated
-      // UVR CLI may exit with code 0 even when it fails (e.g., missing chunk files)
-      if (outputs.length === 0) {
-        throw new Error('UVR task completed but no output files were generated. Check if the process was interrupted or if there were chunk file errors.');
-      }
-      
+      const uvrRuntimeDir = (job as any).__uvrRuntimeDir as string;
+      const baseName = path.parse(uvrInputPath).name;
+
+      // Check for existing UVR state (resume capability)
+      const existingState = await readUvrState(uvrRuntimeDir);
+      const model = (job as any).__model;
+      const backend = (job as any).__backend ?? 'vr';
+      const outputFormat = (job as any).__outputFormat;
       const uvrInputRelativePath = path.relative(MEDIA_VAULT_ROOT, uvrInputPath);
-      if (uvrInputRelativePath) {
-        upsertUvrMetadata({
-          relativePath: uvrInputRelativePath,
-          processedAt: new Date().toISOString(),
-          backend: (job as any).__backend ?? 'vr',
-          model: (job as any).__model,
-          outputFormat: (job as any).__outputFormat,
-          outputs,
-          jobId: job.id
+
+      // If state exists and is completed with matching params, skip UVR
+      if (existingState?.completed &&
+          existingState.inputPath === uvrInputRelativePath &&
+          existingState.model === model &&
+          existingState.backend === backend &&
+          existingState.outputFormat === outputFormat) {
+        appendJobLog(job, `[UVR] Skipping - already completed with same parameters\n`);
+        uvrTask.status = 'done';
+        uvrTask.progress = 100;
+        const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+        job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+        scheduleJobPersist(job);
+      } else {
+        // Run UVR processing
+        await fs.mkdir(uvrRuntimeDir, { recursive: true });
+        const before = new Set<string>((await fs.readdir(uvrRuntimeDir).catch(() => [])).map(name => path.join(uvrRuntimeDir, name)));
+        // Track UVR multi-file progress
+        let uvrTotalFiles = 1; // Default to 1 (single file mode)
+        let uvrCurrentFile = 1;
+        const uvrLog = await runUvrTask(
+          uvrInputPath,
+          uvrRuntimeDir,
+          model,
+          outputFormat,
+          backend,
+          (chunk) => {
+            appendJobLog(job, chunk);
+            const lines = chunk.split(/\r?\n/);
+            for (const line of lines) {
+              // Parse "Split '...' into N chunk(s)."
+              const splitMatch = line.match(/Split\s+.*\s+into\s+(\d+)\s+chunk/);
+              if (splitMatch) {
+                uvrTotalFiles = Math.max(1, Number(splitMatch[1]));
+                uvrCurrentFile = 1;
+                continue;
+              }
+              // Parse "File X/Y Processing ... Slices..."
+              const fileMatch = line.match(/File\s+(\d+)\/(\d+)\s+Processing/);
+              if (fileMatch) {
+                uvrCurrentFile = Math.max(1, Number(fileMatch[1]));
+                uvrTotalFiles = Math.max(uvrCurrentFile, Number(fileMatch[2]));
+                continue;
+              }
+              // Parse progress bar "X%|..."
+              const match = line.match(/^\s*(\d{1,3})%\|/);
+              if (!match) continue;
+              const percent = Math.min(100, Math.max(0, Number(match[1])));
+              if (!Number.isFinite(percent)) continue;
+              // Calculate overall progress across all files
+              // Formula: ((currentFile - 1) + percent/100) / totalFiles * 100
+              const overallPercent = Math.round(((uvrCurrentFile - 1) + percent / 100) / uvrTotalFiles * 100);
+              if (overallPercent <= (uvrTask.progress ?? 0)) continue;
+              uvrTask.progress = overallPercent;
+              updateUvrJobProgress();
+            }
+          },
+          { signal: abortController.signal, onStart: proc => ((job as any).__activeProcess = proc) }
+        );
+        const resolvedLog = job.log && job.log.trim().length > 0 ? job.log : uvrLog;
+        job.log = resolvedLog || `UVR completed at ${new Date().toISOString()}`;
+
+        // Move outputs from runtime dir to output dir
+        const movedFiles = await moveUvrOutputs(uvrRuntimeDir, outputDir, baseName);
+        if (movedFiles.length === 0) {
+          throw new Error('UVR task completed but no output files were generated. Check if the process was interrupted or if there were chunk file errors.');
+        }
+        appendJobLog(job, `[MOVE] Moved ${movedFiles.length} file(s) to output directory\n`);
+
+        // Update UVR state
+        await writeUvrState(uvrRuntimeDir, {
+          inputPath: uvrInputRelativePath,
+          backend,
+          model,
+          outputFormat,
+          completed: true,
+          outputs: movedFiles,
+          lastUpdated: new Date().toISOString()
         });
+
+        const outputs = movedFiles.map(name => path.relative(MEDIA_VAULT_ROOT, path.join(outputDir, name)));
+
+        if (uvrInputRelativePath) {
+          upsertUvrMetadata({
+            relativePath: uvrInputRelativePath,
+            processedAt: new Date().toISOString(),
+            backend,
+            model,
+            outputFormat,
+            outputs,
+            jobId: job.id
+          });
+        }
+        if (job.log && job.log.length > MAX_JOB_LOG_CHARS) {
+          job.log = job.log.slice(-MAX_JOB_LOG_CHARS);
+        }
+        uvrTask.status = 'done';
+        uvrTask.progress = 100;
+        const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
+        job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
+        scheduleJobPersist(job);
       }
-      if (job.log && job.log.length > MAX_JOB_LOG_CHARS) {
-        job.log = job.log.slice(-MAX_JOB_LOG_CHARS);
-      }
-      uvrTask.status = 'done';
-      uvrTask.progress = 100;
-      const total = job.tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0);
-      job.progress = Math.max(0, Math.min(99, Math.round(total / job.tasks.length)));
-      scheduleJobPersist(job);
     }
     const ttsTask = job.tasks.find(task => task.type === 'tts');
     if (ttsTask) {
@@ -3651,6 +3756,8 @@ app.post('/api/jobs/:id/retry', async (req, res) => {
       // Restore download directories for download jobs
       (job as any).__downloadSourceDir = path.join(projectRoot, 'source');
       (job as any).__downloadRuntimeDir = path.join(projectRoot, '.mediaforge', 'download');
+      // Restore UVR runtime directory for UVR jobs
+      (job as any).__uvrRuntimeDir = path.join(projectRoot, '.mediaforge', 'uvr');
     }
   }
 
@@ -4065,14 +4172,16 @@ app.post('/api/jobs/run', async (req, res) => {
       const fileSize = formatBytes(stats.size);
       const projectName = inputPath.split(/[\\/]/)[0];
       const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
+      const mediaforgeDir = path.join(projectRoot, '.mediaforge');
+      const uvrRuntimeDir = path.join(mediaforgeDir, 'uvr');
       const outputDir = path.join(projectRoot, UVR_OUTPUT_DIRNAME);
+      await fs.mkdir(uvrRuntimeDir, { recursive: true });
       await fs.mkdir(outputDir, { recursive: true });
 
       // Check for existing outputs if not continuing
       if (!continueIfExists) {
         const existing = await fs.readdir(outputDir).catch(() => []);
         const baseName = path.parse(fullPath).name.toLowerCase();
-        const hasUvr = tasks.some(task => task.type === 'uvr');
         const hasTts = tasks.some(task => task.type === 'tts');
         if (hasTts) {
           const { outputName: ttsName } = buildTtsOutputName(fullPath, requestedTtsSettings);
@@ -4080,13 +4189,6 @@ app.post('/api/jobs/run', async (req, res) => {
           const ttsExists = await fs.stat(ttsPath).then(stat => stat.isFile()).catch(() => false);
           if (ttsExists) {
             res.status(409).json({ error: 'TTS output already exists.', kind: 'tts', path: path.relative(MEDIA_VAULT_ROOT, ttsPath) });
-            return;
-          }
-        }
-        if (hasUvr) {
-          const hasMatch = existing.some(name => name.toLowerCase().includes(baseName));
-          if (hasMatch) {
-            res.status(409).json({ error: 'UVR outputs already exist.', kind: 'uvr' });
             return;
           }
         }
@@ -4159,6 +4261,7 @@ app.post('/api/jobs/run', async (req, res) => {
       (job as any).__inputRelativePath = inputPath;
       (job as any).__projectRoot = projectRoot;
       (job as any).__outputDir = outputDir;
+      (job as any).__uvrRuntimeDir = uvrRuntimeDir;
       (job as any).__model = model;
       (job as any).__outputFormat = outputFormat;
       (job as any).__backend = backend;
@@ -4584,7 +4687,9 @@ const runUvrTask = async (
     '--save-format',
     outputFormat,
     '--output-name',
-    '[VR]{suffix}_{orig_base}{ext}',
+    '[VR]{suffix}_{orig_base}.{ext}',
+    '--max-chunk-seconds',
+    String(UVR_MAX_CHUNK_SECONDS),
     '--both',
     '--yes',
   ];
@@ -4616,15 +4721,18 @@ const runUvrTask = async (
       onData?.(chunk);
     });
     proc.on('error', reject);
-    proc.on('close', code => {
+    proc.on('close', (code, signal) => {
       options?.signal?.removeEventListener('abort', handleAbort);
       if (options?.signal?.aborted) {
         reject(new Error(CANCELLED_ERROR_MESSAGE));
         return;
       }
       const combined = [output.trim(), error.trim()].filter(Boolean).join('\n');
-      if (code !== 0) {
-        reject(new Error(combined || `uvr_cli exited with code ${code}`));
+      if (code !== 0 || signal) {
+        const exitInfo = signal ? `killed by signal ${signal}` : `exited with code ${code}`;
+        // Truncate log to last 2000 chars to avoid huge error messages
+        const truncatedLog = combined.length > 2000 ? '...\n' + combined.slice(-2000) : combined;
+        reject(new Error(truncatedLog ? `${truncatedLog}\n\n[Process ${exitInfo}]` : `uvr_cli ${exitInfo}`));
         return;
       }
       resolve(combined);
