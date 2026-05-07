@@ -724,8 +724,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     const trimmedPrev = prevText.trim();
     const trimmedNext = nextText.trim();
     if (trimmedNext) {
-      // If history is empty, add prevText first (if it exists and is different from nextText)
-      if (nextHistory.length === 0 && trimmedPrev && trimmedPrev !== trimmedNext) {
+      // Always add prevText if it exists, is different from nextText, and not already in history
+      if (trimmedPrev && trimmedPrev !== trimmedNext && !nextHistory.includes(trimmedPrev)) {
         nextHistory.push(trimmedPrev);
       }
       // Add nextText only if it doesn't already exist in history
@@ -861,7 +861,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     if (autoSplitScope.longLineCount === 0) return;
     const splitSegments = applyAutoSplit(autoSplitScope.scopeSegments, settings.maxSingleLineWords);
     const splitMap = new Map(splitSegments.map(seg => [seg.id, seg]));
-    commitSegmentsChange(prev => prev.map(seg => splitMap.get(seg.id) || seg));
+    commitSegmentsChange(prev => prev.map(seg => {
+      const splitSeg = splitMap.get(seg.id);
+      if (!splitSeg) return seg;
+      // Check if translatedText actually changed
+      const prevText = seg.translatedText || '';
+      const nextText = splitSeg.translatedText || '';
+      if (prevText === nextText) return seg;
+      // Update optimizeHistory to preserve previous version
+      const nextHistory = appendOptimizeHistory(seg.optimizeHistory, prevText, nextText);
+      return { ...splitSeg, optimizeHistory: nextHistory };
+    }));
     const selectedSuffix = autoSplitScope.mode === 'selected' ? ` (${selectedIds.size})` : '';
     showToast(
       'success',
@@ -877,7 +887,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     settings.maxSingleLineWords,
     commitSegmentsChange,
     selectedIds.size,
-    showToast
+    showToast,
+    appendOptimizeHistory
   ]);
 
   const processFile = useCallback((file: File) => {
