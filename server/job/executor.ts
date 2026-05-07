@@ -569,22 +569,40 @@ ${result.text}`);
             const cue = subtitleData.find((c: any) => String(c.id) === String(item.id));
             if (cue && item.fixedText) {
               matchedCount++;
-              // Store optimize history
+              // Store optimize history (same logic as frontend appendOptimizeHistory)
+              const prevText = (cue.translatedText || cue.text || '').trim();
+              const nextText = normalizeAiText(item.fixedText).trim();
               if (!cue.optimizeHistory) cue.optimizeHistory = [];
-              cue.optimizeHistory.push(cue.translatedText || cue.text);
+              // If history is empty, add prevText first (if it exists and is different from nextText)
+              if (cue.optimizeHistory.length === 0 && prevText && prevText !== nextText) {
+                cue.optimizeHistory.push(prevText);
+              }
+              // Add nextText only if it doesn't already exist in history
+              if (!cue.optimizeHistory.includes(nextText)) {
+                cue.optimizeHistory.push(nextText);
+              }
               // Update with fixed text
-              cue.translatedText = item.fixedText;
-              cue.text = item.fixedText;
-              cue.translated = item.fixedText;
+              cue.translatedText = nextText;
+              cue.text = nextText;
+              cue.translated = nextText;
             }
 
             // Update originalProject.segments if it's an sktproject
             if (isSktProject && originalProject?.segments) {
               const originalSeg = originalProject.segments.find((s: any) => String(s.id) === String(item.id));
               if (originalSeg && item.fixedText) {
+                const prevText = (originalSeg.translated || '').trim();
+                const nextText = normalizeAiText(item.fixedText).trim();
                 if (!originalSeg.optimize_history) originalSeg.optimize_history = [];
-                originalSeg.optimize_history.push(originalSeg.translated);
-                originalSeg.translated = item.fixedText;
+                // If history is empty, add prevText first (if it exists and is different from nextText)
+                if (originalSeg.optimize_history.length === 0 && prevText && prevText !== nextText) {
+                  originalSeg.optimize_history.push(prevText);
+                }
+                // Add nextText only if it doesn't already exist in history
+                if (!originalSeg.optimize_history.includes(nextText)) {
+                  originalSeg.optimize_history.push(nextText);
+                }
+                originalSeg.translated = nextText;
               }
             }
           }

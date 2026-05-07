@@ -679,13 +679,16 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   // Optimize history helper
   const appendOptimizeHistory = useCallback((history: string[] | undefined, prevText: string, nextText: string) => {
     let nextHistory = history ? [...history] : [];
-    if (nextText.trim()) {
-      if (nextHistory.length === 0) {
-        if (prevText.trim()) nextHistory.push(prevText);
-        nextHistory.push(nextText);
-      } else {
-        const last = nextHistory[nextHistory.length - 1];
-        if (last !== nextText) nextHistory.push(nextText);
+    const trimmedPrev = prevText.trim();
+    const trimmedNext = nextText.trim();
+    if (trimmedNext) {
+      // If history is empty, add prevText first (if it exists and is different from nextText)
+      if (nextHistory.length === 0 && trimmedPrev && trimmedPrev !== trimmedNext) {
+        nextHistory.push(trimmedPrev);
+      }
+      // Add nextText only if it doesn't already exist in history
+      if (!nextHistory.includes(trimmedNext)) {
+        nextHistory.push(trimmedNext);
       }
     }
     return nextHistory;
@@ -695,7 +698,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     commitSegmentsChange(prev => prev.map(s => {
       if (s.id !== id) return s;
       const prevText = prevTextOverride ?? (s.translatedText || '');
-      const nextText = text;
+      const nextText = text.trim();
       if (prevText === nextText) return s;
 
       const nextHistory = appendOptimizeHistory(s.optimizeHistory, prevText, nextText);
@@ -754,7 +757,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     commitSegmentsChange(prev => prev.map(seg => {
       if (!targetIds.has(seg.id)) return seg;
       const current = seg.translatedText || '';
-      const cleaned = current.replace(/['"]/g, '');
+      const cleaned = current.replace(/['"]/g, '').trim();
       if (cleaned === current) return seg;
       const nextHistory = appendOptimizeHistory(seg.optimizeHistory, current, cleaned);
       return { ...seg, translatedText: cleaned, optimizeHistory: nextHistory };
@@ -1436,7 +1439,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   };
 
   const updateSegmentText = (id: number, text: string) => {
-    commitSegmentsChange(prev => prev.map(s => s.id === id ? { ...s, translatedText: text } : s));
+    commitSegmentsChange(prev => prev.map(s => s.id === id ? { ...s, translatedText: text.trim() } : s));
   };
 
   const updateSegmentTime = (id: number, field: 'startTime' | 'endTime', value: string) => {

@@ -387,6 +387,13 @@ export const SegmentList: React.FC<SegmentListProps> = ({
                                   scheduleUpdate(seg.id, nextValue);
                                   resizeTranslationTextarea(e.currentTarget);
                                 }}
+                                onKeyDown={(e) => {
+                                  // Enter (without Shift) commits the edit, Shift+Enter adds newline
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    e.currentTarget.blur();
+                                  }
+                                }}
                                 onFocus={() => {
                                   editStartTextRef.current[seg.id] = displayedTranslation;
                                   setEditingTranslationId(seg.id);
