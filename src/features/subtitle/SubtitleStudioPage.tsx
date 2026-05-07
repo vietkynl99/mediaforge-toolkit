@@ -1728,10 +1728,25 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
               {/* Projects List */}
               <div className="w-3/10 flex flex-col bg-slate-900/40 border border-slate-800 rounded-2xl overflow-hidden">
                 <div className="p-4 border-b border-slate-800 space-y-3">
-                  <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                    <Folder size={16} className="text-lime-400" />
-                    Projects
-                  </h2>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                      <Folder size={16} className="text-lime-400" />
+                      Projects
+                    </h2>
+                    <button
+                      onClick={() => onRefreshVault?.()}
+                      disabled={parentVaultLoading}
+                      className={`p-1.5 rounded-lg border transition-colors ${
+                        parentVaultLoading
+                          ? 'border-lime-500/30 bg-lime-500/10 text-lime-400'
+                          : 'border-slate-700 bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+                      } disabled:opacity-50`}
+                      title="Reload projects"
+                      aria-label="Reload projects"
+                    >
+                      <RefreshCw size={14} className={parentVaultLoading ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5">
                       <Search size={14} className="text-slate-500" />
