@@ -1,4 +1,5 @@
 import { SubtitleSegment, AnalysisResult, SubtitleError, Severity, SplitMetadata, HistogramBucket, SktProject, TranslationPreset } from '../types';
+import { IssueType, classifyIssues } from '../../../../shared/types';
 
 export interface SplitResult {
   fileName: string;
@@ -910,4 +911,109 @@ export function splitByRange(segments: SubtitleSegment[], startIdx: number, endI
     segments: rangeBatch,
     metadata: includeMetadata ? createMetadata(rangeBatch, `${startIdx} → ${endIdx}`) : undefined
   }];
+}
+
+/**
+ * Detect unique issue types from a list of segments.
+ * Returns an array of unique issue types found across all segments.
+ */
+export function detectIssueTypesFromSegments(segments: SubtitleSegment[]): IssueType[] {
+  const allTypes = new Set<IssueType>();
+  for (const seg of segments) {
+    const types = classifyIssues(seg.issueList || []);
+    types.forEach(t => allTypes.add(t));
+  }
+  return Array.from(allTypes).sort() as IssueType[];
+}
+
+/**
+ * Extract specific foreign words from an issue list.
+ * Parses "Translation contains non-Vietnamese word(s): word1, word2" → ["word1", "word2"]
+ */
+function extractForeignWordsFromIssueList(issueList: string[]): string[] {
+  const words: string[] = [];
+  for (const issue of issueList) {
+    const match = issue.match(/non-Vietnamese word\(s\):\s*(.+)$/i);
+    if (match) {
+      const extracted = match[1].split(',').map(w => w.trim()).filter(w => w.length > 0);
+      words.push(...extracted);
+    }
+  }
+  return words;
+}
+
+/**
+ * Group segment IDs by their issue types.
+ * Returns array of { id: string, issues: IssueType[], foreignWords?: string[] }
+ * where id is formatted as ranges like "1-10, 12, 15-20"
+ */
+export function groupSegmentsByIssues(segments: SubtitleSegment[]): { id: string; issues: IssueType[]; foreignWords?: string[] }[] {
+  // Group IDs by issue type signature
+  const groupMap = new Map<string, { ids: number[]; types: IssueType[]; foreignWords: Set<string> }>();
+
+  for (const seg of segments) {
+    const types = Array.from(classifyIssues(seg.issueList || [])).sort() as IssueType[];
+    if (types.length === 0) continue; // Skip segments with no issues
+
+    const key = types.join('+');
+    if (!groupMap.has(key)) {
+      groupMap.set(key, { ids: [], types, foreignWords: new Set() });
+    }
+    const group = groupMap.get(key)!;
+    const idNum = typeof seg.id === 'string' ? parseInt(seg.id, 10) : seg.id;
+    if (!isNaN(idNum)) group.ids.push(idNum);
+
+    // Collect specific foreign words from issue list
+    for (const word of extractForeignWordsFromIssueList(seg.issueList || [])) {
+      group.foreignWords.add(word);
+    }
+  }
+
+  // Convert to array and format IDs as ranges
+  const result: { id: string; issues: IssueType[]; foreignWords?: string[] }[] = [];
+  for (const { ids, types, foreignWords } of groupMap.values()) {
+    if (ids.length === 0) continue;
+    const sortedIds = [...ids].sort((a, b) => a - b);
+    const idString = formatIdRanges(sortedIds);
+    const fw = Array.from(foreignWords);
+    result.push({
+      id: idString,
+      issues: types,
+      ...(fw.length > 0 ? { foreignWords: fw } : {})
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Format an array of IDs into range string like "1-10, 12, 15-20"
+ */
+function formatIdRanges(ids: number[]): string {
+  if (ids.length === 0) return '';
+  if (ids.length === 1) return String(ids[0]);
+
+  const ranges: string[] = [];
+  let start = ids[0];
+  let end = ids[0];
+
+  for (let i = 1; i <= ids.length; i++) {
+    if (i < ids.length && ids[i] === end + 1) {
+      end = ids[i];
+    } else {
+      // End of current range
+      if (start === end) {
+        ranges.push(String(start));
+      } else {
+        ranges.push(`${start}-${end}`);
+      }
+      // Start new range
+      if (i < ids.length) {
+        start = ids[i];
+        end = ids[i];
+      }
+    }
+  }
+
+  return ranges.join(', ');
 }

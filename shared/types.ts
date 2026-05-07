@@ -1,5 +1,8 @@
 export type LevelControl = 'gain' | 'loudness' | 'lufs';
 
+/** Issue types for subtitle optimization */
+export type IssueType = 'language' | 'length';
+
 export type BlurRegionEffect = {
   type: 'blur_region';
   left: number;
@@ -112,4 +115,25 @@ export interface AiCallResult {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
   };
+}
+
+/**
+ * Classify issue types from issue strings.
+ * Returns a Set of issue types: 'language' | 'length'
+ */
+export function classifyIssues(issues: string[]): Set<IssueType> {
+  const types = new Set<IssueType>();
+  for (const i of issues) {
+    const lower = i.toLowerCase();
+    if (lower.includes('non-vietnamese word') ||
+        (lower.includes('non-vietnamese characters') && !lower.includes('word'))) {
+      types.add('language');
+    }
+    if (lower.includes('more than 2 lines') ||
+        lower.includes('too many words') ||
+        lower.includes('cps exceeds')) {
+      types.add('length');
+    }
+  }
+  return types;
 }

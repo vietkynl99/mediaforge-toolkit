@@ -8,7 +8,7 @@ import {
 import {
   parseSRT, parseSktProject, parseCapCutDraft, generateSktProject, analyzeSegments,
   performLocalFix, generateSRT, timeToSeconds, parseFileName, generateExportFileName,
-  calculateCPS
+  calculateCPS, detectIssueTypesFromSegments, groupSegmentsByIssues
 } from './services/subtitleLogic';
 import { translateBatch, analyzeTranslationStyle } from './services/geminiService';
 import { splitToTwoLinesIfLong } from '../../../shared/text-utils.js';
@@ -1234,10 +1234,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 targetIds: (aiScope.mode === 'selected' || filter !== 'all')
                   ? aiScope.translated.map(s => s.id)
                   : undefined,
-                // Send targetIssues for issue-aware prompt optimization
-                targetIssues: (aiScope.mode === 'selected' || filter !== 'all')
-                  ? aiScope.translated.map(s => ({ id: s.id, issues: s.issueList }))
-                  : undefined
+                // Group segments by issue types - creates compact targetIssues
+                // e.g. [{ id: "1-10, 12", issues: ["language"] }, { id: "15-20", issues: ["language", "length"] }]
+                targetIssues: groupSegmentsByIssues(aiScope.translated)
               }
             }
           ],

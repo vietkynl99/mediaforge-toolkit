@@ -12,6 +12,7 @@ import path from 'path';
 import { MEDIA_VAULT_ROOT } from '../constants.js';
 import { parseSrtForTranslation } from '../subtitleCues.js';
 import { normalizeAiText, splitToTwoLinesIfLong, collapseToSingleLineIfShort } from '../../shared/text-utils.js';
+import { IssueType, classifyIssues } from '../../shared/types.js';
 
 // Debug flag for optimize flow
 const DEBUG_OPTIMIZE = ['1', 'true', 'yes', 'on'].includes((process.env.DEBUG_OPTIMIZE ?? '').toLowerCase());
@@ -22,7 +23,7 @@ const DEBUG_TRANSLATE = ['1', 'true', 'yes', 'on'].includes((process.env.DEBUG_T
  */
 function tryRepairJson(text: string): string {
   let repaired = text.trim();
-  
+
   // 1. Remove markdown code blocks (always safe)
   repaired = repaired.replace(/^```json\s*/, '').replace(/```$/, '').trim();
 
@@ -30,7 +31,7 @@ function tryRepairJson(text: string): string {
   // ONLY fix if it's immediately followed by the next expected key "text" or "fixedText"
   // This ensures we are targeting the structural part of JSON, not the content of a string.
   repaired = repaired.replace(/(^|[{,])\s*"id":\s*(\d+)"\s*(?=,\s*"text":|,\s*"fixedText":)/g, '$1"id":$2');
-  
+
   // 3. If it's an array and missing the closing bracket due to truncation
   if (repaired.startsWith('[') && !repaired.endsWith(']')) {
     const lastObjectEnd = repaired.lastIndexOf('}');
@@ -47,6 +48,39 @@ function tryRepairJson(text: string): string {
   }
 
   return repaired;
+}
+
+/**
+ * Parse ID range string like "1-10, 12, 15-20" into array of IDs
+ */
+function parseIdRanges(rangeStr: string): number[] {
+  const ids: number[] = [];
+  const parts = rangeStr.split(',');
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+
+    // Check if it's a range like "1-10"
+    if (trimmed.includes('-')) {
+      const [startStr, endStr] = trimmed.split('-');
+      const start = parseInt(startStr.trim(), 10);
+      const end = parseInt(endStr.trim(), 10);
+      if (!isNaN(start) && !isNaN(end)) {
+        for (let i = start; i <= end; i++) {
+          ids.push(i);
+        }
+      }
+    } else {
+      // Single ID
+      const id = parseInt(trimmed, 10);
+      if (!isNaN(id)) {
+        ids.push(id);
+      }
+    }
+  }
+
+  return ids;
 }
 
 export type ProgressCallback = (progress: number, message?: string, processed?: number, total?: number) => void;
@@ -405,7 +439,7 @@ export class OptimizeTaskExecutor extends TaskExecutor {
       subtitleFile, // Relative path to subtitle file
       preset,
       targetIds, // Array of IDs to optimize (optional)
-      targetIssues // Array of {id, issues} for issue-aware optimization (optional)
+      targetIssues // Grouped target issues with ID ranges like [{ id: "1-10, 12", issues: ["language"] }]
     } = task.params;
 
     // Get settings from config
@@ -496,125 +530,188 @@ export class OptimizeTaskExecutor extends TaskExecutor {
       return { success: true, outputs: [subtitleFile] };
     }
 
+    // Build issue map and foreignWords map once (they don't change between batches)
+    const issueMap = new Map<number, string[]>();
+    const foreignWordsMap = new Map<number, string[]>();
+
+    // Grouped targetIssues format with ID ranges
+    if (Array.isArray(targetIssues) && targetIssues.length > 0) {
+      for (const item of targetIssues) {
+        // Parse ID range string like "1-10, 12, 15-20"
+        const ids = parseIdRanges(String(item.id));
+        // Convert issue types to issue strings
+        const issueStrings: string[] = [];
+        if (Array.isArray(item.issues)) {
+          for (const issueType of item.issues) {
+            if (issueType === 'language') {
+              issueStrings.push('Translation contains non-Vietnamese word(s)');
+            } else if (issueType === 'length') {
+              issueStrings.push('CPS is in the warning range (25-40)');
+            }
+          }
+        }
+        // Collect specific foreign words for this group
+        const fw = Array.isArray(item.foreignWords) ? item.foreignWords : [];
+        // Apply to all parsed IDs
+        for (const id of ids) {
+          issueMap.set(id, issueStrings);
+          if (fw.length > 0) foreignWordsMap.set(id, fw);
+        }
+      }
+    }
+
+    /**
+     * Helper: apply AI fixedItems back to subtitleData and originalProject
+     */
+    const applyFixedItems = (fixedItems: any[]): number => {
+      let matchedCount = 0;
+      for (const item of fixedItems) {
+        const cue = subtitleData.find((c: any) => String(c.id) === String(item.id));
+        if (cue && item.fixedText) {
+          matchedCount++;
+          const prevText = (cue.translatedText || cue.text || '').trim();
+          const nextText = normalizeAiText(item.fixedText).trim();
+          if (!cue.optimizeHistory) cue.optimizeHistory = [];
+          if (cue.optimizeHistory.length === 0 && prevText && prevText !== nextText) {
+            cue.optimizeHistory.push(prevText);
+          }
+          if (!cue.optimizeHistory.includes(nextText)) {
+            cue.optimizeHistory.push(nextText);
+          }
+          cue.translatedText = nextText;
+          cue.text = nextText;
+          cue.translated = nextText;
+        }
+        if (isSktProject && originalProject?.segments) {
+          const originalSeg = originalProject.segments.find((s: any) => String(s.id) === String(item.id));
+          if (originalSeg && item.fixedText) {
+            const prevText = (originalSeg.translated || '').trim();
+            const nextText = normalizeAiText(item.fixedText).trim();
+            if (!originalSeg.optimize_history) originalSeg.optimize_history = [];
+            if (originalSeg.optimize_history.length === 0 && prevText && prevText !== nextText) {
+              originalSeg.optimize_history.push(prevText);
+            }
+            if (!originalSeg.optimize_history.includes(nextText)) {
+              originalSeg.optimize_history.push(nextText);
+            }
+            originalSeg.translated = nextText;
+          }
+        }
+      }
+      return matchedCount;
+    };
+
     // Process in batches
     for (let i = 0; i < totalToOptimize; i += batchSize) {
       checkAborted(context.signal);
 
       const batch = cuesToOptimize.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(totalToOptimize / batchSize);
 
-      context.onLog(`Optimizing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(totalToOptimize / batchSize)} (${batch.length} segments)...`);
+      // Prepare segments for AI fix
+      const segmentsForAI = batch.map((c: any) => ({
+        id: c.id,
+        cn: c.originalText || c.original || "",
+        vn: c.translatedText || c.text || c.translated || ""
+      }));
 
-      try {
-        // Prepare segments for AI fix - include both original (cn) and translated (vn) text
-        const segmentsForAI = batch.map((c: any) => ({
-          id: c.id,
-          cn: c.originalText || c.original || "",
-          vn: c.translatedText || c.text || c.translated || ""
-        }));
-
-        // Build issue map for issue-aware optimization
-        const issueMap = new Map<number, string[]>();
-        if (Array.isArray(targetIssues)) {
-          for (const item of targetIssues) {
-            issueMap.set(Number(item.id), item.issues || []);
-          }
+      // Group segments by issue-type signature so each AI call has a clean, focused OVERRIDE block.
+      // Segments with the same set of issue types are processed together;
+      // segments with no issues form their own group (key: "__none__").
+      const issueGroups = new Map<string, { segs: any[]; groupIssueMap: Map<number, string[]>; groupForeignWords: Set<string> }>();
+      for (const seg of segmentsForAI) {
+        // Check for segment-specific issues OR global issues (key -1)
+        let issues = issueMap.get(Number(seg.id)) || [];
+        if (issues.length === 0 && issueMap.has(-1)) {
+          issues = issueMap.get(-1) || []; // Apply global issues to all segments
         }
-
-        const result = await SubtitleAI.aiFixSegments({
-          segments: segmentsForAI,
-          preset,
-          segmentIssues: issueMap
-        });
-
-        // Debug: dump response data from AI
-        if (DEBUG_OPTIMIZE) {
-          context.onLog(`[DEBUG_OPTIMIZE] === PROMPT TO AI ===`);
-          context.onLog(`[DEBUG_OPTIMIZE] Prompt length: ${result.prompt?.length ?? 0}`);
-          context.onLog(`[DEBUG_OPTIMIZE] Prompt: ${result.prompt}`);
-          context.onLog(`[DEBUG_OPTIMIZE] === RESPONSE DATA ===`);
-          context.onLog(`[DEBUG_OPTIMIZE] Result text length: ${result.text?.length ?? 0}`);
-          context.onLog(`[DEBUG_OPTIMIZE] Result text: ${result.text}`);
-          context.onLog(`[DEBUG_OPTIMIZE] Usage: ${JSON.stringify(result.usage, null, 2)}`);
+        const typeKey = Array.from(classifyIssues(issues)).sort().join('+') || '__none__';
+        if (!issueGroups.has(typeKey)) {
+          issueGroups.set(typeKey, { segs: [], groupIssueMap: new Map(), groupForeignWords: new Set() });
         }
-
-        // Parse AI response
-        if (result && typeof result.text === 'string') {
-          let fixedItems: any[] = [];
-          
-          try {
-            // First attempt: Parse original text
-            fixedItems = JSON.parse(result.text);
-          } catch (firstParseErr) {
-            // Second attempt: Try to repair and parse again
-            const repairedText = tryRepairJson(result.text);
-            try {
-              fixedItems = JSON.parse(repairedText);
-              context.onLog(`NOTICE: Recovered from malformed AI JSON response using repair utility.`);
-            } catch (secondParseErr) {
-              context.onLog(`ERROR: Failed to parse AI response as JSON even after repair attempt.`);
-              context.onLog(`ERROR: Original error: ${firstParseErr}`);
-              context.onLog(`ERROR: Repair error: ${secondParseErr}`);
-              context.onLog(`ERROR: Full AI response (${result.text.length} chars):
-${result.text}`);
-              throw new Error(`Failed to parse AI response as JSON (see full response in log above)`);
-            }
-          }
-
-          if (!Array.isArray(fixedItems)) {
-            context.onLog(`ERROR: Parsed response is not an array. Got: ${typeof fixedItems}`);
-            context.onLog(`ERROR: Parsed value: ${JSON.stringify(fixedItems).substring(0, 300)}`);
-            throw new Error('AI response was not a valid array format');
-          }
-
-          let matchedCount = 0;
-          for (const item of fixedItems) {
-            const cue = subtitleData.find((c: any) => String(c.id) === String(item.id));
-            if (cue && item.fixedText) {
-              matchedCount++;
-              // Store optimize history (same logic as frontend appendOptimizeHistory)
-              const prevText = (cue.translatedText || cue.text || '').trim();
-              const nextText = normalizeAiText(item.fixedText).trim();
-              if (!cue.optimizeHistory) cue.optimizeHistory = [];
-              // If history is empty, add prevText first (if it exists and is different from nextText)
-              if (cue.optimizeHistory.length === 0 && prevText && prevText !== nextText) {
-                cue.optimizeHistory.push(prevText);
-              }
-              // Add nextText only if it doesn't already exist in history
-              if (!cue.optimizeHistory.includes(nextText)) {
-                cue.optimizeHistory.push(nextText);
-              }
-              // Update with fixed text
-              cue.translatedText = nextText;
-              cue.text = nextText;
-              cue.translated = nextText;
-            }
-
-            // Update originalProject.segments if it's an sktproject
-            if (isSktProject && originalProject?.segments) {
-              const originalSeg = originalProject.segments.find((s: any) => String(s.id) === String(item.id));
-              if (originalSeg && item.fixedText) {
-                const prevText = (originalSeg.translated || '').trim();
-                const nextText = normalizeAiText(item.fixedText).trim();
-                if (!originalSeg.optimize_history) originalSeg.optimize_history = [];
-                // If history is empty, add prevText first (if it exists and is different from nextText)
-                if (originalSeg.optimize_history.length === 0 && prevText && prevText !== nextText) {
-                  originalSeg.optimize_history.push(prevText);
-                }
-                // Add nextText only if it doesn't already exist in history
-                if (!originalSeg.optimize_history.includes(nextText)) {
-                  originalSeg.optimize_history.push(nextText);
-                }
-                originalSeg.translated = nextText;
-              }
-            }
-          }
-          context.onLog(`Matched and optimized ${matchedCount} segments.`);
-        }
-      } catch (aiErr) {
-        const aiErrorMsg = `AI Optimization failed for batch: ${aiErr instanceof Error ? aiErr.message : JSON.stringify(aiErr)}`;
-        context.onLog(`CRITICAL ERROR: ${aiErrorMsg}`);
-        throw new Error(aiErrorMsg);
+        const group = issueGroups.get(typeKey)!;
+        group.segs.push(seg);
+        if (issues.length > 0) group.groupIssueMap.set(Number(seg.id), issues);
+        // Collect foreign words for this segment's group
+        const fw = foreignWordsMap.get(Number(seg.id)) || [];
+        for (const word of fw) group.groupForeignWords.add(word);
       }
+
+      const groupCount = issueGroups.size;
+      context.onLog(`Optimizing batch ${batchNum}/${totalBatches} (${batch.length} segments, ${groupCount} issue group${groupCount !== 1 ? 's' : ''})...`);
+
+      let batchMatchedCount = 0;
+      let groupIdx = 0;
+      for (const [typeKey, { segs, groupIssueMap, groupForeignWords }] of issueGroups) {
+        groupIdx++;
+        checkAborted(context.signal);
+
+        if (groupCount > 1) {
+          context.onLog(`  Group ${groupIdx}/${groupCount} [${typeKey}]: ${segs.length} segment${segs.length !== 1 ? 's' : ''}`);
+        }
+
+        try {
+          const result = await SubtitleAI.aiFixSegments({
+            segments: segs,
+            preset,
+            segmentIssues: groupIssueMap.size > 0 ? groupIssueMap : undefined,
+            foreignWords: groupForeignWords.size > 0 ? Array.from(groupForeignWords) : undefined
+          });
+
+          if (DEBUG_OPTIMIZE) {
+            context.onLog(`[DEBUG_OPTIMIZE] === REQUEST DATA ===`);
+            context.onLog(`[DEBUG_OPTIMIZE] Segments count: ${segs.length}`);
+            // context.onLog(`[DEBUG_OPTIMIZE] Segments: ${JSON.stringify(segs, null, 2)}`);
+            // context.onLog(`[DEBUG_OPTIMIZE] Preset: ${JSON.stringify(preset, null, 2)}`);
+            // context.onLog(`[DEBUG_OPTIMIZE] Target Issues: ${JSON.stringify([...groupIssueMap.entries()].map(([id, issues]) => ({ id: String(id), issues })), null, 2)}`);
+            context.onLog(`[DEBUG_OPTIMIZE] === PROMPT TO AI ===`);
+            context.onLog(`[DEBUG_OPTIMIZE] Prompt length: ${result.prompt?.length ?? 0}`);
+            context.onLog(`[DEBUG_OPTIMIZE] Prompt: ${result.prompt}`);
+            context.onLog(`[DEBUG_OPTIMIZE] === RESPONSE DATA ===`);
+            context.onLog(`[DEBUG_OPTIMIZE] Result text length: ${result.text?.length ?? 0}`);
+            context.onLog(`[DEBUG_OPTIMIZE] Result text: ${result.text}`);
+            context.onLog(`[DEBUG_OPTIMIZE] Usage: ${JSON.stringify(result.usage, null, 2)}`);
+          }
+
+          if (result && typeof result.text === 'string') {
+            let fixedItems: any[] = [];
+            try {
+              fixedItems = JSON.parse(result.text);
+            } catch (firstParseErr) {
+              const repairedText = tryRepairJson(result.text);
+              try {
+                fixedItems = JSON.parse(repairedText);
+                context.onLog(`NOTICE: Recovered from malformed AI JSON response using repair utility.`);
+              } catch (secondParseErr) {
+                context.onLog(`ERROR: Failed to parse AI response as JSON even after repair attempt.`);
+                context.onLog(`ERROR: Original error: ${firstParseErr}`);
+                context.onLog(`ERROR: Repair error: ${secondParseErr}`);
+                context.onLog(`ERROR: Full AI response (${result.text.length} chars):\n${result.text}`);
+                throw new Error(`Failed to parse AI response as JSON (see full response in log above)`);
+              }
+            }
+
+            if (!Array.isArray(fixedItems)) {
+              context.onLog(`ERROR: Parsed response is not an array. Got: ${typeof fixedItems}`);
+              context.onLog(`ERROR: Parsed value: ${JSON.stringify(fixedItems).substring(0, 300)}`);
+              throw new Error('AI response was not a valid array format');
+            }
+
+            const matched = applyFixedItems(fixedItems);
+            batchMatchedCount += matched;
+            if (groupCount > 1) {
+              context.onLog(`  Matched and optimized ${matched} segments in group [${typeKey}].`);
+            }
+          }
+        } catch (aiErr) {
+          const aiErrorMsg = `AI Optimization failed for group [${typeKey}]: ${aiErr instanceof Error ? aiErr.message : JSON.stringify(aiErr)}`;
+          context.onLog(`CRITICAL ERROR: ${aiErrorMsg}`);
+          throw new Error(aiErrorMsg);
+        }
+      }
+
+      context.onLog(`Matched and optimized ${batchMatchedCount} segments.`);
 
       const progress = Math.round(((i + batch.length) / totalToOptimize) * 100);
       const processed = Math.min(i + batchSize, totalToOptimize);

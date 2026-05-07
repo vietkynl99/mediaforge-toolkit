@@ -1,5 +1,6 @@
 import { Type } from "@google/genai";
 import { callAi } from "./ai-provider.js";
+import { IssueType, classifyIssues } from "../shared/types.js";
 
 // Helper functions for prompt generation (moved from frontend)
 function getHumorRule(humorLevel: number): string {
@@ -125,29 +126,6 @@ ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
   return { ...result, prompt };
 }
 
-type IssueType = 'language' | 'length';
-
-/**
- * Classify which issue types a segment has
- */
-function classifyIssues(issues: string[]): Set<IssueType> {
-  const types = new Set<IssueType>();
-  for (const i of issues) {
-    const lower = i.toLowerCase();
-    if (lower.includes('non-vietnamese word') ||
-        (lower.includes('non-vietnamese characters') && !lower.includes('word'))) {
-      types.add('language');
-    }
-    if (lower.includes('more than 2 lines') ||
-        lower.includes('too many words') ||
-        lower.includes('cps exceeds') ||
-        lower.includes('cps is in the warning')) {
-      types.add('length');
-    }
-  }
-  return types;
-}
-
 const ISSUE_FOCUS_TEXT: Record<IssueType, string> = {
   language: `FOCUS: Rewrite to eliminate ALL foreign/non-Vietnamese content
 - Translate any remaining Chinese characters using the cn field as reference
@@ -165,10 +143,12 @@ const ISSUE_FOCUS_TEXT: Record<IssueType, string> = {
  * Build the SEGMENT-SPECIFIC OVERRIDES block for the prompt.
  * Groups segments that share the same issue type(s) to avoid repetition.
  * If all segments share an issue, writes it as a global override (no ID label).
+ * @param foreignWords - specific foreign words that must be replaced (for language issues)
  */
 function buildSegmentOverridesBlock(
   segments: any[],
-  segmentIssues?: Map<number, string[]>
+  segmentIssues?: Map<number, string[]>,
+  foreignWords?: string[]
 ): string {
   if (!segmentIssues || segmentIssues.size === 0) return '';
 
@@ -188,12 +168,23 @@ function buildSegmentOverridesBlock(
 
   if (groupMap.size === 0) return '';
 
+  // Build per-type focus text, injecting foreignWords into the language focus if provided
+  const buildFocusText = (types: IssueType[]): string => {
+    return types.map(t => {
+      let text = ISSUE_FOCUS_TEXT[t];
+      if (t === 'language' && foreignWords && foreignWords.length > 0) {
+        text += `\n- These specific foreign words MUST be replaced (no exception): ${foreignWords.join(', ')}`;
+      }
+      return text;
+    }).join('\n\n');
+  };
+
   const totalSegments = segments.length;
   const globalLines: string[] = [];
   const specificLines: string[] = [];
 
   for (const { ids, types } of groupMap.values()) {
-    const focusText = types.map(t => ISSUE_FOCUS_TEXT[t]).join('\n\n');
+    const focusText = buildFocusText(types);
     if (ids.length === totalSegments) {
       // All segments share this issue → global, no label
       globalLines.push(focusText);
@@ -221,8 +212,10 @@ export async function aiFixSegments(params: {
   segments: any[];
   preset: any;
   segmentIssues?: Map<number, string[]>;
+  /** Specific foreign words to replace, collected from all segments in this batch */
+  foreignWords?: string[];
 }): Promise<{ text?: string; usage?: any; prompt?: string }> {
-  const { segments, preset, segmentIssues } = params;
+  const { segments, preset, segmentIssues, foreignWords } = params;
   const humorLevel = preset?.humor_level ?? 0;
   const humorRule = getHumorRule(humorLevel);
   const characterRules = getCharacterRules(preset?.character_names || []);
@@ -238,7 +231,7 @@ ${humorRule}
     ? `Story context: ${preset.reference.title_or_summary}`
     : "";
 
-  const segmentOverridesBlock = buildSegmentOverridesBlock(segments, segmentIssues);
+  const segmentOverridesBlock = buildSegmentOverridesBlock(segments, segmentIssues, foreignWords);
 
   const prompt = `
 CRITICAL: OUTPUT MUST BE 100% VIETNAMESE. Any Chinese character in the output is a hard failure.

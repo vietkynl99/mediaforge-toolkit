@@ -1,3 +1,5 @@
+import { AiProviderConfig, AiCallParams, AiCallResult, IssueType } from '../../shared/types';
+
 export type JobStatus = 'queued' | 'processing' | 'stopping' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
 
 export interface ProcessingTask {
@@ -85,7 +87,8 @@ export interface MediaJob {
       };
       batchSize?: number;
       targetIds?: string[];
-      targetIssues?: { id: number; issues: string[] }[];
+      /** Grouped target issues with ID ranges. foreignWords lists the specific words to replace for language issues. */
+      targetIssues?: { id: string; issues: IssueType[]; foreignWords?: string[] }[];
     };
   };
 }
