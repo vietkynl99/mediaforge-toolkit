@@ -19,6 +19,7 @@ import {
   Folder,
   FolderOpen,
   Languages,
+  Sparkles,
   Scissors,
   Filter,
   Upload,
@@ -2456,8 +2457,18 @@ export default function App() {
       inputs: ['Subtitle'],
       outputs: ['Subtitle'],
       params: [
-        { name: 'subtitleFile', desc: 'Path to source subtitle file', type: 'string', default: '' },
-        { name: 'batchSize', desc: 'Number of segments per API call.', type: 'number', default: 50 }
+        { name: 'subtitleFile', desc: 'Path to source subtitle file', type: 'string', default: '' }
+      ]
+    },
+    {
+      type: 'optimize',
+      icon: Sparkles,
+      label: 'Optimize AI',
+      desc: 'Optimize translated subtitles using AI to fix issues like foreign words and CPS.',
+      inputs: ['Subtitle'],
+      outputs: ['Subtitle'],
+      params: [
+        { name: 'subtitleFile', desc: 'Path to subtitle file', type: 'string', default: '' }
       ]
     }
   ]), []);

@@ -74,6 +74,18 @@ export const AVAILABLE_TASKS: TaskTemplate[] = [
     preview: 'translate'
   },
   {
+    type: 'optimize',
+    label: 'Optimize SRT',
+    desc: 'Optimize translated subtitles using AI to fix issues like foreign words and CPS.',
+    inputs: ['Subtitle'],
+    outputs: ['Subtitle'],
+    params: [
+      { name: 'aiModel', desc: 'AI model to use for optimization.', type: 'string', default: 'gemini-2.5-flash' },
+      { name: 'batchSize', desc: 'Number of segments per API call.', type: 'number', default: 50 }
+    ],
+    preview: 'optimize'
+  },
+  {
     type: 'render',
     label: 'Render',
     desc: 'Combine video, audio, and subtitle into final output.',

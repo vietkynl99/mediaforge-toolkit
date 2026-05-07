@@ -6,7 +6,7 @@ export type TaskStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed
 
 export type ResourceType = 'cpu' | 'gpu' | 'network';
 
-export type TaskType = 'download' | 'uvr' | 'tts' | 'render' | 'translate';
+export type TaskType = 'download' | 'uvr' | 'tts' | 'render' | 'translate' | 'optimize';
 
 export interface TaskNode {
   id: string;
@@ -85,6 +85,7 @@ export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
     { taskType: 'uvr', maxConcurrent: 1, resourceType: 'cpu', priority: 3 },
     { taskType: 'tts', maxConcurrent: 2, resourceType: 'network', priority: 2 },
     { taskType: 'translate', maxConcurrent: 2, resourceType: 'network', priority: 2 },
+    { taskType: 'optimize', maxConcurrent: 2, resourceType: 'network', priority: 2 },
     { taskType: 'render', maxConcurrent: 1, resourceType: 'cpu', priority: 1 },
   ],
   globalLimits: {

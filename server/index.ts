@@ -1777,7 +1777,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const translateAbortController = new AbortController();
       (job as any).__abortController = translateAbortController;
       
-      const translateExecutor = new (await import('./job/executor.js')).TranslateTaskExecutor();
+      const translateExecutor = new (await import('./job/executor.js')).SubtitleAiTaskExecutor();
       const translateTaskNode = {
         id: translateTask.id,
         type: 'translate' as const,
@@ -1830,7 +1830,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const optimizeAbortController = new AbortController();
       (job as any).__abortController = optimizeAbortController;
 
-      const optimizeExecutor = new (await import('./job/executor.js')).OptimizeTaskExecutor();
+      const optimizeExecutor = new (await import('./job/executor.js')).SubtitleAiTaskExecutor();
       const optimizeTaskNode = {
         id: optimizeTask.id,
         type: 'optimize' as const,
