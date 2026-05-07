@@ -658,6 +658,14 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     return processedSegments.filter(s => s.severity === filter);
   }, [processedSegments, filter]);
 
+  // Auto-reset filter to 'all' when filteredSegments becomes empty but processedSegments has segments
+  // This happens when all issues are fixed (e.g., removing all quotes)
+  useEffect(() => {
+    if (filter !== 'all' && filteredSegments.length === 0 && processedSegments.length > 0) {
+      setFilter('all');
+    }
+  }, [filteredSegments.length, processedSegments.length, filter]);
+
   const editorSegments = useMemo(() => {
     const q = searchQuery.trim();
     if (!q) return filteredSegments;
