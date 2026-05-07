@@ -248,6 +248,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [isPageEditing, setIsPageEditing] = useState<boolean>(false);
   const [pageInputValue, setPageInputValue] = useState<string>('1');
   const [showClearModal, setShowClearModal] = useState<boolean>(false);
+  const [showCloseConfirmModal, setShowCloseConfirmModal] = useState<boolean>(false);
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [showRemoveQuotesModal, setShowRemoveQuotesModal] = useState<boolean>(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState<boolean>(true);
@@ -2090,14 +2091,20 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                     </svg>
                   </button>
 
-                  {/* Delete/Clear Project Button */}
+                  {/* Close Button */}
                   <button
-                    onClick={() => setShowClearModal(true)}
-                    className="inline-flex items-center justify-center w-7 h-7 p-0 rounded-md border border-rose-500/30 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-colors"
-                    title="Clear project"
-                    aria-label="Clear project"
+                    onClick={() => {
+                      if (isDirty) {
+                        setShowCloseConfirmModal(true);
+                      } else {
+                        onBack?.();
+                      }
+                    }}
+                    className="inline-flex items-center justify-center w-7 h-7 p-0 rounded-md border border-slate-700 bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+                    title="Close"
+                    aria-label="Close"
                   >
-                    <Trash2 size={14} />
+                    <X size={14} />
                   </button>
                 </div>
               </div>
@@ -2360,17 +2367,44 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
               <h3 className="text-xl font-bold mb-3 text-center">Clear current project?</h3>
               <p className="text-slate-400 text-sm text-center mb-6">All unsaved changes will be lost.</p>
               <div className="flex gap-3">
-                <button 
-                  onClick={() => setShowClearModal(false)} 
+                <button
+                  onClick={() => setShowClearModal(false)}
                   className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold transition-colors"
                 >
                   Cancel
                 </button>
-                <button 
-                  onClick={performClear} 
+                <button
+                  onClick={performClear}
                   className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 rounded-xl font-bold transition-colors"
                 >
                   Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Close Confirm Modal */}
+        {showCloseConfirmModal && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl shadow-2xl p-6 animate-in zoom-in duration-200">
+              <h3 className="text-xl font-bold mb-3 text-center">Unsaved changes</h3>
+              <p className="text-slate-400 text-sm text-center mb-6">All unsaved changes will be lost. Are you sure you want to close?</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowCloseConfirmModal(false)}
+                  className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCloseConfirmModal(false);
+                    onBack?.();
+                  }}
+                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 rounded-xl font-bold transition-colors"
+                >
+                  Discard and Close
                 </button>
               </div>
             </div>

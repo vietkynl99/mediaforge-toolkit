@@ -6648,6 +6648,10 @@ export default function App() {
                   vaultFolders={vaultFolders}
                   vaultLoading={vaultLoading}
                   onOpenSettings={() => setShowSettingsModal(true)}
+                  onBack={() => {
+                    setActiveTab('dashboard');
+                    window.history.pushState({}, '', '/dashboard');
+                  }}
                 />
               </Suspense>
             )}
