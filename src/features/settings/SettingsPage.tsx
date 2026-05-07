@@ -30,6 +30,7 @@ interface ConcurrencyConfig {
     openrouterApiKey?: string;
     // Common settings
     translationBatchSize?: number;
+    optimizationBatchSize?: number;
     maxSingleLineWords?: number;
     autoSplitLongLines?: boolean;
     cpsThreshold?: {
@@ -346,7 +347,7 @@ export function SettingsPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-4 pt-2 border-t border-zinc-800">
+          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-zinc-800">
             <div>
               <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
                 Translation Batch Size
@@ -355,8 +356,21 @@ export function SettingsPage() {
                 type="number"
                 min={1}
                 max={500}
-                value={config.ai?.translationBatchSize || 100}
+                value={config.ai?.translationBatchSize || 50}
                 onChange={e => updateAiSetting('translationBatchSize', parseInt(e.target.value) || 1)}
+                className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                Optimization Batch Size
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={config.ai?.optimizationBatchSize || 30}
+                onChange={e => updateAiSetting('optimizationBatchSize', parseInt(e.target.value) || 1)}
                 className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
               />
             </div>

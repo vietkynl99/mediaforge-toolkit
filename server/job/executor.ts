@@ -449,7 +449,7 @@ export class OptimizeTaskExecutor extends TaskExecutor {
     const model = provider === 'openrouter' 
       ? (aiConfig.openrouterModel ?? 'openrouter/auto')
       : (aiConfig.geminiModel ?? aiConfig.model ?? 'gemini-2.5-flash');
-    const batchSize = aiConfig.translationBatchSize ?? 20;
+    const batchSize = aiConfig.optimizationBatchSize ?? aiConfig.translationBatchSize ?? 20;
 
     // Log all AI settings being used
     context.onLog(`AI Settings: provider=${provider}, model=${model}`);

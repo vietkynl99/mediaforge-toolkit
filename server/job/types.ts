@@ -73,6 +73,7 @@ export interface ConcurrencyConfig {
       warningMax: number;
     };
     translationBatchSize?: number;
+    optimizationBatchSize?: number;
     maxSingleLineWords?: number;
     autoSplitLongLines?: boolean;
   };
@@ -107,7 +108,8 @@ export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
       safeMax: 25,
       warningMax: 40,
     },
-    translationBatchSize: 100,
+    translationBatchSize: 50,
+    optimizationBatchSize: 30,
     maxSingleLineWords: 10,
     autoSplitLongLines: true,
   },
