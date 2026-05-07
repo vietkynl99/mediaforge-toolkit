@@ -1,4 +1,3 @@
-import { OpenRouter } from '@openrouter/sdk';
 import type { AiCallParams, AiCallResult } from '../shared/types.js';
 import type { AiProvider } from './ai-provider-interface.js';
 
@@ -59,12 +58,10 @@ export class OpenRouterProvider implements AiProvider {
   readonly name = 'openrouter';
   private apiKey: string;
   private model: string;
-  private client: OpenRouter;
 
   constructor(config: OpenRouterConfig) {
     this.apiKey = config.apiKey;
     this.model = config.model || 'openrouter/auto';
-    this.client = new OpenRouter({ apiKey: this.apiKey });
   }
 
   isConfigured(): boolean {
@@ -94,14 +91,14 @@ export class OpenRouterProvider implements AiProvider {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
     };
 
-    // Try structured output first, fallback to json_object if not supported
+    // Try structured output first
     let useStructuredOutput = false;
     if (params.responseMimeType === 'application/json' && params.responseSchema) {
       try {
         const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
-        chatRequest.responseFormat = {
+        chatRequest.response_format = {
           type: 'json_schema',
-          jsonSchema: {
+          json_schema: {
             name: 'response',
             strict: true,
             schema: jsonSchema,
@@ -115,53 +112,67 @@ export class OpenRouterProvider implements AiProvider {
 
     // Fallback to json_object mode for JSON requests without valid schema
     if (params.responseMimeType === 'application/json' && !useStructuredOutput) {
-      chatRequest.responseFormat = { type: 'json_object' };
+      chatRequest.response_format = { type: 'json_object' };
     }
 
-    // Call the model using the SDK
-    let response: any;
+    // Call the model using fetch directly (bypassing SDK to avoid unhandled rejections)
+    let response: Response;
     try {
-      response = await this.client.chat.send({ chatRequest });
-    } catch (apiError: any) {
-      // Log detailed error info
+      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://mediaforge.ai', // Optional but recommended by OpenRouter
+          'X-Title': 'MediaForge Toolkit',
+        },
+        body: JSON.stringify(chatRequest),
+      });
+    } catch (networkError: any) {
+      console.error('[OpenRouter] Network error:', networkError.message);
+      throw new Error(`OpenRouter connection failed: ${networkError.message}`);
+    }
+
+    const responseText = await response.text();
+    
+    if (!response.ok) {
+      let errorDetail = responseText;
+      try {
+        const errorJson = JSON.parse(responseText);
+        errorDetail = errorJson.error?.message || errorJson.message || responseText;
+      } catch {
+        // Fallback to raw text
+      }
+      
       console.error('[OpenRouter] API call failed:', {
-        message: apiError.message,
-        rawMessage: apiError.rawMessage,
-        rawValue: apiError.rawValue,
+        status: response.status,
+        statusText: response.statusText,
+        error: errorDetail,
         model: this.model,
-        useStructuredOutput,
       });
 
-      // If structured output failed, try again with json_object fallback
-      if (useStructuredOutput && (
-        apiError.message?.includes('validation') ||
-        apiError.message?.includes('schema') ||
-        apiError.rawMessage?.includes('validation')
-      )) {
-        console.warn('[OpenRouter] Structured output failed, falling back to json_object mode');
-        chatRequest.responseFormat = { type: 'json_object' };
-        try {
-          response = await this.client.chat.send({ chatRequest });
-        } catch (fallbackError: any) {
-          console.error('[OpenRouter] Fallback json_object mode also failed:', {
-            message: fallbackError.message,
-            rawValue: fallbackError.rawValue,
-          });
-          // Extract upstream error message if available
-          const upstreamError = fallbackError.rawValue?.error?.message || fallbackError.message;
-          throw new Error(`OpenRouter API failed: ${upstreamError}`);
-        }
-      } else {
-        // Extract upstream error message if available
-        const upstreamError = apiError.rawValue?.error?.message || apiError.message;
-        throw new Error(`OpenRouter API failed: ${upstreamError}`);
+      // If structured output failed, we could retry here, but for now we'll just throw
+      throw new Error(`OpenRouter API failed (${response.status}): ${errorDetail}`);
+    }
+
+    let data: any;
+    try {
+      if (!responseText) {
+        throw new Error('Empty response from OpenRouter');
       }
+      data = JSON.parse(responseText);
+    } catch (parseError: any) {
+      console.error('[OpenRouter] Failed to parse response as JSON:', {
+        error: parseError.message,
+        text: responseText.substring(0, 500),
+      });
+      throw new Error(`OpenRouter returned invalid JSON: ${parseError.message}`);
     }
 
     // Get the text response
-    let text = response.choices?.[0]?.message?.content || '';
+    let text = data.choices?.[0]?.message?.content || '';
 
-    // Strip markdown code blocks if present (fallback for models that don't support structured output)
+    // Strip markdown code blocks if present
     if (text) {
       text = text.trim();
       // Remove ```json or ``` at the start
@@ -179,10 +190,10 @@ export class OpenRouterProvider implements AiProvider {
 
     return {
       text: text || '',
-      usage: response.usage ? {
-        totalTokenCount: (response.usage as any).total_tokens,
-        promptTokenCount: (response.usage as any).prompt_tokens,
-        candidatesTokenCount: (response.usage as any).completion_tokens,
+      usage: data.usage ? {
+        totalTokenCount: data.usage.total_tokens,
+        promptTokenCount: data.usage.prompt_tokens,
+        candidatesTokenCount: data.usage.completion_tokens,
       } : undefined,
     };
   }
