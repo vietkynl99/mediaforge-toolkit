@@ -47,6 +47,7 @@ interface SubtitleStudioPageProps {
   onOpenSettings?: () => void;
   vaultFolders?: VaultFolder[];
   vaultLoading?: boolean;
+  onRefreshVault?: () => void;
 }
 
 const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({ 
@@ -55,7 +56,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   onBack, 
   onOpenSettings,
   vaultFolders = [], 
-  vaultLoading: parentVaultLoading = false 
+  vaultLoading: parentVaultLoading = false,
+  onRefreshVault
 }) => {
   // State
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
@@ -246,7 +248,21 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const [folderQuery, setFolderQuery] = useState<string>('');
   const [selectedStatuses, setSelectedStatuses] = useState<VaultStatus[]>([]);
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState<boolean>(false);
+  const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; file: VaultFile } | null>(null);
+  const [fileToDelete, setFileToDelete] = useState<VaultFile | null>(null);
   const statusContainerRef = useRef<HTMLDivElement>(null);
+
+  // Close file context menu when clicking elsewhere
+  useEffect(() => {
+    if (!fileContextMenu) return;
+    const handleClose = () => setFileContextMenu(null);
+    window.addEventListener('click', handleClose);
+    window.addEventListener('contextmenu', handleClose);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('contextmenu', handleClose);
+    };
+  }, [fileContextMenu]);
 
   // Close status dropdown when clicking outside
   useEffect(() => {
@@ -1643,6 +1659,26 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     });
   }, [vaultFolders, folderQuery, selectedStatuses]);
 
+  const handleDeleteFileConfirm = async () => {
+    if (!fileToDelete) return;
+    try {
+      await vaultService.deleteFile(fileToDelete.relativePath);
+      showToast('success', `Deleted file: ${fileToDelete.name}`);
+      
+      // If the deleted file was currently open, clear project
+      if (selectedFileId === fileToDelete.id) {
+        performClear();
+      }
+      
+      // Refresh vault data to update the file list
+      onRefreshVault?.();
+    } catch (err: any) {
+      showToast('error', `Failed to delete file: ${err.message}`);
+    } finally {
+      setFileToDelete(null);
+    }
+  };
+
   return (
     <div className="flex-1 h-full bg-slate-950">
       <Layout>
@@ -1868,6 +1904,15 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                             <button
                               key={file.id}
                               onClick={() => handleSelectFile(file)}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setFileContextMenu({
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                  file
+                                });
+                              }}
                               disabled={fileLoading || parentVaultLoading}
                               className={`w-full text-left p-3 rounded-xl transition-all group disabled:opacity-50 ${
                                 selectedFileId === file.id
@@ -2695,6 +2740,55 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
             }
           }}
         />
+
+        {/* Delete File Confirm Modal */}
+        <ConfirmModal
+          open={Boolean(fileToDelete)}
+          title="Delete subtitle file?"
+          description={`Are you sure you want to delete "${fileToDelete?.name}"? This action cannot be undone.`}
+          confirmLabel="Delete File"
+          variant="danger"
+          onClose={() => setFileToDelete(null)}
+          onConfirm={handleDeleteFileConfirm}
+        />
+
+        {/* File Context Menu */}
+        {fileContextMenu && (
+          <div 
+            className="fixed z-[700] bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 w-64 animate-in fade-in zoom-in duration-100"
+            style={{ 
+              left: Math.min(fileContextMenu.x, window.innerWidth - 260), 
+              top: Math.min(fileContextMenu.y, window.innerHeight - 100) 
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-3 py-1 mb-1 border-b border-slate-800">
+              <p className="text-[10px] font-bold text-slate-500 truncate uppercase tracking-widest" title={fileContextMenu.file.name}>
+                {fileContextMenu.file.name}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                handleSelectFile(fileContextMenu.file);
+                setFileContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:bg-lime-500/10 hover:text-lime-400 transition-colors text-left"
+            >
+              <Eye size={14} />
+              Open Project
+            </button>
+            <button
+              onClick={() => {
+                setFileToDelete(fileContextMenu.file);
+                setFileContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors text-left"
+            >
+              <Trash2 size={14} />
+              Delete File
+            </button>
+          </div>
+        )}
       </Layout>
     </div>
   );

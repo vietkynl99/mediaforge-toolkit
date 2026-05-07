@@ -6647,6 +6647,7 @@ export default function App() {
                 <LazySubtitleStudioPage 
                   vaultFolders={vaultFolders}
                   vaultLoading={vaultLoading}
+                  onRefreshVault={loadVault}
                   onOpenSettings={() => setShowSettingsModal(true)}
                   onBack={() => {
                     setActiveTab('dashboard');
