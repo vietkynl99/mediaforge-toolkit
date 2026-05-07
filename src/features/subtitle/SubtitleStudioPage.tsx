@@ -2695,24 +2695,15 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                             : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
                         }`}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="flex-1 truncate">{text}</span>
-                          <span className="text-[10px] text-slate-500">v{idx + 1}</span>
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="flex-1 whitespace-pre-wrap max-h-[4.5rem] overflow-y-auto leading-6">{text}</span>
+                          <span className="text-[10px] text-slate-500 shrink-0">v{idx + 1}</span>
                         </div>
                       </button>
                     ))}
                   </div>
                 </div>
               )}
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setOptimizeHistorySegmentId(null)}
-                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold transition-colors text-sm"
-                >
-                  Close
-                </button>
-              </div>
             </div>
           </div>
         )}
