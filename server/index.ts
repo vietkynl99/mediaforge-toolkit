@@ -450,7 +450,6 @@ const stripAnsiCodes = (text: string) => text.replace(/\u001b\[[0-9;]*[A-Za-z]/g
 
 const getJobLogPath = (job: JobRecord) => {
   const date = new Date(job.createdAt);
-  const monthDir = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
   const dayPrefix = date.toISOString().split('T')[0];
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
@@ -458,7 +457,7 @@ const getJobLogPath = (job: JobRecord) => {
   const timePrefix = `${hours}-${minutes}-${seconds}`;
   const sanitizedJobName = (job.name || 'job').replace(/[^\w\s-]/g, '').replace(/\s+/g, '_');
 
-  const dir = path.join(JOB_LOGS_DIR, monthDir);
+  const dir = path.join(JOB_LOGS_DIR, dayPrefix);
   const filename = `${dayPrefix}_${timePrefix}_${sanitizedJobName}_${job.id}.log`;
   return { dir, filename, fullPath: path.join(dir, filename) };
 };
@@ -3223,7 +3222,16 @@ app.get('/api/jobs', async (req, res) => {
   // Return summary-only (without params, tasks details)
   const jobSummaries = pagedJobs.map(job => {
     const { fullPath, filename } = getJobLogPath(job);
-    const logFile = existsSync(fullPath) ? filename : null;
+    let logFile = existsSync(fullPath) ? filename : null;
+    
+    // Fallback to YYYY-MM structure if not found in YYYY-MM-DD
+    if (!logFile) {
+      const date = new Date(job.createdAt);
+      const monthDir = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthPath = path.join(JOB_LOGS_DIR, monthDir, filename);
+      if (existsSync(monthPath)) logFile = filename;
+    }
+
     const truncatedError = job.error && job.error.length > 200 
       ? job.error.slice(0, 200) + '...(truncated)'
       : job.error;
@@ -3325,7 +3333,16 @@ app.get('/api/jobs/:id', async (req, res) => {
   }
 
   const { fullPath, filename } = getJobLogPath(job);
-  const logFile = existsSync(fullPath) ? filename : null;
+  let logFile = existsSync(fullPath) ? filename : null;
+
+  // Fallback to YYYY-MM structure if not found in YYYY-MM-DD
+  if (!logFile) {
+    const date = new Date(job.createdAt);
+    const monthDir = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const monthPath = path.join(JOB_LOGS_DIR, monthDir, filename);
+    if (existsSync(monthPath)) logFile = filename;
+  }
+
   const truncatedError = job.error && job.error.length > 500 
     ? job.error.slice(0, 500) + '...(truncated, see log file for full error)'
     : job.error;
@@ -3361,9 +3378,18 @@ app.get('/api/jobs/:id/log', async (req, res) => {
     return res.status(404).json({ error: 'Job not found' });
   }
 
-  const { fullPath } = getJobLogPath(job);
+  const { fullPath, filename } = getJobLogPath(job);
   
   if (!existsSync(fullPath)) {
+    // Try YYYY-MM structure fallback
+    const date = new Date(job.createdAt);
+    const monthDir = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const monthPath = path.join(JOB_LOGS_DIR, monthDir, filename);
+    if (existsSync(monthPath)) {
+      res.type('text/plain');
+      return createReadStream(monthPath).pipe(res);
+    }
+
     // If structured file doesn't exist, try legacy flat path as fallback
     const legacyPath = path.join(JOB_LOGS_DIR, `${id}.log`);
     if (existsSync(legacyPath)) {
