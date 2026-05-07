@@ -15,6 +15,7 @@ import { normalizeAiText, splitToTwoLinesIfLong, collapseToSingleLineIfShort } f
 
 // Debug flag for optimize flow
 const DEBUG_OPTIMIZE = ['1', 'true', 'yes', 'on'].includes((process.env.DEBUG_OPTIMIZE ?? '').toLowerCase());
+const DEBUG_TRANSLATE = ['1', 'true', 'yes', 'on'].includes((process.env.DEBUG_TRANSLATE ?? '').toLowerCase());
 
 /**
  * Attempts to repair common JSON errors from AI responses
@@ -245,6 +246,8 @@ export class TranslateTaskExecutor extends TaskExecutor {
       return { success: true, outputs: [subtitleFile] };
     }
 
+    let promptLogged = false;
+
     // Process in batches
     for (let i = 0; i < totalToTranslate; i += batchSize) {
       checkAborted(context.signal);
@@ -274,6 +277,20 @@ export class TranslateTaskExecutor extends TaskExecutor {
           maxSingleLineWords: effectiveMaxSingleLineWords,
           autoSplitLongLines: effectiveAutoSplitLongLines
         });
+
+        // Debug: dump translation info
+        if (DEBUG_TRANSLATE) {
+          context.onLog(`[DEBUG_TRANSLATE] === BATCH ${Math.floor(i / batchSize) + 1} ===`);
+          context.onLog(`[DEBUG_TRANSLATE] Batch size: ${batch.length}`);
+          if (!promptLogged) {
+            context.onLog(`[DEBUG_TRANSLATE] === PROMPT TO AI ===`);
+            context.onLog(`[DEBUG_TRANSLATE] Prompt: ${result.prompt}`);
+            promptLogged = true;
+          }
+          context.onLog(`[DEBUG_TRANSLATE] === RESPONSE DATA ===`);
+          context.onLog(`[DEBUG_TRANSLATE] Result text: ${result.text}`);
+          context.onLog(`[DEBUG_TRANSLATE] Usage: ${JSON.stringify(result.usage, null, 2)}`);
+        }
 
         // Parse AI response - result.text is a JSON string
         if (result && typeof result.text === 'string') {

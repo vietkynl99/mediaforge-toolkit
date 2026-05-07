@@ -86,10 +86,11 @@ ${characterRules}
 ${neighborContext}
 Rules:
 1. Preserve core meaning. Do not invent story events. Tone adaptation allowed.
-2. Length: keep all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → translate fully, do not compress. ${autoSplitLongLines ? `If exceeding ${maxSingleLineWords} words, use "\\n".` : "Line breaks optional."}
-3. Names: Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa). Do NOT use Pinyin ("Zhang", "Wang", "Li" are WRONG).${characterRules ? " Use character rules if provided." : ""}
-4. Each subtitle is independent; neighbor context for reference only.
-5. Style priority: follow narration style above if meaning is preserved.
+2. Length: keep all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → translate fully, do not compress. ${autoSplitLongLines ? `Use "\\\\n" ONLY when the subtitle exceeds ${maxSingleLineWords} words and needs a visual display break — NOT as a clause separator for short subtitles.` : "Line breaks optional."}
+3. Punctuation: Chinese subtitles often lack punctuation. For a subtitle with multiple short clauses, separate them with a comma within the same line — do NOT use "\\n" as a clause separator. Only add punctuation that is grammatically necessary; do not add expressive punctuation not implied by the source.
+4. Names: Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa). Do NOT use Pinyin ("Zhang", "Wang", "Li" are WRONG).${characterRules ? " Use character rules if provided." : ""}
+5. Each subtitle is independent; neighbor context for reference only.
+6. Style priority: follow narration style above if meaning is preserved.
 
 REMINDER: Output text must be 100% Vietnamese. Any Chinese character in output is a critical error.
 
@@ -97,7 +98,7 @@ Subtitle data:
 ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
 `;
 
-  return callAi({
+  const result = await callAi({
     prompt,
     responseMimeType: "application/json",
     responseSchema: {
@@ -112,6 +113,8 @@ ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
       }
     }
   });
+
+  return { ...result, prompt };
 }
 
 export async function aiFixSegments(params: {
@@ -154,7 +157,8 @@ Rules:
 3. Organizations/titles: translate meaningfully using Hán-Việt.
 4. Each segment is independent. Do NOT merge or split segments.
 5. Fix mistranslations by comparing vn against cn. Preserve core meaning.
-6. Length: preserve all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → fix and keep full meaning, do not compress.
+6. Punctuation: add natural punctuation only where grammatically necessary. Do not add expressive punctuation not implied by the source.
+7. Length: preserve all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → fix and keep full meaning, do not compress.
 
 REMINDER: Every fixedText must be pure Vietnamese Latin script. Zero Chinese characters allowed.
 
