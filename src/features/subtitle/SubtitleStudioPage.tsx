@@ -358,6 +358,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     // Prevent concurrent reloads
     if (isReloadingRef.current) return;
     isReloadingRef.current = true;
+    isLoadingFileRef.current = true; // Prevent dirty state from being set during reload
     
     try {
       const { segments: parsedSegments } = await vaultService.loadSubtitleFile(workingFilePath);
@@ -376,6 +377,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       console.error('Failed to reload working file:', err);
     } finally {
       isReloadingRef.current = false;
+      isLoadingFileRef.current = false;
     }
   };
 
@@ -1442,9 +1444,11 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     }
   };
 
-  const updateSegmentText = (id: number, text: string) => {
+  const updateSegmentText = useCallback((id: number, text: string) => {
+    // Simple update without history - only used for debounced updates which we now skip
+    // commitSegmentText (on blur/Enter) handles the actual commit with history
     commitSegmentsChange(prev => prev.map(s => s.id === id ? { ...s, translatedText: text.trim() } : s));
-  };
+  }, [commitSegmentsChange]);
 
   const updateSegmentTime = (id: number, field: 'startTime' | 'endTime', value: string) => {
     commitSegmentsChange(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
@@ -2325,6 +2329,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 searchCaseSensitive={searchCaseSensitive}
                 searchWholeWord={searchWholeWord}
                 searchRegexMode={searchRegexMode}
+                disabled={translationState.status === 'running' || isOptimizing}
+                isTranslating={translationState.status === 'running'}
               />
 
             </div>

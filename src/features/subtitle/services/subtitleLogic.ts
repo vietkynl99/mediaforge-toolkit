@@ -240,13 +240,7 @@ const VN_INITIALS = [
 const VN_FINALS = ['ch', 'ng', 'nh', 'c', 'm', 'n', 'p', 't', ''];
 
 const VN_LOAN_WORDS = new Set([
-  'cafe', 'tivi', 'video', 'audio', 'internet', 'fan', 'wifi', 'sms', 
-  'facebook', 'zalo', 'youtube', 'google', 'iphone', 'samsung', 'nokia',
-  'laptop', 'smartphone', 'yoga', 'pizza', 'shampoo', 'taxi', 'bus', 
-  'bank', 'card', 'visa', 'mastercard', 'chip', 'usb', 'app', 'web',
-  'link', 'blog', 'mail', 'email', 'spam', 'chat', 'game', 'team',
-  'set', 'show', 'clip', 'film', 'futsal', 'golf', 'gym', 'karaoke',
-  'marketing', 'sales', 'admin', 'boss', 'staff', 'bonus', 'tour', 'vlog'
+  "hihi", "hehe", "haha", "hihihaha", "hmm", "wow"
 ]);
 
 const FORBIDDEN_VN_CHARS = /[fjwz]/i;

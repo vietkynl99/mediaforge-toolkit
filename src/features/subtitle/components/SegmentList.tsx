@@ -17,6 +17,8 @@ interface SegmentListProps {
   searchWholeWord?: boolean;
   searchRegexMode?: boolean;
   filter?: string;
+  disabled?: boolean; // Disable editing during translation/optimization
+  isTranslating?: boolean; // Show loading for untranslated segments
 }
 
 const UPDATE_DEBOUNCE_MS = 300;
@@ -36,7 +38,9 @@ export const SegmentList: React.FC<SegmentListProps> = ({
   searchCaseSensitive = false,
   searchWholeWord = false,
   searchRegexMode = false,
-  filter = 'all'
+  filter = 'all',
+  disabled = false,
+  isTranslating = false
 }) => {
   const [editingTranslationId, setEditingTranslationId] = React.useState<number | null>(null);
   const [editingTime, setEditingTime] = React.useState<{ id: number; field: 'startTime' | 'endTime' } | null>(null);
@@ -334,6 +338,35 @@ export const SegmentList: React.FC<SegmentListProps> = ({
 
                   <div className="pt-0.5">
                     {(() => {
+                      // Show loading indicator for untranslated segments during translation
+                      if (isTranslating && !displayedTranslation) {
+                        return (
+                          <div className="flex items-center gap-2 text-slate-400">
+                            <div className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                            <span className="text-xs italic">Translating...</span>
+                          </div>
+                        );
+                      }
+
+                      // When disabled, show read-only text
+                      if (disabled) {
+                        return (
+                          <div className="flex items-start gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div
+                                className={`text-[13px] font-semibold leading-snug whitespace-pre-wrap break-words min-h-[20px] ${
+                                  hasTranslatedLangIssue
+                                    ? 'text-rose-100 underline decoration-rose-400 decoration-wavy underline-offset-2'
+                                    : 'text-blue-100'
+                                }`}
+                              >
+                                {displayedTranslation || <span className="text-slate-700 italic">No translation yet...</span>}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
                       if (searchQuery.trim() && editingTranslationId !== seg.id) {
                         return (
                           <button
@@ -384,7 +417,6 @@ export const SegmentList: React.FC<SegmentListProps> = ({
                                 onChange={(e) => {
                                   const nextValue = e.target.value;
                                   setLocalText(prev => ({ ...prev, [seg.id]: nextValue }));
-                                  scheduleUpdate(seg.id, nextValue);
                                   resizeTranslationTextarea(e.currentTarget);
                                 }}
                                 onKeyDown={(e) => {
