@@ -246,8 +246,6 @@ export class TranslateTaskExecutor extends TaskExecutor {
       return { success: true, outputs: [subtitleFile] };
     }
 
-    let promptLogged = false;
-
     // Process in batches
     for (let i = 0; i < totalToTranslate; i += batchSize) {
       checkAborted(context.signal);
@@ -260,10 +258,16 @@ export class TranslateTaskExecutor extends TaskExecutor {
       const originalIdx = subtitleData.findIndex((c: any) => String(c.id) === String(firstInBatch.id));
       
       const contextBefore = originalIdx > 0 
-        ? subtitleData.slice(Math.max(0, originalIdx - 3), originalIdx).map((c: any) => c.originalText || c.text || "") 
+        ? subtitleData.slice(Math.max(0, originalIdx - 5), originalIdx).map((c: any) => ({
+            original: c.originalText || c.original || "",
+            translated: c.translatedText || c.text || c.translated || ""
+          }))
         : [];
       const contextAfter = (originalIdx + batch.length < totalCues) 
-        ? subtitleData.slice(originalIdx + batch.length, originalIdx + batch.length + 3).map((c: any) => c.originalText || c.text || "") 
+        ? subtitleData.slice(originalIdx + batch.length, originalIdx + batch.length + 5).map((c: any) => ({
+            original: c.originalText || c.original || "",
+            translated: c.translatedText || c.text || c.translated || ""
+          }))
         : [];
 
       context.onLog(`Translating batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(totalToTranslate / batchSize)} (${batch.length} segments)...`);
@@ -282,11 +286,8 @@ export class TranslateTaskExecutor extends TaskExecutor {
         if (DEBUG_TRANSLATE) {
           context.onLog(`[DEBUG_TRANSLATE] === BATCH ${Math.floor(i / batchSize) + 1} ===`);
           context.onLog(`[DEBUG_TRANSLATE] Batch size: ${batch.length}`);
-          if (!promptLogged) {
-            context.onLog(`[DEBUG_TRANSLATE] === PROMPT TO AI ===`);
-            context.onLog(`[DEBUG_TRANSLATE] Prompt: ${result.prompt}`);
-            promptLogged = true;
-          }
+          context.onLog(`[DEBUG_TRANSLATE] === PROMPT FOR THIS BATCH ===`);
+          context.onLog(`[DEBUG_TRANSLATE] Prompt: ${result.prompt}`);
           context.onLog(`[DEBUG_TRANSLATE] === RESPONSE DATA ===`);
           context.onLog(`[DEBUG_TRANSLATE] Result text: ${result.text}`);
           context.onLog(`[DEBUG_TRANSLATE] Usage: ${JSON.stringify(result.usage, null, 2)}`);

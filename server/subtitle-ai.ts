@@ -17,12 +17,16 @@ function getHumorRule(humorLevel: number): string {
   }
   return `
 Chaotic comedic narrator mode (MAX LEVEL).
-- Sound like a sarcastic, over-the-top Vietnamese storyteller.
-- Actively inject humor: exaggeration, teasing, mockery, attitude.
-- Rewrite into shorter, punchier Vietnamese — compress meaning, cut filler, break complex ideas into snappy phrases.
-- Do not keep the original sentence structure if it results in longer output.
-- Sprinkle short reactions (e.g. "ủa gì vậy", "ảo thật") woven into the sentence, not appended.
-- Feel like a fast entertaining recap, not a literal translation.
+- **PERSONA**: You are a "Witty Gen Z Sarcastic Storyteller". You use modern Vietnamese slang (e.g., "ảo thật đấy", "cạn lời", "bay màu") combined with exaggerated, poetic metaphors ("bay bổng") to make the story vivid.
+- **VOICE**: Sarcastic, over-the-top, and entertaining. Actively inject humor through teasing and mockery.
+- **CONSISTENCY**: You must maintain a steady voice across the entire story. Do not be serious in one batch and funny in another.
+- **PRONOUNS**: Stick to established relationships:
+  * Enemies/Villains: "Mày - Tao" or "Ngươi - Ta".
+  * Master/Disciple or Formal: "Ta - Ngươi" or "Tiền bối - Hậu bối".
+  * Romantic/Close: "Anh - Em" or "Chàng - Thiếp" if appropriate.
+  * Casual: "Tui - Ông/Bà" or "Cậu - Tớ".
+- **STRUCTURE**: Rewrite into shorter, punchier Vietnamese. Keep a strict 1-to-1 mapping. Do NOT merge IDs.
+- **STYLE**: Feel like a fast, high-energy recap. Use metaphors and colorful language to make it "bay bổng" but keep it grounded in the original meaning.
 `;
 }
 
@@ -44,8 +48,8 @@ Important rules:
 
 export async function translateBatch(params: {
   batch: any[];
-  contextBefore: string[];
-  contextAfter: string[];
+  contextBefore: any[];
+  contextAfter: any[];
   preset: any;
   maxSingleLineWords: number;
   autoSplitLongLines: boolean;
@@ -70,8 +74,10 @@ ${humorRule}
   const neighborContext = (contextBefore.length || contextAfter.length)
     ? `
 Neighbor subtitles (reference only):
-Prev: ${JSON.stringify(contextBefore)}
-Next: ${JSON.stringify(contextAfter)}
+Prev:
+${contextBefore.map(c => `- ${c.original} → ${c.translated}`).join('\n')}
+Next (Original only):
+${contextAfter.map(c => `- ${c.original}`).join('\n')}
 ` : "";
 
   const prompt = `
@@ -79,6 +85,7 @@ OUTPUT MUST BE 100% VIETNAMESE. NO Chinese characters allowed in the output.
 
 Translate Chinese subtitles into natural Vietnamese.
 Output: JSON array [{"id": number, "text": string}] — one object per input, same order, no omissions.
+**STRICT RULE: 1-to-1 mapping required. Do NOT merge the content of multiple input IDs into a single output ID. Do NOT repeat the same text for different IDs.**
 
 ${styleBlock}
 ${storyContext}
@@ -88,9 +95,10 @@ Rules:
 1. Preserve core meaning. Do not invent story events. Tone adaptation allowed.
 2. Length: keep all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → translate fully, do not compress. ${autoSplitLongLines ? `Use "\\\\n" ONLY when the subtitle exceeds ${maxSingleLineWords} words and needs a visual display break — NOT as a clause separator for short subtitles.` : "Line breaks optional."}
 3. Punctuation: Chinese subtitles often lack punctuation. For a subtitle with multiple short clauses, separate them with a comma within the same line — do NOT use "\\n" as a clause separator. Only add punctuation that is grammatically necessary; do not add expressive punctuation not implied by the source.
-4. Names: Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa). Do NOT use Pinyin ("Zhang", "Wang", "Li" are WRONG).${characterRules ? " Use character rules if provided." : ""}
-5. Each subtitle is independent; neighbor context for reference only.
+4. Names: Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa). Do NOT use Pinyin ("Zhang", "Wang", "Li" are WRONG).${characterRules ? " Use character rules if provided." : " Ensure consistent Hán-Việt transcription for names across all segments."}
+5. Each subtitle is independent; neighbor context for reference only. **NEVER combine the meaning of adjacent subtitles into one.**
 6. Style priority: follow narration style above if meaning is preserved.
+7. **NO REPETITION: Do not use the exact same translation for different IDs unless the source text is identical.**
 
 REMINDER: Output text must be 100% Vietnamese. Any Chinese character in output is a critical error.
 
