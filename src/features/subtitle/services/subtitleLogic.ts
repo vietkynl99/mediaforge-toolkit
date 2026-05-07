@@ -239,6 +239,18 @@ const VN_INITIALS = [
 ];
 const VN_FINALS = ['ch', 'ng', 'nh', 'c', 'm', 'n', 'p', 't', ''];
 
+const VN_LOAN_WORDS = new Set([
+  'cafe', 'tivi', 'video', 'audio', 'internet', 'fan', 'wifi', 'sms', 
+  'facebook', 'zalo', 'youtube', 'google', 'iphone', 'samsung', 'nokia',
+  'laptop', 'smartphone', 'yoga', 'pizza', 'shampoo', 'taxi', 'bus', 
+  'bank', 'card', 'visa', 'mastercard', 'chip', 'usb', 'app', 'web',
+  'link', 'blog', 'mail', 'email', 'spam', 'chat', 'game', 'team',
+  'set', 'show', 'clip', 'film', 'futsal', 'golf', 'gym', 'karaoke',
+  'marketing', 'sales', 'admin', 'boss', 'staff', 'bonus', 'tour', 'vlog'
+]);
+
+const FORBIDDEN_VN_CHARS = /[fjwz]/i;
+
 function normalizeWordBase(word: string): string {
   return word
     .toLowerCase()
@@ -260,11 +272,17 @@ function isLikelyVietnameseWord(raw: string): boolean {
       return true;
     }
   }
+  
   const base = normalizeWordBase(raw);
   if (!base) return true;
   if (base.length <= 1) return true;
   if (/^(ha){2,}$/i.test(base)) return true;
-  if (/[^a-z]/.test(base)) return false;
+  
+  // Check whitelist first
+  if (VN_LOAN_WORDS.has(base)) return true;
+  
+  // Check forbidden characters for Vietnamese
+  if (FORBIDDEN_VN_CHARS.test(base)) return false;
 
   let initial = '';
   for (const i of VN_INITIALS) {
@@ -292,8 +310,20 @@ function isLikelyVietnameseWord(raw: string): boolean {
     if (initial === 'gi') return true;
     return false;
   }
+  
+  // Orthography rules
+  const firstVowel = core[0];
+  // k, gh, ngh only go with e, i, y
+  if (['k', 'gh', 'ngh'].includes(initial)) {
+    if (!['e', 'i', 'y'].includes(firstVowel)) return false;
+  }
+  // q must be followed by u
+  if (initial === 'q' && firstVowel !== 'u') return false;
+
+  // Vowel core validation
   if (!VN_VOWEL_RE.test(core)) return false;
   if (/[^aeiouy]/.test(core)) return false;
+  if (core.length > 3) return false; // Vietnamese vowel clusters are max 3 chars (e.g., "uôi", "uây")
 
   return true;
 }
@@ -308,7 +338,7 @@ function getForeignWords(text: string): string[] {
   for (const word of rawWords) {
     if (!/\p{L}/u.test(word)) continue;
     if (/\d/.test(word)) continue;
-    if (!hasDiacritics(word)) continue;
+    
     if (!isLikelyVietnameseWord(word)) {
       foreign.add(word);
     }
