@@ -240,7 +240,8 @@ const VN_INITIALS = [
 const VN_FINALS = ['ch', 'ng', 'nh', 'c', 'm', 'n', 'p', 't', ''];
 
 const VN_LOAN_WORDS = new Set([
-  "hihi", "hehe", "haha", "hihihaha", "hmm", "wow"
+  "game", "mobile", "camera", "video", "audio", "web",
+  "hihi", "hehe", "haha", "hihihaha", "hehehe", "hmm", "hm", "wow"
 ]);
 
 const FORBIDDEN_VN_CHARS = /[fjwz]/i;
