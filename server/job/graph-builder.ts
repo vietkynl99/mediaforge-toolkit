@@ -2,7 +2,7 @@
  * Graph Builder - Creates JobGraph from pipeline definitions
  */
 
-import { JobGraph, TaskNode, ConcurrencyConfig, getRuleForTaskType } from './types.js';
+import { JobGraph, TaskNode, SystemConfig, getRuleForTaskType } from './types.js';
 
 export interface PipelineNode {
   id: string;
@@ -56,7 +56,7 @@ export interface JobInputs {
 export function buildJobGraph(
   pipeline: Pipeline,
   inputs: JobInputs,
-  config: ConcurrencyConfig
+  config: SystemConfig
 ): JobGraph {
   const jobId = `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const tasks = new Map<string, TaskNode>();
@@ -168,7 +168,7 @@ export function createSingleTaskGraph(
   type: TaskNode['type'],
   params: Record<string, any>,
   inputs: JobInputs,
-  config: ConcurrencyConfig
+  config: SystemConfig
 ): JobGraph {
   const pipeline: Pipeline = {
     nodes: [{ id: `${type}-1`, type, params }],

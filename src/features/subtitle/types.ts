@@ -98,9 +98,6 @@ export interface SubtitleAppSettings {
   translationBatchSize: number;
   // Provider settings
   provider?: AiProviderType;
-  // Legacy fields (backward compatibility)
-  aiModel?: SubtitleAiModel;
-  apiKey?: string;
   // Gemini settings
   geminiModel?: string;
   geminiApiKey?: string;
@@ -142,9 +139,6 @@ export const DEFAULT_SUBTITLE_SETTINGS: SubtitleAppSettings = {
   autoSplitLongLines: false,
   // Provider settings
   provider: 'gemini',
-  // Legacy fields
-  aiModel: 'gemini-2.5-flash' as const,
-  apiKey: '',
   // Gemini settings
   geminiModel: 'gemini-2.5-flash',
   geminiApiKey: '',

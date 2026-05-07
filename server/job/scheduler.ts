@@ -4,7 +4,7 @@
  * Manages task execution based on dependencies and resource constraints.
  */
 
-import { JobGraph, TaskNode, TaskStatus, ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG } from './types.js';
+import { JobGraph, TaskNode, TaskStatus, SystemConfig, DEFAULT_SYSTEM_CONFIG } from './types.js';
 import { ResourceManager, getResourceManager, initResourceManager } from './resource-manager.js';
 import { executorRegistry, ExecutorContext, checkAborted } from './executor.js';
 

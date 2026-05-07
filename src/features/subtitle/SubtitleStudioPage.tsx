@@ -90,12 +90,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
             setSettings(prev => ({
               ...prev,
               provider: data.ai.provider || 'gemini',
-              // Legacy fields
-              aiModel: data.ai.model || data.ai.geminiModel,
-              apiKey: data.ai.apiKey || data.ai.geminiApiKey,
               // Gemini settings
-              geminiModel: data.ai.geminiModel || data.ai.model,
-              geminiApiKey: data.ai.geminiApiKey || data.ai.apiKey,
+              geminiModel: data.ai.geminiModel || 'gemini-2.5-flash',
+              geminiApiKey: data.ai.geminiApiKey || '',
               // OpenRouter settings
               openrouterModel: data.ai.openrouterModel || 'openrouter/auto',
               openrouterApiKey: data.ai.openrouterApiKey || '',
@@ -125,10 +122,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
             setSettings(prev => ({
               ...prev,
               provider: data.ai.provider || 'gemini',
-              aiModel: data.ai.model || data.ai.geminiModel,
-              apiKey: data.ai.apiKey || data.ai.geminiApiKey,
-              geminiModel: data.ai.geminiModel || data.ai.model,
-              geminiApiKey: data.ai.geminiApiKey || data.ai.apiKey,
+              geminiModel: data.ai.geminiModel || 'gemini-2.5-flash',
+              geminiApiKey: data.ai.geminiApiKey || '',
               openrouterModel: data.ai.openrouterModel || 'openrouter/auto',
               openrouterApiKey: data.ai.openrouterApiKey || '',
               translationBatchSize: data.ai.translationBatchSize || 20,
@@ -172,9 +167,6 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           body: JSON.stringify({
             ai: {
               provider: settings.provider,
-              // Legacy fields
-              model: settings.geminiModel || settings.aiModel,
-              apiKey: settings.geminiApiKey || settings.apiKey,
               // Gemini settings
               geminiModel: settings.geminiModel,
               geminiApiKey: settings.geminiApiKey,
@@ -210,12 +202,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
             setSettings(prev => ({
               ...prev,
               provider: data.ai.provider || 'gemini',
-              // Legacy fields
-              aiModel: data.ai.model || data.ai.geminiModel,
-              apiKey: data.ai.apiKey || data.ai.geminiApiKey,
               // Gemini settings
-              geminiModel: data.ai.geminiModel || data.ai.model,
-              geminiApiKey: data.ai.geminiApiKey || data.ai.apiKey,
+              geminiModel: data.ai.geminiModel || 'gemini-2.5-flash',
+              geminiApiKey: data.ai.geminiApiKey || '',
               // OpenRouter settings
               openrouterModel: data.ai.openrouterModel || 'openrouter/auto',
               openrouterApiKey: data.ai.openrouterApiKey || '',
@@ -526,7 +515,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     // Save the appropriate API key based on provider
     const currentApiKey = settings.provider === 'openrouter' 
       ? settings.openrouterApiKey 
-      : (settings.geminiApiKey || settings.apiKey);
+      : settings.geminiApiKey;
     if (typeof currentApiKey === 'string' && currentApiKey.trim()) {
       localStorage.setItem('subtitle_api_key', currentApiKey);
     } else {
@@ -1200,7 +1189,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     const provider = settingsRef.current.provider || 'gemini';
     const apiKey = provider === 'openrouter' 
       ? settingsRef.current.openrouterApiKey 
-      : (settingsRef.current.geminiApiKey || settingsRef.current.apiKey);
+      : settingsRef.current.geminiApiKey;
     
     if (!apiKey?.trim()) {
       const providerName = provider === 'openrouter' ? 'OpenRouter' : 'Gemini';
@@ -1367,7 +1356,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     const provider = settings.provider || 'gemini';
     const apiKey = provider === 'openrouter' 
       ? settings.openrouterApiKey 
-      : (settings.geminiApiKey || settings.apiKey);
+      : settings.geminiApiKey;
     
     if (!apiKey?.trim()) {
       const providerName = provider === 'openrouter' ? 'OpenRouter' : 'Gemini';
@@ -1378,7 +1367,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     if (!input.trim()) return;
     setIsPresetLoading(true);
     try {
-      const { preset, tokens } = await analyzeTranslationStyle(input, settings.geminiModel || settings.aiModel, apiKey);
+      const { preset, tokens } = await analyzeTranslationStyle(input, settings.geminiModel || 'gemini-2.5-flash', apiKey);
       setTranslationPreset(preset);
       if (preset?.reference?.title_or_summary) {
         setPresetDraftSummary(preset.reference.title_or_summary);

@@ -28,9 +28,8 @@ export function getAiProvider(): AiProvider {
     
     case 'gemini':
     default: {
-      // Support both new field names and legacy fields
-      const apiKey = settings?.geminiApiKey || settings?.apiKey;
-      const model = settings?.geminiModel || settings?.model || 'gemini-2.5-flash';
+      const apiKey = settings?.geminiApiKey;
+      const model = settings?.geminiModel || 'gemini-2.5-flash';
       
       if (!apiKey) {
         throw new Error('Gemini API key is not configured in settings');

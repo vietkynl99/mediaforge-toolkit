@@ -5,7 +5,7 @@
  * Each executor handles its own process spawning, progress tracking, and cancellation.
  */
 
-import { TaskNode, TaskResult, ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG } from './types.js';
+import { TaskNode, TaskResult, SystemConfig, DEFAULT_SYSTEM_CONFIG } from './types.js';
 import * as SubtitleAI from '../subtitle-ai.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -91,7 +91,7 @@ export interface ExecutorContext {
   onProgress: ProgressCallback;
   onLog: LogCallback;
   onSpawn?: (process: any) => void;
-  config?: ConcurrencyConfig;
+  config?: SystemConfig;
 }
 
 /**
@@ -306,12 +306,12 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
     const params = task.params;
     
     // Get settings from config
-    const config = context.config ?? DEFAULT_CONCURRENCY_CONFIG;
+    const config = context.config ?? DEFAULT_SYSTEM_CONFIG;
     const aiConfig = config.ai ?? {};
     const provider = aiConfig.provider ?? 'gemini';
     const model = provider === 'openrouter' 
       ? (aiConfig.openrouterModel ?? 'openrouter/auto')
-      : (aiConfig.geminiModel ?? aiConfig.model ?? 'gemini-2.5-flash');
+      : (aiConfig.geminiModel ?? 'gemini-2.5-flash');
     
     // Use task-specific batch size
     const batchSize = type === 'translate' 

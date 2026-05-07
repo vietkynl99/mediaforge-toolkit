@@ -10,7 +10,7 @@ interface ConcurrencyRule {
 
 type AiProviderType = 'gemini' | 'openrouter';
 
-interface ConcurrencyConfig {
+interface SystemConfig {
   rules: ConcurrencyRule[];
   globalLimits: {
     cpu: number;
@@ -62,7 +62,7 @@ const TASK_TYPE_LABELS: Record<string, string> = {
 type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
 export function SettingsPage() {
-  const [config, setConfig] = useState<ConcurrencyConfig | null>(null);
+  const [config, setConfig] = useState<SystemConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +96,7 @@ export function SettingsPage() {
     }
   };
 
-  const saveConfig = useCallback(async (newConfig: ConcurrencyConfig) => {
+  const saveConfig = useCallback(async (newConfig: SystemConfig) => {
     setSaving(true);
     setError(null);
     setSuccess(false);
@@ -116,7 +116,7 @@ export function SettingsPage() {
     }
   }, []);
 
-  const debouncedSave = useCallback((newConfig: ConcurrencyConfig) => {
+  const debouncedSave = useCallback((newConfig: SystemConfig) => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -282,7 +282,7 @@ export function SettingsPage() {
                   type="text"
                   autoComplete="off"
                   style={{ WebkitTextSecurity: showApiKey ? 'none' : 'disc' } as React.CSSProperties}
-                  value={config.ai?.geminiApiKey || config.ai?.apiKey || ''}
+                  value={config.ai?.geminiApiKey || ''}
                   onChange={e => updateAiSetting('geminiApiKey', e.target.value)}
                   placeholder="Enter your Gemini API Key"
                   className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"

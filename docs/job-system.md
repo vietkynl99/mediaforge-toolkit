@@ -57,9 +57,21 @@ interface ConcurrencyRule {
 }
 
 // Global config
-interface ConcurrencyConfig {
+interface SystemConfig {
   rules: ConcurrencyRule[];
   globalLimits: Record<ResourceType, number>;
+  ai?: {
+    provider?: 'gemini' | 'openrouter';
+    geminiModel?: string;
+    geminiApiKey?: string;
+    openrouterModel?: string;
+    openrouterApiKey?: string;
+    translationBatchSize?: number;
+    optimizationBatchSize?: number;
+    maxSingleLineWords?: number;
+    autoSplitLongLines?: boolean;
+    cpsThreshold?: { safeMax: number; warningMax: number };
+  };
 }
 ```
 
@@ -136,7 +148,7 @@ CREATE TABLE settings (
 );
 ```
 
-Config is stored as row with `key = 'concurrency_config'`.
+Config is stored as row with `key = 'system_config'`.
 
 ### API Endpoints
 
@@ -184,7 +196,7 @@ Removed `io` and `memory` because:
 
 ### 4. Config Persistence
 
-- **First run**: No row in `settings` table -> use `DEFAULT_CONCURRENCY_CONFIG`
+- **First run**: No row in `settings` table -> use `DEFAULT_SYSTEM_CONFIG`
 - **Subsequent runs**: Load from database
 - **Reset**: Overwrite database row with default values
 - **Save**: Automatically persists to database file via `persistDb()` callback
@@ -288,7 +300,7 @@ curl -X POST http://localhost:3001/api/settings/concurrency/reset
 ### View Config in Database
 
 ```bash
-sqlite3 server/data/main_db.sqlite "SELECT value_json FROM settings WHERE key = 'concurrency_config'"
+sqlite3 server/data/main_db.sqlite "SELECT value_json FROM settings WHERE key = 'system_config'"
 ```
 
 ### Check Running Status

@@ -53,14 +53,11 @@ export type AiProviderType = 'gemini' | 'openrouter';
 
 export type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
-export interface ConcurrencyConfig {
+export interface SystemConfig {
   rules: ConcurrencyRule[];
   globalLimits: Record<ResourceType, number>;
   ai?: {
     provider?: AiProviderType;
-    // Legacy fields (for backward compatibility)
-    model?: AiModel;
-    apiKey?: string;
     // Gemini settings
     geminiModel?: string;
     geminiApiKey?: string;
@@ -79,7 +76,7 @@ export interface ConcurrencyConfig {
   };
 }
 
-export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
+export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   rules: [
     { taskType: 'download', maxConcurrent: 4, resourceType: 'network', priority: 4 },
     { taskType: 'uvr', maxConcurrent: 1, resourceType: 'cpu', priority: 3 },
@@ -95,9 +92,6 @@ export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
   },
   ai: {
     provider: 'gemini',
-    // Legacy fields
-    model: 'gemini-2.5-flash',
-    apiKey: '',
     // Gemini settings
     geminiModel: 'gemini-2.5-flash',
     geminiApiKey: '',
@@ -119,7 +113,7 @@ export const DEFAULT_CONCURRENCY_CONFIG: ConcurrencyConfig = {
 /**
  * Helper to get rule for a task type
  */
-export function getRuleForTaskType(config: ConcurrencyConfig, taskType: string): ConcurrencyRule | undefined {
+export function getRuleForTaskType(config: SystemConfig, taskType: string): ConcurrencyRule | undefined {
   // Exact match first
   let rule = config.rules.find(r => r.taskType === taskType);
   if (rule) return rule;

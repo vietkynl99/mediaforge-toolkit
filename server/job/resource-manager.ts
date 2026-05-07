@@ -2,15 +2,15 @@
  * Resource Manager - Manages concurrent task execution based on resource limits
  */
 
-import { ConcurrencyConfig, ConcurrencyRule, ResourceType, getRuleForTaskType } from './types.js';
+import { SystemConfig, ConcurrencyRule, ResourceType, getRuleForTaskType } from './types.js';
 
 export class ResourceManager {
-  private config: ConcurrencyConfig;
+  private config: SystemConfig;
   private availableSlots: Map<ResourceType, number>;
   private runningByType: Map<string, Set<string>>; // taskType -> Set of taskIds
   private totalRunning = 0;
 
-  constructor(config: ConcurrencyConfig) {
+  constructor(config: SystemConfig) {
     this.config = config;
     this.availableSlots = new Map();
     this.runningByType = new Map();
@@ -131,7 +131,7 @@ export class ResourceManager {
   /**
    * Update configuration at runtime
    */
-  updateConfig(newConfig: ConcurrencyConfig): void {
+  updateConfig(newConfig: SystemConfig): void {
     // Calculate deltas and adjust slots
     for (const [resource, newLimit] of Object.entries(newConfig.globalLimits)) {
       const oldLimit = this.config.globalLimits[resource as ResourceType] ?? 0;
@@ -154,7 +154,7 @@ export class ResourceManager {
   /**
    * Get current config
    */
-  getConfig(): ConcurrencyConfig {
+  getConfig(): SystemConfig {
     return this.config;
   }
 }
@@ -169,7 +169,7 @@ export function getResourceManager(): ResourceManager {
   return resourceManagerInstance;
 }
 
-export function initResourceManager(config: ConcurrencyConfig): ResourceManager {
+export function initResourceManager(config: SystemConfig): ResourceManager {
   resourceManagerInstance = new ResourceManager(config);
   return resourceManagerInstance;
 }

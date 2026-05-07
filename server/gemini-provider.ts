@@ -62,9 +62,8 @@ export async function callGemini(params: AiCallParams): Promise<AiCallResult> {
   const configManager = getConfigManager();
   const settings = configManager.get().ai;
 
-  // Support both new field names and legacy fields
-  const apiKey = settings?.geminiApiKey || settings?.apiKey;
-  const model = settings?.geminiModel || settings?.model;
+  const apiKey = settings?.geminiApiKey;
+  const model = settings?.geminiModel;
 
   if (!apiKey) {
     throw new Error('Gemini API key is not configured in settings');

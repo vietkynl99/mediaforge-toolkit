@@ -38,8 +38,8 @@ import {
   getConfigManager, 
   initResourceManager, 
   getResourceManager,
-  ConcurrencyConfig,
-  DEFAULT_CONCURRENCY_CONFIG 
+  SystemConfig,
+  DEFAULT_SYSTEM_CONFIG 
 } from './job/index.js';
 import { 
   initDatabase, 
@@ -387,16 +387,16 @@ const db = getDb();
 
 // Initialize job system
 const configManager = initConfigManager(db, persistDb);
-let concurrencyConfig: ConcurrencyConfig = DEFAULT_CONCURRENCY_CONFIG;
+let systemConfig: SystemConfig = DEFAULT_SYSTEM_CONFIG;
 
 (async () => {
   try {
-    concurrencyConfig = await configManager.load();
-    initResourceManager(concurrencyConfig);
-    console.log('Job system initialized with concurrency config');
+    systemConfig = await configManager.load();
+    initResourceManager(systemConfig);
+    console.log('Job system initialized with system config');
   } catch (err) {
     console.error('Failed to initialize job system:', err);
-    initResourceManager(DEFAULT_CONCURRENCY_CONFIG);
+    initResourceManager(DEFAULT_SYSTEM_CONFIG);
   }
 })();
 
@@ -1797,7 +1797,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
 
       await translateExecutor.execute(translateTaskNode as any, {
         signal: translateAbortController.signal,
-        config: concurrencyConfig,
+        config: systemConfig,
         onProgress: (p, msg, processed, total) => {
           translateTask.progress = p;
           if (processed !== undefined) (translateTask as any).processed = processed;
@@ -1851,7 +1851,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
 
       await optimizeExecutor.execute(optimizeTaskNode as any, {
         signal: optimizeAbortController.signal,
-        config: concurrencyConfig,
+        config: systemConfig,
         onProgress: (p, msg, processed, total) => {
           optimizeTask.progress = p;
           if (processed !== undefined) (optimizeTask as any).processed = processed;
@@ -5172,7 +5172,7 @@ app.get('/api/settings/concurrency', async (_req, res) => {
 
 app.put('/api/settings/concurrency', async (req, res) => {
   try {
-    const newConfig = req.body as Partial<ConcurrencyConfig>;
+    const newConfig = req.body as Partial<SystemConfig>;
     const updated = await configManager.update(newConfig);
     
     // Update resource manager at runtime
@@ -5183,10 +5183,10 @@ app.put('/api/settings/concurrency', async (req, res) => {
       // Resource manager not initialized yet
     }
     
-    concurrencyConfig = updated;
+    systemConfig = updated;
     res.json(updated);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to save concurrency config' });
+    res.status(500).json({ error: 'Failed to save system config' });
   }
 });
 
@@ -5201,10 +5201,10 @@ app.post('/api/settings/concurrency/reset', async (_req, res) => {
       // Resource manager not initialized yet
     }
     
-    concurrencyConfig = config;
+    systemConfig = config;
     res.json(config);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to reset concurrency config' });
+    res.status(500).json({ error: 'Failed to reset system config' });
   }
 });
 

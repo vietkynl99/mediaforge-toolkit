@@ -1,23 +1,23 @@
 /**
- * Concurrency Configuration Manager
+ * System Configuration Manager
  * 
- * Handles loading, saving, and updating concurrency configuration.
+ * Handles loading, saving, and updating system configuration.
  * Uses SQLite database for persistence.
  */
 
-import { ConcurrencyConfig, DEFAULT_CONCURRENCY_CONFIG, ConcurrencyRule, ResourceType } from './types.js';
+import { SystemConfig, DEFAULT_SYSTEM_CONFIG, ConcurrencyRule, ResourceType } from './types.js';
 
-const SETTINGS_KEY = 'concurrency_config';
+const SETTINGS_KEY = 'system_config';
 
 export class ConfigManager {
   private db: any; // SQL.Database from sql.js
-  private config: ConcurrencyConfig;
+  private config: SystemConfig;
   private persistCallback: (() => Promise<void>) | null = null;
 
   constructor(db: any, persistCallback?: () => Promise<void>) {
     this.db = db;
     this.persistCallback = persistCallback ?? null;
-    this.config = { ...DEFAULT_CONCURRENCY_CONFIG };
+    this.config = { ...DEFAULT_SYSTEM_CONFIG };
     
     // Create settings table if not exists
     this.db.run(
@@ -32,7 +32,7 @@ export class ConfigManager {
   /**
    * Load configuration from database
    */
-  async load(): Promise<ConcurrencyConfig> {
+  async load(): Promise<SystemConfig> {
     try {
       const result = this.db.exec(
         'SELECT value_json FROM settings WHERE key = ? LIMIT 1',
@@ -45,25 +45,25 @@ export class ConfigManager {
         
         // Merge with defaults to ensure all fields exist
         this.config = {
-          rules: loaded.rules ?? DEFAULT_CONCURRENCY_CONFIG.rules,
+          rules: loaded.rules ?? DEFAULT_SYSTEM_CONFIG.rules,
           globalLimits: {
-            ...DEFAULT_CONCURRENCY_CONFIG.globalLimits,
+            ...DEFAULT_SYSTEM_CONFIG.globalLimits,
             ...(loaded.globalLimits || {}),
           },
           ai: {
-            ...DEFAULT_CONCURRENCY_CONFIG.ai!,
+            ...DEFAULT_SYSTEM_CONFIG.ai!,
             ...(loaded.ai || {}),
           },
         };
       } else {
         // No saved config, use defaults
-        this.config = { ...DEFAULT_CONCURRENCY_CONFIG };
+        this.config = { ...DEFAULT_SYSTEM_CONFIG };
       }
       
       return this.config;
     } catch {
       // Error loading, use defaults
-      this.config = { ...DEFAULT_CONCURRENCY_CONFIG };
+      this.config = { ...DEFAULT_SYSTEM_CONFIG };
       return this.config;
     }
   }
@@ -88,14 +88,14 @@ export class ConfigManager {
   /**
    * Get current configuration
    */
-  get(): ConcurrencyConfig {
+  get(): SystemConfig {
     return this.config;
   }
 
   /**
    * Update configuration
    */
-  async update(newConfig: Partial<ConcurrencyConfig>): Promise<ConcurrencyConfig> {
+  async update(newConfig: Partial<SystemConfig>): Promise<SystemConfig> {
     // Ensure current config is loaded from DB if possible
     if (!this.config || Object.keys(this.config.globalLimits).length === 0) {
       await this.load();
@@ -111,14 +111,11 @@ export class ConfigManager {
       };
     }
     if (newConfig.ai) {
-      const oldAi = this.config.ai || DEFAULT_CONCURRENCY_CONFIG.ai!;
+      const oldAi = this.config.ai || DEFAULT_SYSTEM_CONFIG.ai!;
       this.config.ai = {
         ...oldAi,
         ...newConfig.ai,
         // Preserve API keys if the incoming ones are empty/whitespace
-        apiKey: (newConfig.ai.apiKey && newConfig.ai.apiKey.trim()) 
-          ? newConfig.ai.apiKey 
-          : oldAi.apiKey || '',
         geminiApiKey: (newConfig.ai.geminiApiKey && newConfig.ai.geminiApiKey.trim()) 
           ? newConfig.ai.geminiApiKey 
           : oldAi.geminiApiKey || '',
@@ -157,8 +154,8 @@ export class ConfigManager {
   /**
    * Reset to defaults
    */
-  async reset(): Promise<ConcurrencyConfig> {
-    this.config = { ...DEFAULT_CONCURRENCY_CONFIG };
+  async reset(): Promise<SystemConfig> {
+    this.config = { ...DEFAULT_SYSTEM_CONFIG };
     await this.save();
     return this.config;
   }
