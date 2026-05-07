@@ -1844,7 +1844,8 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
           projectName,
           subtitleFile,
           preset: (job as any).__optimizePreset,
-          targetIds: (job as any).__optimizeTargetIds
+          targetIds: (job as any).__optimizeTargetIds,
+          targetIssues: (job as any).__optimizeTargetIssues
         }
       };
 
@@ -3779,6 +3780,7 @@ app.post('/api/jobs/:id/retry', async (req, res) => {
     if (o.subtitleFile) (job as any).__optimizeSubtitleFile = o.subtitleFile;
     if (o.preset) (job as any).__optimizePreset = o.preset;
     if (o.targetIds) (job as any).__optimizeTargetIds = o.targetIds;
+    if (o.targetIssues) (job as any).__optimizeTargetIssues = o.targetIssues;
   }
 
   // Restore render params
@@ -3983,6 +3985,7 @@ app.post('/api/jobs/run', async (req, res) => {
       : translateSubtitleFile; // Default to same file as translate
   const optimizePreset = req.body?.optimizePreset || optimizeNode?.params?.preset || translatePreset; // Default to same preset
   const optimizeTargetIds = req.body?.optimizeTargetIds || optimizeNode?.params?.targetIds;
+  const optimizeTargetIssues = req.body?.optimizeTargetIssues || optimizeNode?.params?.targetIssues;
 
   if (LOG_RENDER_V2_DEBUG && renderConfigV2) {
     console.log('RENDER_V2_DEBUG jobs/run received renderConfigV2', JSON.stringify({
@@ -4142,6 +4145,7 @@ app.post('/api/jobs/run', async (req, res) => {
       if (optimizeSubtitleFile) optimizePayload.subtitleFile = optimizeSubtitleFile;
       if (optimizePreset) optimizePayload.preset = optimizePreset;
       if (optimizeTargetIds) optimizePayload.targetIds = optimizeTargetIds;
+      if (optimizeTargetIssues) optimizePayload.targetIssues = optimizeTargetIssues;
 
       job = {
         id: jobId,
@@ -4269,6 +4273,7 @@ app.post('/api/jobs/run', async (req, res) => {
       if (optimizeSubtitleFile) optimizePayload.subtitleFile = optimizeSubtitleFile;
       if (optimizePreset) optimizePayload.preset = optimizePreset;
       if (optimizeTargetIds) optimizePayload.targetIds = optimizeTargetIds;
+      if (optimizeTargetIssues) optimizePayload.targetIssues = optimizeTargetIssues;
 
       job = {
         id: jobId,
@@ -4328,6 +4333,7 @@ app.post('/api/jobs/run', async (req, res) => {
       if (optimizePayload.subtitleFile) (job as any).__optimizeSubtitleFile = optimizePayload.subtitleFile;
       if (optimizePayload.preset) (job as any).__optimizePreset = optimizePayload.preset;
       if (optimizePayload.targetIds) (job as any).__optimizeTargetIds = optimizePayload.targetIds;
+      if (optimizePayload.targetIssues) (job as any).__optimizeTargetIssues = optimizePayload.targetIssues;
       if (ttsVoice) (job as any).__ttsVoice = ttsVoice;
       if (ttsRate !== undefined) (job as any).__ttsRate = ttsRate;
       if (ttsPitch !== undefined) (job as any).__ttsPitch = ttsPitch;

@@ -125,11 +125,104 @@ ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
   return { ...result, prompt };
 }
 
+type IssueType = 'language' | 'length';
+
+/**
+ * Classify which issue types a segment has
+ */
+function classifyIssues(issues: string[]): Set<IssueType> {
+  const types = new Set<IssueType>();
+  for (const i of issues) {
+    const lower = i.toLowerCase();
+    if (lower.includes('non-vietnamese word') ||
+        (lower.includes('non-vietnamese characters') && !lower.includes('word'))) {
+      types.add('language');
+    }
+    if (lower.includes('more than 2 lines') ||
+        lower.includes('too many words') ||
+        lower.includes('cps exceeds') ||
+        lower.includes('cps is in the warning')) {
+      types.add('length');
+    }
+  }
+  return types;
+}
+
+const ISSUE_FOCUS_TEXT: Record<IssueType, string> = {
+  language: `FOCUS: Rewrite to eliminate ALL foreign/non-Vietnamese content
+- Translate any remaining Chinese characters using the cn field as reference
+- Replace foreign words with proper Vietnamese equivalents
+- Use Sino-Vietnamese (Hán-Việt) transcription for names/terms
+- Output must be 100% pure Vietnamese Latin script`,
+  length: `FOCUS: Reduce and compress
+- Shorten the text while preserving core meaning
+- Use more concise, punchier phrasing
+- Remove filler words and redundant expressions
+- Target: fewer words, same meaning`,
+};
+
+/**
+ * Build the SEGMENT-SPECIFIC OVERRIDES block for the prompt.
+ * Groups segments that share the same issue type(s) to avoid repetition.
+ * If all segments share an issue, writes it as a global override (no ID label).
+ */
+function buildSegmentOverridesBlock(
+  segments: any[],
+  segmentIssues?: Map<number, string[]>
+): string {
+  if (!segmentIssues || segmentIssues.size === 0) return '';
+
+  // Map each issue key (sorted type list) → list of segment IDs
+  const groupMap = new Map<string, { ids: string[]; types: IssueType[] }>();
+
+  for (const s of segments) {
+    const issues = segmentIssues.get(Number(s.id)) || [];
+    const types = Array.from(classifyIssues(issues)).sort() as IssueType[];
+    if (types.length === 0) continue;
+    const key = types.join('+');
+    if (!groupMap.has(key)) {
+      groupMap.set(key, { ids: [], types });
+    }
+    groupMap.get(key)!.ids.push(String(s.id));
+  }
+
+  if (groupMap.size === 0) return '';
+
+  const totalSegments = segments.length;
+  const globalLines: string[] = [];
+  const specificLines: string[] = [];
+
+  for (const { ids, types } of groupMap.values()) {
+    const focusText = types.map(t => ISSUE_FOCUS_TEXT[t]).join('\n\n');
+    if (ids.length === totalSegments) {
+      // All segments share this issue → global, no label
+      globalLines.push(focusText);
+    } else {
+      // Subset only → label with segment IDs
+      const label = ids.length === 1
+        ? `[Segment #${ids[0]}]`
+        : `[Segments #${ids.join(', #')}]`;
+      specificLines.push(`${label}:\n${focusText}`);
+    }
+  }
+
+  const parts: string[] = [];
+  if (globalLines.length > 0) {
+    parts.push(`OVERRIDES (MANDATORY — apply to all segments):\n${globalLines.join('\n\n')}`);
+  }
+  if (specificLines.length > 0) {
+    parts.push(`SEGMENT-SPECIFIC OVERRIDES (MANDATORY — apply only to listed segments):\n${specificLines.join('\n\n')}`);
+  }
+
+  return `\n${parts.join('\n\n')}\n`;
+}
+
 export async function aiFixSegments(params: {
   segments: any[];
   preset: any;
+  segmentIssues?: Map<number, string[]>;
 }): Promise<{ text?: string; usage?: any; prompt?: string }> {
-  const { segments, preset } = params;
+  const { segments, preset, segmentIssues } = params;
   const humorLevel = preset?.humor_level ?? 0;
   const humorRule = getHumorRule(humorLevel);
   const characterRules = getCharacterRules(preset?.character_names || []);
@@ -145,6 +238,8 @@ ${humorRule}
     ? `Story context: ${preset.reference.title_or_summary}`
     : "";
 
+  const segmentOverridesBlock = buildSegmentOverridesBlock(segments, segmentIssues);
+
   const prompt = `
 CRITICAL: OUTPUT MUST BE 100% VIETNAMESE. Any Chinese character in the output is a hard failure.
 
@@ -154,8 +249,8 @@ Output: JSON array [{"id": number, "fixedText": string}]
 ${styleBlock}
 ${storyContext}
 ${characterRules}
-
-Input:
+${segmentOverridesBlock}
+Input fields:
 - cn: Original Chinese (reference — use to understand meaning and fix mistranslations)
 - vn: Current Vietnamese draft (may contain untranslated Chinese characters)
 
@@ -166,12 +261,12 @@ Rules:
 4. Each segment is independent. Do NOT merge or split segments.
 5. Fix mistranslations by comparing vn against cn. Preserve core meaning.
 6. Punctuation: add natural punctuation only where grammatically necessary. Do not add expressive punctuation not implied by the source.
-7. Length: preserve all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → fix and keep full meaning, do not compress.
+7. Length: preserve all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → translate fully; compress only if explicitly instructed by an OVERRIDE above.
 
 REMINDER: Every fixedText must be pure Vietnamese Latin script. Zero Chinese characters allowed.
 
 Segments:
-${JSON.stringify(segments)}
+${JSON.stringify(segments.map(s => ({ id: s.id, cn: s.cn, vn: s.vn })))}
 `;
 
   const result = await callAi({

@@ -1199,6 +1199,10 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 // Send targetIds when: selection mode OR filter is active (not 'all')
                 targetIds: (aiScope.mode === 'selected' || filter !== 'all')
                   ? aiScope.translated.map(s => s.id)
+                  : undefined,
+                // Send targetIssues for issue-aware prompt optimization
+                targetIssues: (aiScope.mode === 'selected' || filter !== 'all')
+                  ? aiScope.translated.map(s => ({ id: s.id, issues: s.issueList }))
                   : undefined
               }
             }

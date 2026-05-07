@@ -85,6 +85,7 @@ export interface MediaJob {
       };
       batchSize?: number;
       targetIds?: string[];
+      targetIssues?: { id: number; issues: string[] }[];
     };
   };
 }

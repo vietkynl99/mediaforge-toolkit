@@ -404,7 +404,8 @@ export class OptimizeTaskExecutor extends TaskExecutor {
       projectName,
       subtitleFile, // Relative path to subtitle file
       preset,
-      targetIds // Array of IDs to optimize (optional)
+      targetIds, // Array of IDs to optimize (optional)
+      targetIssues // Array of {id, issues} for issue-aware optimization (optional)
     } = task.params;
 
     // Get settings from config
@@ -511,17 +512,18 @@ export class OptimizeTaskExecutor extends TaskExecutor {
           vn: c.translatedText || c.text || c.translated || ""
         }));
 
-        // Debug: dump request data before sending to AI
-        if (DEBUG_OPTIMIZE) {
-          context.onLog(`[DEBUG_OPTIMIZE] === REQUEST DATA ===`);
-          context.onLog(`[DEBUG_OPTIMIZE] Segments count: ${segmentsForAI.length}`);
-          context.onLog(`[DEBUG_OPTIMIZE] Segments: ${JSON.stringify(segmentsForAI, null, 2)}`);
-          context.onLog(`[DEBUG_OPTIMIZE] Preset: ${JSON.stringify(preset, null, 2)}`);
+        // Build issue map for issue-aware optimization
+        const issueMap = new Map<number, string[]>();
+        if (Array.isArray(targetIssues)) {
+          for (const item of targetIssues) {
+            issueMap.set(Number(item.id), item.issues || []);
+          }
         }
 
         const result = await SubtitleAI.aiFixSegments({
           segments: segmentsForAI,
-          preset
+          preset,
+          segmentIssues: issueMap
         });
 
         // Debug: dump response data from AI
