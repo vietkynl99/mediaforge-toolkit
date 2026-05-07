@@ -435,6 +435,38 @@ const jobPersistTimers = new Map<string, NodeJS.Timeout>();
 const STATS_CACHE_MIN_INTERVAL_MS = 5000; // 5 seconds
 let statsCache: { data: any; timestamp: number } | null = null;
 
+const formatIdRange = (ids: any[] | any): string => {
+  if (!Array.isArray(ids) || ids.length === 0) return String(ids || '');
+  const sortedIds = ids
+    .map(id => typeof id === 'string' ? parseInt(id, 10) : Number(id))
+    .filter(id => !isNaN(id))
+    .sort((a, b) => a - b);
+  
+  if (sortedIds.length === 0) return JSON.stringify(ids);
+
+  const ranges: string[] = [];
+  let start = sortedIds[0];
+  let end = start;
+
+  for (let i = 1; i <= sortedIds.length; i++) {
+    if (i < sortedIds.length && sortedIds[i] === end + 1) {
+      end = sortedIds[i];
+    } else {
+      if (start === end) {
+        ranges.push(`${start}`);
+      } else {
+        ranges.push(`${start}-${end}`);
+      }
+      if (i < sortedIds.length) {
+        start = sortedIds[i];
+        end = start;
+      }
+    }
+  }
+
+  return ranges.join(', ');
+};
+
 const formatLocalTimestamp = () =>
   new Intl.DateTimeFormat('vi-VN', {
     year: 'numeric',
@@ -1194,7 +1226,17 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
   job.startedAt = new Date().toISOString();
   scheduleJobPersist(job);
   appendJobLog(job, `=== JOB STARTED ===\n`);
-  appendJobLog(job, `Job params: ${JSON.stringify(job.params ?? {}, null, 2)}\n`);
+  const logParams = JSON.parse(JSON.stringify(job.params ?? {}));
+  if (logParams.translate?.targetIds) {
+    logParams.translate.targetIds = formatIdRange(logParams.translate.targetIds);
+  }
+  if (logParams.optimize?.targetIds) {
+    logParams.optimize.targetIds = formatIdRange(logParams.optimize.targetIds);
+  }
+  if (logParams.targetIds) {
+    logParams.targetIds = formatIdRange(logParams.targetIds);
+  }
+  appendJobLog(job, `Job params: ${JSON.stringify(logParams, null, 2)}\n`);
 
   try {
     const downloadSubsTask = job.tasks.find(task => task.type === 'download_subs');
