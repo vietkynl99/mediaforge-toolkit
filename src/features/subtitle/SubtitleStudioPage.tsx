@@ -244,6 +244,21 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     filterRef.current = filter;
   }, [filter]);
   const [folderQuery, setFolderQuery] = useState<string>('');
+  const [selectedStatuses, setSelectedStatuses] = useState<VaultStatus[]>([]);
+  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState<boolean>(false);
+  const statusContainerRef = useRef<HTMLDivElement>(null);
+
+  // Close status dropdown when clicking outside
+  useEffect(() => {
+    if (!isStatusDropdownOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (statusContainerRef.current && !statusContainerRef.current.contains(event.target as Node)) {
+        setIsStatusDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isStatusDropdownOpen]);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isPageEditing, setIsPageEditing] = useState<boolean>(false);
   const [pageInputValue, setPageInputValue] = useState<string>('1');
@@ -1620,6 +1635,14 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSave]);
 
+  const filteredVaultFolders = useMemo(() => {
+    return vaultFolders.filter(folder => {
+      const matchesQuery = folder.name.toLowerCase().includes(folderQuery.toLowerCase());
+      const matchesStatus = selectedStatuses.length === 0 || (folder.status && selectedStatuses.includes(folder.status as VaultStatus));
+      return matchesQuery && matchesStatus;
+    });
+  }, [vaultFolders, folderQuery, selectedStatuses]);
+
   return (
     <div className="flex-1 h-full bg-slate-950">
       <Layout>
@@ -1655,23 +1678,85 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                     <Folder size={16} className="text-lime-400" />
                     Projects
                   </h2>
-                  <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5">
-                    <Search size={14} className="text-slate-500" />
-                    <input
-                      type="text"
-                      value={folderQuery}
-                      onChange={(e) => setFolderQuery(e.target.value)}
-                      placeholder="Search projects..."
-                      className="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-500 focus:outline-none"
-                    />
-                    {folderQuery && (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5">
+                      <Search size={14} className="text-slate-500" />
+                      <input
+                        type="text"
+                        value={folderQuery}
+                        onChange={(e) => setFolderQuery(e.target.value)}
+                        placeholder="Search projects..."
+                        className="flex-1 bg-transparent text-xs text-slate-200 placeholder-slate-500 focus:outline-none"
+                      />
+                      {folderQuery && (
+                        <button
+                          onClick={() => setFolderQuery('')}
+                          className="text-slate-500 hover:text-slate-300"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                    {/* Status Multi-select Filter */}
+                    <div ref={statusContainerRef} className="relative">
                       <button
-                        onClick={() => setFolderQuery('')}
-                        className="text-slate-500 hover:text-slate-300"
+                        onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
+                        className={`p-1.5 rounded-lg border transition-colors ${
+                          selectedStatuses.length > 0
+                            ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
+                            : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                        }`}
+                        title="Filter by status"
                       >
-                        <X size={12} />
+                        <Filter size={14} />
+                        {selectedStatuses.length > 0 && (
+                          <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 text-white text-[10px] flex items-center justify-center rounded-full border border-slate-950 font-bold">
+                            {selectedStatuses.length}
+                          </span>
+                        )}
                       </button>
-                    )}
+
+                      {isStatusDropdownOpen && (
+                        <div className="absolute top-full right-0 mt-2 z-50 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 min-w-[140px] animate-in fade-in zoom-in duration-150 origin-top-right">
+                          <div className="px-3 py-1 mb-1 border-b border-slate-800">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Status</span>
+                          </div>
+                          {(['todo', 'in progress', 'done', 'closed', 'error'] as VaultStatus[]).map((status) => (
+                            <label
+                              key={status}
+                              className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 cursor-pointer group transition-colors"
+                            >
+                              <div className="relative flex items-center justify-center w-4 h-4 shrink-0">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedStatuses.includes(status)}
+                                  onChange={() => {
+                                    setSelectedStatuses(prev => 
+                                      prev.includes(status)
+                                        ? prev.filter(s => s !== status)
+                                        : [...prev, status]
+                                    );
+                                  }}
+                                  className="peer appearance-none w-4 h-4 rounded border border-slate-700 bg-slate-950 checked:bg-blue-500 checked:border-blue-500 transition-all cursor-pointer"
+                                />
+                                <CheckCircle size={10} className="absolute text-white opacity-0 peer-checked:opacity-100 pointer-events-none transition-opacity" />
+                              </div>
+                              <span className={`text-xs capitalize transition-colors ${selectedStatuses.includes(status) ? 'text-blue-400 font-medium' : 'text-slate-400 group-hover:text-slate-200'}`}>
+                                {STATUS_LABELS[status]}
+                              </span>
+                            </label>
+                          ))}
+                          {selectedStatuses.length > 0 && (
+                            <button
+                              onClick={() => setSelectedStatuses([])}
+                              className="w-full text-left px-3 py-1.5 text-[10px] text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors border-t border-slate-800 mt-1"
+                            >
+                              Clear filters
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -1679,10 +1764,23 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                     <div className="flex items-center justify-center h-32">
                       <div className="w-6 h-6 border-2 border-lime-500 border-t-transparent rounded-full animate-spin" />
                     </div>
-                  ) : vaultFolders.length === 0 ? (
-                    <p className="text-xs text-slate-500 p-3 text-center">No projects available</p>
+                  ) : filteredVaultFolders.length === 0 ? (
+                    <div className="p-4 text-center">
+                      <p className="text-xs text-slate-500">No projects found</p>
+                      {(folderQuery || selectedStatuses.length > 0) && (
+                        <button
+                          onClick={() => {
+                            setFolderQuery('');
+                            setSelectedStatuses([]);
+                          }}
+                          className="mt-2 text-[10px] text-lime-500 hover:underline"
+                        >
+                          Clear all filters
+                        </button>
+                      )}
+                    </div>
                   ) : (
-                    vaultFolders.filter(folder => folder.name.toLowerCase().includes(folderQuery.toLowerCase())).map((folder) => (
+                    filteredVaultFolders.map((folder) => (
                       <button
                         key={folder.id}
                         onClick={() => setSelectedFolderId(folder.id)}
