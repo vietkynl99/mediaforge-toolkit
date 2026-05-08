@@ -144,12 +144,7 @@ export class OpenRouterProvider implements AiProvider {
         // Fallback to raw text
       }
       
-      console.error('[OpenRouter] API call failed:', {
-        status: response.status,
-        statusText: response.statusText,
-        error: errorDetail,
-        model: this.model,
-      });
+      console.error(`[OpenRouter] API call failed: ${response.status} ${response.statusText} - ${errorDetail} (model: ${this.model})`);
 
       // If structured output failed, we could retry here, but for now we'll just throw
       throw new Error(`OpenRouter API failed (${response.status}): ${errorDetail}`);
@@ -162,10 +157,8 @@ export class OpenRouterProvider implements AiProvider {
       }
       data = JSON.parse(responseText);
     } catch (parseError: any) {
-      console.error('[OpenRouter] Failed to parse response as JSON:', {
-        error: parseError.message,
-        text: responseText.substring(0, 500),
-      });
+      console.error(`[OpenRouter] Failed to parse response as JSON: ${parseError.message}`);
+      console.error(`[OpenRouter] Response preview: ${responseText.substring(0, 500)}`);
       throw new Error(`OpenRouter returned invalid JSON: ${parseError.message}`);
     }
 

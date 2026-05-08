@@ -5226,8 +5226,11 @@ app.post('/api/subtitle/ai/translate', async (req, res) => {
     const result = await SubtitleAI.translateBatch(req.body);
     res.json(result);
   } catch (err) {
-    console.error('Translate Batch Error:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Translation failed' });
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : undefined;
+    console.error('Translate Batch Error:', errMsg);
+    if (errStack) console.error('Stack:', errStack);
+    res.status(500).json({ error: errMsg || 'Translation failed' });
   }
 });
 
@@ -5236,8 +5239,11 @@ app.post('/api/subtitle/ai/optimize', async (req, res) => {
     const result = await SubtitleAI.aiFixSegments(req.body);
     res.json(result);
   } catch (err) {
-    console.error('Optimize Error:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Optimization failed' });
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : undefined;
+    console.error('Optimize Error:', errMsg);
+    if (errStack) console.error('Stack:', errStack);
+    res.status(500).json({ error: errMsg || 'Optimization failed' });
   }
 });
 
@@ -5246,8 +5252,11 @@ app.post('/api/subtitle/ai/analyze-style', async (req, res) => {
     const result = await SubtitleAI.analyzeTranslationStyle(req.body);
     res.json(result);
   } catch (err) {
-    console.error('Analyze Style Error:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'Analysis failed' });
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : undefined;
+    console.error('Analyze Style Error:', errMsg);
+    if (errStack) console.error('Stack:', errStack);
+    res.status(500).json({ error: errMsg || 'Analysis failed' });
   }
 });
 
@@ -5257,8 +5266,11 @@ app.post('/api/subtitle/ai/call', async (req, res) => {
     const result = await callAi(params);
     res.json(result);
   } catch (err) {
-    console.error('AI Call Error:', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'AI call failed' });
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : undefined;
+    console.error('AI Call Error:', errMsg);
+    if (errStack) console.error('Stack:', errStack);
+    res.status(500).json({ error: errMsg || 'AI call failed' });
   }
 });
 

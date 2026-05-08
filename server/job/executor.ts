@@ -276,12 +276,14 @@ function parseAiJsonResponse(text: string, onLog: LogCallback): any[] {
     items = JSON.parse(text);
   } catch (firstErr) {
     const repaired = tryRepairJson(text);
+    onLog(`WARNING: Malformed AI JSON detected. Original response (${text.length} chars):\n${text}`);
+    onLog(`WARNING: Attempted repair. Repaired JSON:\n${repaired}`);
     try {
       items = JSON.parse(repaired);
-      onLog(`NOTICE: Recovered from malformed AI JSON response using repair utility.`);
+      onLog(`NOTICE: Successfully recovered from malformed AI JSON response using repair utility.`);
     } catch (secondErr) {
       onLog(`ERROR: Failed to parse AI response as JSON even after repair.`);
-      onLog(`ERROR: Full response (${text.length} chars):\n${text}`);
+      onLog(`ERROR: Parse error: ${secondErr instanceof Error ? secondErr.message : String(secondErr)}`);
       throw new Error(`Failed to parse AI response as JSON`);
     }
   }
