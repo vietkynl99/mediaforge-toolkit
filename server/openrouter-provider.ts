@@ -504,6 +504,32 @@ export function clearOpenRouterModelsCache(): void {
 }
 
 /**
+ * Initial fetch of models when server starts
+ * Retries up to 3 times
+ */
+export async function initOpenRouterModels(apiKey: string, retries = 3): Promise<void> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      console.log(`[OpenRouter] Initializing models (attempt ${i + 1}/${retries})...`);
+      await fetchModelsIfNeeded(apiKey);
+      if (modelsCache && modelsCache.models.size > 0) {
+        console.log(`[OpenRouter] Initialization successful, cached ${modelsCache.models.size} models`);
+        return;
+      }
+    } catch (error) {
+      console.warn(`[OpenRouter] Initialization attempt ${i + 1} failed:`, error instanceof Error ? error.message : String(error));
+    }
+    
+    if (i < retries - 1) {
+      // Exponential backoff or simple delay
+      const delay = Math.pow(2, i) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  console.error('[OpenRouter] Failed to initialize models after all retries');
+}
+
+/**
  * Get all available OpenRouter models (requires API key)
  */
 export async function getOpenRouterModels(apiKey: string): Promise<OpenRouterModelInfo[]> {

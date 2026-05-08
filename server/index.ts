@@ -5224,7 +5224,7 @@ app.get('/api/settings/concurrency/status', (_req, res) => {
 });
 
 // OpenRouter Models API
-import { getOpenRouterModels, getOpenRouterModelInfo, OpenRouterModelInfo } from './openrouter-provider.js';
+import { getOpenRouterModels, getOpenRouterModelInfo, OpenRouterModelInfo, initOpenRouterModels } from './openrouter-provider.js';
 
 app.get('/api/openrouter/models', async (_req, res) => {
   try {
@@ -5358,6 +5358,20 @@ app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Media backend running on http://localhost:${PORT}`);
+  
+  // Initial OpenRouter models fetch
+  try {
+    const config = configManager.get();
+    const apiKey = config.ai?.openrouterApiKey;
+    if (apiKey) {
+      // Don't await here to not block server start, or await if you want to ensure models are ready
+      initOpenRouterModels(apiKey).catch(err => {
+        console.error('[OpenRouter] Background initialization failed:', err);
+      });
+    }
+  } catch (err) {
+    console.error('[OpenRouter] Failed to trigger initial fetch:', err);
+  }
 });
