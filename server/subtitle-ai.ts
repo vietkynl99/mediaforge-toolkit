@@ -54,8 +54,9 @@ export async function translateBatch(params: {
   preset: any;
   maxSingleLineWords: number;
   autoSplitLongLines: boolean;
+  onLog?: (message: string) => void;
 }) {
-  const { batch, contextBefore, contextAfter, preset, maxSingleLineWords, autoSplitLongLines } = params;
+  const { batch, contextBefore, contextAfter, preset, maxSingleLineWords, autoSplitLongLines, onLog } = params;
 
   const humorLevel = preset?.humor_level ?? 0;
   const humorRule = getHumorRule(humorLevel);
@@ -109,6 +110,7 @@ ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
 
   const result = await callAi({
     prompt,
+    onLog,
     responseMimeType: "application/json",
     responseSchema: {
       type: Type.ARRAY,
@@ -233,8 +235,9 @@ export async function aiFixSegments(params: {
   segmentIssues?: Map<number, string[]>;
   /** Specific foreign words to replace, collected from all segments in this batch */
   foreignWords?: string[];
+  onLog?: (message: string) => void;
 }): Promise<{ text?: string; usage?: any; prompt?: string }> {
-  const { segments, preset, segmentIssues, foreignWords } = params;
+  const { segments, preset, segmentIssues, foreignWords, onLog } = params;
   const humorLevel = preset?.humor_level ?? 0;
   const humorRule = getHumorRule(humorLevel);
   const characterRules = getCharacterRules(preset?.character_names || []);
@@ -287,6 +290,7 @@ ${JSON.stringify(segments.map(s => ({ id: s.id, cn: s.cn, vn: s.vn })))}
 
   const result = await callAi({
     prompt,
+    onLog,
     responseMimeType: "application/json",
     responseSchema: {
       type: Type.ARRAY,

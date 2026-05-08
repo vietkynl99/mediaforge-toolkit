@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Save, RotateCcw, Cpu, Wifi, MemoryStick, AlertCircle, Check, Sparkles, Eye, EyeOff } from 'lucide-react';
+import { Save, RotateCcw, Cpu, Wifi, MemoryStick, AlertCircle, Check, Sparkles, Eye, EyeOff, Info, Zap, Coins, Box, AlertTriangle } from 'lucide-react';
 
 interface ConcurrencyRule {
   taskType: string;
@@ -61,6 +61,20 @@ const TASK_TYPE_LABELS: Record<string, string> = {
 
 type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
+interface OpenRouterModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  contextLength: number;
+  pricing: {
+    prompt: number;
+    completion: number;
+  };
+  supportedParameters: string[];
+  supportsStructuredOutput: boolean;
+  topProvider?: string;
+}
+
 export function SettingsPage() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -69,14 +83,21 @@ export function SettingsPage() {
   const [success, setSuccess] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showOpenRouterApiKey, setShowOpenRouterApiKey] = useState(false);
+  const [openRouterModelInfo, setOpenRouterModelInfo] = useState<OpenRouterModelInfo | null>(null);
+  const [loadingModelInfo, setLoadingModelInfo] = useState(false);
+  const [modelInfoError, setModelInfoError] = useState<string | null>(null);
   
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const modelInfoTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadConfig();
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
+      }
+      if (modelInfoTimerRef.current) {
+        clearTimeout(modelInfoTimerRef.current);
       }
     };
   }, []);
@@ -182,7 +203,47 @@ export function SettingsPage() {
     };
     setConfig(newConfig);
     debouncedSave(newConfig);
+    
+    // Fetch model info when openrouter model changes
+    if (field === 'openrouterModel' && newAi.provider === 'openrouter' && newAi.openrouterApiKey) {
+      fetchModelInfo(value, newAi.openrouterApiKey);
+    }
   };
+
+  const fetchModelInfo = useCallback(async (modelId: string, apiKey: string) => {
+    // Clear previous timer
+    if (modelInfoTimerRef.current) {
+      clearTimeout(modelInfoTimerRef.current);
+    }
+    
+    // Debounce to avoid too many requests
+    modelInfoTimerRef.current = setTimeout(async () => {
+      setLoadingModelInfo(true);
+      setModelInfoError(null);
+      try {
+        // Call the models/:id endpoint with the model being typed
+        const response = await fetch(`/api/openrouter/models/${encodeURIComponent(modelId)}`);
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Model not found');
+        }
+        const info = await response.json();
+        setOpenRouterModelInfo(info);
+      } catch (err) {
+        setModelInfoError(err instanceof Error ? err.message : 'Failed to fetch model info');
+        setOpenRouterModelInfo(null);
+      } finally {
+        setLoadingModelInfo(false);
+      }
+    }, 500);
+  }, []);
+
+  // Load model info when config loads with openrouter provider
+  useEffect(() => {
+    if (config?.ai?.provider === 'openrouter' && config.ai.openrouterApiKey && config.ai.openrouterModel) {
+      fetchModelInfo(config.ai.openrouterModel, config.ai.openrouterApiKey);
+    }
+  }, [config?.ai?.provider, config?.ai?.openrouterApiKey, config?.ai?.openrouterModel, fetchModelInfo]);
 
   if (loading) {
     return (
@@ -320,6 +381,81 @@ export function SettingsPage() {
                   Browse models at <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/models</a>.
                 </p>
               </div>
+              
+              {/* Model Info Display */}
+              {loadingModelInfo && (
+                <div className="flex items-center gap-2 p-2 bg-zinc-700/30 rounded-lg text-xs text-zinc-400">
+                  <div className="animate-spin w-3 h-3 border border-zinc-400 border-t-transparent rounded-full" />
+                  Loading model info...
+                </div>
+              )}
+              
+              {modelInfoError && (
+                <div className="flex items-start gap-2 p-2 bg-amber-900/20 border border-amber-800/30 rounded-lg text-xs text-amber-400">
+                  <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+                  <span>{modelInfoError}</span>
+                </div>
+              )}
+              
+              {openRouterModelInfo && !loadingModelInfo && (
+                <div className="p-3 bg-zinc-700/30 rounded-lg border border-zinc-600/30 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-zinc-200 truncate">
+                        {openRouterModelInfo.name}
+                      </div>
+                      {openRouterModelInfo.description && (
+                        <div className="text-[10px] text-zinc-500 mt-0.5 line-clamp-2">
+                          {openRouterModelInfo.description}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {openRouterModelInfo.supportsStructuredOutput ? (
+                        <span className="px-1.5 py-0.5 text-[9px] bg-green-900/30 text-green-400 rounded border border-green-800/30 flex items-center gap-1">
+                          <Zap size={10} />
+                          Structured
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 text-[9px] bg-amber-900/30 text-amber-400 rounded border border-amber-800/30 flex items-center gap-1">
+                          <AlertTriangle size={10} />
+                          No Structured
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-2 text-[10px]">
+                    <div className="flex items-center gap-1.5 text-zinc-400">
+                      <Box size={12} />
+                      <span className="truncate">
+                        {(openRouterModelInfo.contextLength / 1000).toFixed(0)}K ctx
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-zinc-400">
+                      <Coins size={12} />
+                      <span className="truncate">
+                        {openRouterModelInfo.pricing.prompt > 0 
+                          ? `$${(openRouterModelInfo.pricing.prompt * 1000000).toFixed(2)}/M`
+                          : 'Free'}
+                      </span>
+                    </div>
+                    {openRouterModelInfo.topProvider && (
+                      <div className="flex items-center gap-1.5 text-zinc-400">
+                        <Info size={12} />
+                        <span className="truncate">{openRouterModelInfo.topProvider}</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {!openRouterModelInfo.supportsStructuredOutput && (
+                    <div className="text-[9px] text-amber-400/80 bg-amber-900/10 p-1.5 rounded border border-amber-800/20">
+                      This model may not support structured JSON output. Translation quality may vary.
+                    </div>
+                  )}
+                </div>
+              )}
+              
               <div className="relative">
                 <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
                   OpenRouter API Key

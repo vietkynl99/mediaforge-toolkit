@@ -106,6 +106,7 @@ export interface AiCallParams {
   temperature?: number;
   responseMimeType?: string;
   responseSchema?: any;
+  onLog?: (message: string) => void;
 }
 
 export interface AiCallResult {

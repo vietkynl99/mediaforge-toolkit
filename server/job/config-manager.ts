@@ -6,6 +6,7 @@
  */
 
 import { SystemConfig, DEFAULT_SYSTEM_CONFIG, ConcurrencyRule, ResourceType } from './types.js';
+import { clearOpenRouterModelsCache } from '../openrouter-provider.js';
 
 const SETTINGS_KEY = 'system_config';
 
@@ -112,6 +113,9 @@ export class ConfigManager {
     }
     if (newConfig.ai) {
       const oldAi = this.config.ai || DEFAULT_SYSTEM_CONFIG.ai!;
+      const oldOpenRouterKey = oldAi.openrouterApiKey;
+      const oldOpenRouterModel = oldAi.openrouterModel;
+      
       this.config.ai = {
         ...oldAi,
         ...newConfig.ai,
@@ -123,6 +127,12 @@ export class ConfigManager {
           ? newConfig.ai.openrouterApiKey 
           : oldAi.openrouterApiKey || '',
       };
+      
+      // Clear OpenRouter models cache if API key or model changed
+      if (this.config.ai.openrouterApiKey !== oldOpenRouterKey || 
+          this.config.ai.openrouterModel !== oldOpenRouterModel) {
+        clearOpenRouterModelsCache();
+      }
     }
     await this.save();
     return this.config;

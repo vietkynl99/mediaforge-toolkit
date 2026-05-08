@@ -5223,6 +5223,80 @@ app.get('/api/settings/concurrency/status', (_req, res) => {
   }
 });
 
+// OpenRouter Models API
+import { getOpenRouterModels, getOpenRouterModelInfo, OpenRouterModelInfo } from './openrouter-provider.js';
+
+app.get('/api/openrouter/models', async (_req, res) => {
+  try {
+    const config = configManager.get();
+    const apiKey = config.ai?.openrouterApiKey;
+    
+    if (!apiKey) {
+      res.status(400).json({ error: 'OpenRouter API key not configured' });
+      return;
+    }
+    
+    const models = await getOpenRouterModels(apiKey);
+    res.json(models);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error('Get OpenRouter Models Error:', errMsg);
+    res.status(500).json({ error: errMsg || 'Failed to fetch models' });
+  }
+});
+
+app.get('/api/openrouter/models/:id', async (req, res) => {
+  try {
+    const config = configManager.get();
+    const apiKey = config.ai?.openrouterApiKey;
+    
+    if (!apiKey) {
+      res.status(400).json({ error: 'OpenRouter API key not configured' });
+      return;
+    }
+    
+    const modelId = decodeURIComponent(req.params.id);
+    const modelInfo = await getOpenRouterModelInfo(modelId, apiKey);
+    
+    if (!modelInfo) {
+      res.status(404).json({ error: 'Model not found' });
+      return;
+    }
+    
+    res.json(modelInfo);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error('Get OpenRouter Model Info Error:', errMsg);
+    res.status(500).json({ error: errMsg || 'Failed to fetch model info' });
+  }
+});
+
+app.get('/api/openrouter/current-model', async (_req, res) => {
+  try {
+    const config = configManager.get();
+    const apiKey = config.ai?.openrouterApiKey;
+    const modelId = config.ai?.openrouterModel || 'openrouter/auto';
+    
+    if (!apiKey) {
+      res.status(400).json({ error: 'OpenRouter API key not configured' });
+      return;
+    }
+    
+    const modelInfo = await getOpenRouterModelInfo(modelId, apiKey);
+    
+    if (!modelInfo) {
+      res.status(404).json({ error: 'Current model not found in models list', modelId });
+      return;
+    }
+    
+    res.json(modelInfo);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error('Get Current Model Info Error:', errMsg);
+    res.status(500).json({ error: errMsg || 'Failed to fetch current model info' });
+  }
+});
+
 import { callAi } from './ai-provider.js';
 import * as SubtitleAI from './subtitle-ai.js';
 

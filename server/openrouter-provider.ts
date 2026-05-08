@@ -7,6 +7,132 @@ export interface OpenRouterConfig {
 }
 
 /**
+ * Model information from OpenRouter API
+ */
+export interface OpenRouterModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  contextLength: number;
+  pricing: {
+    prompt: number;  // Price per 1M tokens
+    completion: number;  // Price per 1M tokens
+  };
+  supportedParameters: string[];
+  supportsStructuredOutput: boolean;
+  topProvider?: string;
+}
+
+/**
+ * Cached models data
+ */
+interface ModelsCache {
+  models: Map<string, OpenRouterModelInfo>;
+  apiKeyHash: string;  // To detect API key changes
+}
+
+let modelsCache: ModelsCache | null = null;
+let isFetching: Promise<Map<string, OpenRouterModelInfo>> | null = null;
+
+/**
+ * Simple hash for API key comparison (not cryptographically secure)
+ */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString(16);
+}
+
+/**
+ * Fetch and cache model information from OpenRouter API
+ * Only fetches when API key changes or cache is empty
+ */
+async function fetchModelsIfNeeded(apiKey: string): Promise<Map<string, OpenRouterModelInfo>> {
+  const keyHash = simpleHash(apiKey);
+  
+  // Return cached data if API key hasn't changed
+  if (modelsCache && modelsCache.apiKeyHash === keyHash && modelsCache.models.size > 0) {
+    return modelsCache.models;
+  }
+
+  // If already fetching, wait for the existing promise
+  if (isFetching) {
+    return isFetching;
+  }
+  
+  isFetching = (async () => {
+    console.log('[OpenRouter] Fetching models list...');
+    
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+        },
+      });
+      
+      if (!response.ok) {
+        console.warn('[OpenRouter] Failed to fetch models list');
+        return modelsCache?.models || new Map();
+      }
+      
+      const data = await response.json();
+      const models = data?.data || [];
+      
+      // Build map of model info
+      const modelsMap = new Map<string, OpenRouterModelInfo>();
+      for (const model of models) {
+        const supportedParams = model?.supported_parameters || [];
+        // Only 'structured_outputs' indicates support for json_schema with strict mode
+        // 'response_format' may only support basic json_object mode, not structured outputs
+        const supportsStructured = supportedParams.includes('structured_outputs');
+        
+        const info: OpenRouterModelInfo = {
+          id: model.id,
+          name: model.name || model.id,
+          description: model.description,
+          contextLength: model.context_length || 4096,
+          pricing: {
+            prompt: model.pricing?.prompt || 0,
+            completion: model.pricing?.completion || 0,
+          },
+          supportedParameters: supportedParams,
+          supportsStructuredOutput: supportsStructured,
+          topProvider: model.top_provider?.method || model.provider?.name,
+        };
+        modelsMap.set(model.id, info);
+      }
+      
+      modelsCache = {
+        models: modelsMap,
+        apiKeyHash: keyHash,
+      };
+      
+      console.log(`[OpenRouter] Cached ${modelsMap.size} models`);
+      return modelsMap;
+    } catch (error) {
+      console.warn('[OpenRouter] Error fetching models list:', error);
+      return modelsCache?.models || new Map();
+    } finally {
+      isFetching = null;
+    }
+  })();
+
+  return isFetching;
+}
+
+/**
+ * Get info for a specific model
+ */
+async function getModelInfo(modelId: string, apiKey: string): Promise<OpenRouterModelInfo | undefined> {
+  const models = await fetchModelsIfNeeded(apiKey);
+  return models.get(modelId);
+}
+
+/**
  * Convert Gemini-style schema (with Type enum) to standard JSON Schema
  */
 function convertGeminiSchemaToJsonSchema(geminiSchema: any): any {
@@ -69,6 +195,20 @@ export class OpenRouterProvider implements AiProvider {
   }
 
   async call(params: AiCallParams): Promise<AiCallResult> {
+    const { onLog } = params;
+    const log = (msg: string) => {
+      if (onLog) onLog(`[OpenRouter] ${msg}`);
+      else console.log(`[OpenRouter] ${msg}`);
+    };
+    const warn = (msg: string) => {
+      if (onLog) onLog(`[OpenRouter] WARNING: ${msg}`);
+      else console.warn(`[OpenRouter] ${msg}`);
+    };
+    const errorLog = (msg: string) => {
+      if (onLog) onLog(`[OpenRouter] ERROR: ${msg}`);
+      else console.error(`[OpenRouter] ${msg}`);
+    };
+
     if (!this.isConfigured()) {
       throw new Error('OpenRouter API key is not configured');
     }
@@ -91,22 +231,29 @@ export class OpenRouterProvider implements AiProvider {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
     };
 
-    // Try structured output first
+    // Try structured output first (only if model supports it)
     let useStructuredOutput = false;
     if (params.responseMimeType === 'application/json' && params.responseSchema) {
       try {
-        const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
-        chatRequest.response_format = {
-          type: 'json_schema',
-          json_schema: {
-            name: 'response',
-            strict: true,
-            schema: jsonSchema,
-          },
-        };
-        useStructuredOutput = true;
+        // Check if model supports structured outputs
+        const modelInfo = await getModelInfo(this.model, this.apiKey);
+        
+        if (modelInfo?.supportsStructuredOutput) {
+          const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
+          chatRequest.response_format = {
+            type: 'json_schema',
+            json_schema: {
+              name: 'response',
+              strict: true,
+              schema: jsonSchema,
+            },
+          };
+          useStructuredOutput = true;
+        } else {
+          warn(`Model '${this.model}' does not support structured outputs, using json_object mode`);
+        }
       } catch (schemaError) {
-        console.warn('Failed to convert schema, falling back to json_object mode:', schemaError);
+        warn(`Failed to convert schema, falling back to json_object mode: ${schemaError instanceof Error ? schemaError.message : String(schemaError)}`);
       }
     }
 
@@ -129,7 +276,7 @@ export class OpenRouterProvider implements AiProvider {
         body: JSON.stringify(chatRequest),
       });
     } catch (networkError: any) {
-      console.error('[OpenRouter] Network error:', networkError.message);
+      errorLog(`Network error: ${networkError.message}`);
       throw new Error(`OpenRouter connection failed: ${networkError.message}`);
     }
 
@@ -144,9 +291,55 @@ export class OpenRouterProvider implements AiProvider {
         // Fallback to raw text
       }
       
-      console.error(`[OpenRouter] API call failed: ${response.status} ${response.statusText} - ${errorDetail} (model: ${this.model})`);
+      errorLog(`API call failed: ${response.status} ${response.statusText} - ${errorDetail} (model: ${this.model})`);
 
-      // If structured output failed, we could retry here, but for now we'll just throw
+      // If structured output failed, retry with json_object mode
+      if (useStructuredOutput && params.responseMimeType === 'application/json') {
+        warn('Structured output failed, retrying with json_object mode...');
+        chatRequest.response_format = { type: 'json_object' };
+        
+        const retryResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://mediaforge.ai',
+            'X-Title': 'MediaForge Toolkit',
+          },
+          body: JSON.stringify(chatRequest),
+        });
+        
+        if (retryResponse.ok) {
+          const retryText = await retryResponse.text();
+          if (retryText) {
+            try {
+              const retryData = JSON.parse(retryText);
+              const retryContent = retryData.choices?.[0]?.message?.content || '';
+              if (retryContent) {
+                log('Retry with json_object mode succeeded');
+                // Process retry response
+                let text = retryContent.trim();
+                if (text.startsWith('```json')) text = text.slice(7);
+                else if (text.startsWith('```')) text = text.slice(3);
+                if (text.endsWith('```')) text = text.slice(0, -3);
+                text = text.trim();
+                
+                return {
+                  text: text || '',
+                  usage: retryData.usage ? {
+                    totalTokenCount: retryData.usage.total_tokens,
+                    promptTokenCount: retryData.usage.prompt_tokens,
+                    candidatesTokenCount: retryData.usage.completion_tokens,
+                  } : undefined,
+                };
+              }
+            } catch {
+              // Retry also failed, fall through to throw original error
+            }
+          }
+        }
+      }
+      
       throw new Error(`OpenRouter API failed (${response.status}): ${errorDetail}`);
     }
 
@@ -157,13 +350,59 @@ export class OpenRouterProvider implements AiProvider {
       }
       data = JSON.parse(responseText);
     } catch (parseError: any) {
-      console.error(`[OpenRouter] Failed to parse response as JSON: ${parseError.message}`);
-      console.error(`[OpenRouter] Response preview: ${responseText.substring(0, 500)}`);
+      errorLog(`Failed to parse response as JSON: ${parseError.message}`);
+      errorLog(`Response preview: ${responseText.substring(0, 500)}`);
       throw new Error(`OpenRouter returned invalid JSON: ${parseError.message}`);
     }
 
     // Get the text response
     let text = data.choices?.[0]?.message?.content || '';
+    
+    // If structured output returned empty content, retry with json_object mode
+    if (!text && useStructuredOutput && params.responseMimeType === 'application/json') {
+      warn('Structured output returned empty response, retrying with json_object mode...');
+      chatRequest.response_format = { type: 'json_object' };
+      
+      try {
+        const retryResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://mediaforge.ai',
+            'X-Title': 'MediaForge Toolkit',
+          },
+          body: JSON.stringify(chatRequest),
+        });
+        
+        if (retryResponse.ok) {
+          const retryText = await retryResponse.text();
+          if (retryText) {
+            const retryData = JSON.parse(retryText);
+            const retryContent = retryData.choices?.[0]?.message?.content || '';
+            if (retryContent) {
+              log('Retry with json_object mode succeeded');
+              text = retryContent.trim();
+              if (text.startsWith('```json')) text = text.slice(7);
+              else if (text.startsWith('```')) text = text.slice(3);
+              if (text.endsWith('```')) text = text.slice(0, -3);
+              text = text.trim();
+              
+              return {
+                text: text || '',
+                usage: retryData.usage ? {
+                  totalTokenCount: retryData.usage.total_tokens,
+                  promptTokenCount: retryData.usage.prompt_tokens,
+                  candidatesTokenCount: retryData.usage.completion_tokens,
+                } : undefined,
+              };
+            }
+          }
+        }
+      } catch (retryError) {
+        warn(`Retry with json_object mode also failed: ${retryError instanceof Error ? retryError.message : String(retryError)}`);
+      }
+    }
 
     // Strip markdown code blocks if present
     if (text) {
@@ -190,4 +429,42 @@ export class OpenRouterProvider implements AiProvider {
       } : undefined,
     };
   }
+
+  /**
+   * Get information about the current model
+   */
+  async getCurrentModelInfo(): Promise<OpenRouterModelInfo | undefined> {
+    return getModelInfo(this.model, this.apiKey);
+  }
+
+  /**
+   * Get all available models
+   */
+  async getAllModels(): Promise<OpenRouterModelInfo[]> {
+    const models = await fetchModelsIfNeeded(this.apiKey);
+    return Array.from(models.values());
+  }
+}
+
+/**
+ * Clear the models cache (call when settings change)
+ */
+export function clearOpenRouterModelsCache(): void {
+  modelsCache = null;
+  console.log('[OpenRouter] Models cache cleared');
+}
+
+/**
+ * Get all available OpenRouter models (requires API key)
+ */
+export async function getOpenRouterModels(apiKey: string): Promise<OpenRouterModelInfo[]> {
+  const models = await fetchModelsIfNeeded(apiKey);
+  return Array.from(models.values());
+}
+
+/**
+ * Get info for a specific OpenRouter model
+ */
+export async function getOpenRouterModelInfo(modelId: string, apiKey: string): Promise<OpenRouterModelInfo | undefined> {
+  return getModelInfo(modelId, apiKey);
 }
