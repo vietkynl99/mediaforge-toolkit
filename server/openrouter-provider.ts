@@ -297,8 +297,12 @@ export class OpenRouterProvider implements AiProvider {
           'X-Title': 'MediaForge Toolkit',
         },
         body: JSON.stringify(chatRequest),
+        signal: params.signal,
       });
     } catch (networkError: any) {
+      if (networkError?.name === 'AbortError' || params.signal?.aborted) {
+        throw new Error('Task cancelled');
+      }
       errorLog(`Network error: ${networkError.message}`);
       throw new Error(`OpenRouter connection failed: ${networkError.message}`);
     }
@@ -330,6 +334,7 @@ export class OpenRouterProvider implements AiProvider {
             'X-Title': 'MediaForge Toolkit',
           },
           body: JSON.stringify(chatRequest),
+          signal: params.signal,
         });
         
         if (retryResponse.ok) {
@@ -422,6 +427,7 @@ export class OpenRouterProvider implements AiProvider {
             'X-Title': 'MediaForge Toolkit',
           },
           body: JSON.stringify(chatRequest),
+          signal: params.signal,
         });
         
         if (retryResponse.ok) {

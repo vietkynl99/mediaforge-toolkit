@@ -30,8 +30,8 @@ export class GeminiProvider implements AiProvider {
     }
 
     const ai = new GoogleGenAI({ apiKey: this.apiKey });
-    
-    const response = await ai.models.generateContent({
+
+    const requestPromise = ai.models.generateContent({
       model: this.model,
       contents: params.prompt,
       config: {
@@ -41,6 +41,7 @@ export class GeminiProvider implements AiProvider {
         systemInstruction: params.systemInstruction,
       },
     });
+    const response = await raceWithAbort(requestPromise, params.signal);
 
     return {
       text: response.text?.trim() || '',
@@ -51,6 +52,25 @@ export class GeminiProvider implements AiProvider {
       } : undefined,
     };
   }
+}
+
+async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw new Error('Task cancelled');
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('Task cancelled'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      err => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
 }
 
 /**

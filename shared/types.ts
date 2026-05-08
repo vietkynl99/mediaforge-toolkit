@@ -107,6 +107,7 @@ export interface AiCallParams {
   responseMimeType?: string;
   responseSchema?: any;
   onLog?: (message: string) => void;
+  signal?: AbortSignal;
 }
 
 export interface AiCallResult {

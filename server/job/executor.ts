@@ -533,7 +533,8 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
           preset,
           maxSingleLineWords: effectiveMaxSingleLineWords,
           autoSplitLongLines: effectiveAutoSplitLongLines,
-          onLog: context.onLog
+          onLog: context.onLog,
+          signal: context.signal
         });
 
         if (DEBUG_TRANSLATE) {
@@ -759,7 +760,8 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
             preset,
             segmentIssues: groupIssueMap.size > 0 ? groupIssueMap : undefined,
             foreignWords: foreignWords.length > 0 ? foreignWords : undefined,
-            onLog: context.onLog
+            onLog: context.onLog,
+            signal: context.signal
           });
 
           if (DEBUG_OPTIMIZE) {
