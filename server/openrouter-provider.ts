@@ -233,13 +233,15 @@ export class OpenRouterProvider implements AiProvider {
 
     // Try structured output first (only if model supports it)
     let useStructuredOutput = false;
+    let useToolForJson = false;
+    
     if (params.responseMimeType === 'application/json' && params.responseSchema) {
       try {
         // Check if model supports structured outputs
         const modelInfo = await getModelInfo(this.model, this.apiKey);
+        const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
         
         if (modelInfo?.supportsStructuredOutput) {
-          const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
           chatRequest.response_format = {
             type: 'json_schema',
             json_schema: {
@@ -250,15 +252,36 @@ export class OpenRouterProvider implements AiProvider {
           };
           useStructuredOutput = true;
         } else {
-          warn(`Model '${this.model}' does not support structured outputs, using json_object mode`);
+          // Fallback to Tools (Function Calling) if structured output is not supported
+          warn(`Model '${this.model}' does not support structured outputs, using Tools as fallback`);
+          chatRequest.tools = [
+            {
+              type: 'function',
+              function: {
+                name: 'submit_response',
+                description: 'Submit the final response in the requested JSON format',
+                parameters: jsonSchema,
+              },
+            }
+          ];
+          chatRequest.tool_choice = {
+            type: 'function',
+            function: { name: 'submit_response' }
+          };
+          useToolForJson = true;
+          
+          // Update system instruction to be more explicit about tool usage
+          if (messages[0]?.role === 'system') {
+            messages[0].content += '\n\nIMPORTANT: You must use the "submit_response" tool to provide your final output.';
+          }
         }
       } catch (schemaError) {
-        warn(`Failed to convert schema, falling back to json_object mode: ${schemaError instanceof Error ? schemaError.message : String(schemaError)}`);
+        warn(`Failed to convert schema or setup tools, falling back to json_object mode: ${schemaError instanceof Error ? schemaError.message : String(schemaError)}`);
       }
     }
 
-    // Fallback to json_object mode for JSON requests without valid schema
-    if (params.responseMimeType === 'application/json' && !useStructuredOutput) {
+    // Fallback to json_object mode for JSON requests without valid schema or if both structured/tools failed to setup
+    if (params.responseMimeType === 'application/json' && !useStructuredOutput && !useToolForJson) {
       chatRequest.response_format = { type: 'json_object' };
     }
 
@@ -357,6 +380,32 @@ export class OpenRouterProvider implements AiProvider {
 
     // Get the text response
     let text = data.choices?.[0]?.message?.content || '';
+    
+    // If we used a tool for JSON output, extract the arguments from tool_calls
+    if (useToolForJson && data.choices?.[0]?.message?.tool_calls?.length > 0) {
+      const toolCall = data.choices[0].message.tool_calls.find((tc: any) => tc.function?.name === 'submit_response');
+      if (toolCall?.function?.arguments) {
+        log('Extracted JSON from tool_calls');
+        let extractedText = toolCall.function.arguments;
+        
+        // Advanced extraction: if model wrapped array in an object like {"response": [...]}, unwrap it
+        try {
+          const parsed = JSON.parse(extractedText);
+          if (!Array.isArray(parsed) && typeof parsed === 'object' && parsed !== null) {
+            const values = Object.values(parsed);
+            const firstArray = values.find(v => Array.isArray(v));
+            if (firstArray) {
+              log('Unwrapped array from model response object');
+              extractedText = JSON.stringify(firstArray);
+            }
+          }
+        } catch (e) {
+          // If parsing fails here, let the main flow handle it
+        }
+        
+        text = extractedText;
+      }
+    }
     
     // If structured output returned empty content, retry with json_object mode
     if (!text && useStructuredOutput && params.responseMimeType === 'application/json') {
