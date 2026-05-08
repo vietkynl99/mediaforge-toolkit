@@ -423,6 +423,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       undoStackRef.current = [];
       if (preset) {
         setTranslationPreset({ ...preset, humor_level: humorLevel });
+        if (preset.reference?.title_or_summary) {
+          setPresetDraftSummary(preset.reference.title_or_summary);
+        }
       }
 
       // If file is .srt, auto-create .sktproject and switch to it
@@ -1593,7 +1596,11 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     
     setIsSaving(true);
     try {
-      const content = generateSktProject(segments, baseFileName, translationPreset);
+      // Sync draftSummary to translationPreset before saving
+      const presetToSave = presetDraftSummary && translationPreset
+        ? { ...translationPreset, reference: { title_or_summary: presetDraftSummary } }
+        : translationPreset;
+      const content = generateSktProject(segments, baseFileName, presetToSave);
       await vaultService.saveSubtitleFile(savePath, content);
       setIsDirty(false);
       setLastSavedAt(new Date());
@@ -1606,7 +1613,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     } finally {
       setIsSaving(false);
     }
-  }, [fileName, segments, baseFileName, translationPreset, selectedFolderId, selectedFileId, vaultFolders]);
+  }, [fileName, segments, baseFileName, translationPreset, presetDraftSummary, selectedFolderId, selectedFileId, vaultFolders]);
 
   // Auto-save effect with 3-second debounce (only if enabled)
   useEffect(() => {
@@ -1644,7 +1651,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     if (fileName && segments.length > 0) {
       setIsDirty(true);
     }
-  }, [segments, translationPreset, fileName]);
+  }, [segments, translationPreset, presetDraftSummary, fileName]);
 
   // Keyboard shortcut Ctrl+S
   useEffect(() => {
