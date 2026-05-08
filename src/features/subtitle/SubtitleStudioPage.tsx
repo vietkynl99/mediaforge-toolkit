@@ -2375,9 +2375,15 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                   {/* Close Button */}
                   <button
                     onClick={() => {
-                      if (isDirty) {
-                        setShowCloseConfirmModal(true);
+                      if (selectedFileId) {
+                        // Editing a file: return to project selector
+                        if (isDirty) {
+                          setShowCloseConfirmModal(true);
+                        } else {
+                          performClear();
+                        }
                       } else {
+                        // In project selector: return to previous page
                         onBack?.();
                       }
                     }}
@@ -2685,7 +2691,13 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 <button
                   onClick={() => {
                     setShowCloseConfirmModal(false);
-                    onBack?.();
+                    if (selectedFileId) {
+                      // Was editing a file: return to project selector
+                      performClear();
+                    } else {
+                      // Was in project selector: return to previous page
+                      onBack?.();
+                    }
                   }}
                   className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 rounded-xl font-bold transition-colors"
                 >

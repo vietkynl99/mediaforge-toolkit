@@ -37,6 +37,7 @@ import {
   RENDER_BLUR_FEATHER_MAX,
   RENDER_PREVIEW_BLACK_DATA_URL,
   RENDER_STUDIO_PATH,
+  SUBTITLE_STUDIO_PATH,
   RENDER_TIMELINE_VIEW_PAD,
   RENDER_TIMELINE_MAX_VIEW_DURATION,
   TAB_PATH_MAP
@@ -334,6 +335,7 @@ export default function App() {
     return window.location.pathname === RENDER_STUDIO_PATH;
   });
   const renderStudioReturnPathRef = useRef('/dashboard');
+  const subtitleStudioReturnPathRef = useRef('/dashboard');
   const renderStudioQueryAppliedRef = useRef(false);
   const renderStudioPendingProjectIdRef = useRef<string | null>(null);
   const renderStudioPendingProjectNameRef = useRef<string | null>(null);
@@ -1042,6 +1044,10 @@ export default function App() {
   const navigateTab = (tab: string) => {
     const nextPath = TAB_PATH_MAP[tab] ?? '/dashboard';
     if (typeof window !== 'undefined' && window.location.pathname !== nextPath) {
+      // Lưu return path khi navigate đến subtitle-studio hoặc render-studio
+      if (tab === 'subtitle-studio' && window.location.pathname !== SUBTITLE_STUDIO_PATH) {
+        subtitleStudioReturnPathRef.current = window.location.pathname;
+      }
       window.history.pushState({}, '', nextPath);
     }
     setActiveTab(tab);
@@ -6655,14 +6661,18 @@ export default function App() {
 
             {activeTab === 'subtitle-studio' && (
               <Suspense key="tab-subtitle-studio" fallback={<div className="p-8 text-sm text-zinc-500">Loading subtitle studio...</div>}>
-                <LazySubtitleStudioPage 
+                <LazySubtitleStudioPage
                   vaultFolders={vaultFolders}
                   vaultLoading={vaultLoading}
                   onRefreshVault={loadVault}
                   onOpenSettings={() => setShowSettingsModal(true)}
                   onBack={() => {
-                    setActiveTab('dashboard');
-                    window.history.pushState({}, '', '/dashboard');
+                    const target = subtitleStudioReturnPathRef.current || '/dashboard';
+                    const targetTab = getTabFromPath(target);
+                    setActiveTab(targetTab);
+                    if (window.location.pathname !== target) {
+                      window.history.pushState({}, '', target);
+                    }
                   }}
                 />
               </Suspense>
