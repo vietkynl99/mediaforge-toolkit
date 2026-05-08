@@ -565,8 +565,6 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
       const processed = Math.min(i + batchSize, totalToProcess);
       context.onProgress(progress, `Translated ${processed}/${totalToProcess} segments`, processed, totalToProcess);
-
-      const newFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
     }
 
     // Save final file and return new path
@@ -627,7 +625,16 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       issueGroups = targetIssues.map(item => {
         const ids = parseIdRanges(String(item.id));
         const segs = ids
-          .map(id => segmentLookup.get(String(id)))
+          .map(id => {
+            const s = segmentLookup.get(String(id));
+            if (!s) return null;
+            // Map to expected format with cn/vn fields
+            return {
+              id: s.id,
+              cn: s.originalText || s.original || "",
+              vn: s.translatedText || s.text || s.translated || ""
+            };
+          })
           .filter((s): s is any => s != null);
         const issues: string[] = [];
         if (Array.isArray(item.issues)) {
@@ -738,6 +745,36 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
 
           if (result && typeof result.text === 'string') {
             const fixedItems = parseAiJsonResponse(result.text, context.onLog);
+
+            // Post-process validation: detect unchanged segments and remaining foreignWords
+            let unchangedCount = 0;
+            for (const seg of segs) {
+              const fixedItem = fixedItems.find((item: any) => String(item.id) === String(seg.id));
+              if (!fixedItem || !fixedItem.fixedText) continue;
+
+              const inputVn = (seg.vn || '').trim();
+              const outputVn = normalizeAiText(fixedItem.fixedText).trim();
+
+              // Detect unchanged output
+              if (inputVn === outputVn) {
+                unchangedCount++;
+                context.onLog(`  WARNING: Segment #${seg.id} was NOT changed by AI (output identical to input vn).`);
+              }
+
+              // Detect remaining foreignWords in output
+              if (foreignWords.length > 0) {
+                const stillPresent = foreignWords.filter(fw =>
+                  outputVn.toLowerCase().includes(fw.toLowerCase())
+                );
+                if (stillPresent.length > 0) {
+                  context.onLog(`  WARNING: Segment #${seg.id} still contains foreign word(s) after optimization: ${stillPresent.join(', ')}`);
+                }
+              }
+            }
+            if (unchangedCount > 0) {
+              context.onLog(`  WARNING: ${unchangedCount}/${segs.length} segment(s) in group [${typeKey}] were returned unchanged by AI.`);
+            }
+
             const matched = applyFixedItems(fixedItems);
             batchMatched += matched;
             if (groupCount > 1) {
@@ -756,8 +793,6 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
       const processed = Math.min(i + batchSize, totalToProcess);
       context.onProgress(progress, `Optimized ${processed}/${totalToProcess} segments`, processed, totalToProcess);
-
-      await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
     }
 
     // Save final file and return new path

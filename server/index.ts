@@ -1795,7 +1795,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
         }
       };
 
-      await translateExecutor.execute(translateTaskNode as any, {
+      const translateResult = await translateExecutor.execute(translateTaskNode as any, {
         signal: translateAbortController.signal,
         config: systemConfig,
         onProgress: (p, msg, processed, total) => {
@@ -1810,6 +1810,9 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
 
       translateTask.status = 'done';
       translateTask.progress = 100;
+      if (translateResult.outputs && translateResult.outputs.length > 0) {
+        (translateTask as any).outputs = translateResult.outputs;
+      }
       updateTranslateJobProgress();
     }
 
@@ -1849,7 +1852,7 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
         }
       };
 
-      await optimizeExecutor.execute(optimizeTaskNode as any, {
+      const optimizeResult = await optimizeExecutor.execute(optimizeTaskNode as any, {
         signal: optimizeAbortController.signal,
         config: systemConfig,
         onProgress: (p, msg, processed, total) => {
@@ -1864,6 +1867,9 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
 
       optimizeTask.status = 'done';
       optimizeTask.progress = 100;
+      if (optimizeResult.outputs && optimizeResult.outputs.length > 0) {
+        (optimizeTask as any).outputs = optimizeResult.outputs;
+      }
       updateOptimizeJobProgress();
     }
 

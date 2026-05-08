@@ -132,11 +132,11 @@ const ISSUE_FOCUS_TEXT: Record<IssueType, string> = {
 - Replace foreign words with proper Vietnamese equivalents
 - Use Sino-Vietnamese (Hán-Việt) transcription for names/terms
 - Output must be 100% pure Vietnamese Latin script`,
-  length: `FOCUS: Reduce and compress
-- Shorten the text while preserving core meaning
-- Use more concise, punchier phrasing
-- Remove filler words and redundant expressions
-- Target: fewer words, same meaning`,
+  length: `FOCUS: Shorten — translate from cn only, do NOT expand with vn
+- Translate ONLY what is in cn. Do NOT include vn content that is not covered by cn
+- cn defines the scope of this segment — match that scope, no more
+- vn is a style/terminology reference only (e.g. established proper nouns) — do not copy its sentence structure or content
+- Produce a concise, natural Vietnamese rendering of cn alone`,
 };
 
 /**
@@ -168,12 +168,29 @@ function buildSegmentOverridesBlock(
 
   if (groupMap.size === 0) return '';
 
-  // Build per-type focus text, injecting foreignWords into the language focus if provided
+  // Build per-type focus text, injecting foreignWords into the language focus if provided.
+  // When length is combined with language, merge into a single unified FOCUS to avoid diluting the model.
   const buildFocusText = (types: IssueType[]): string => {
+    const hasLanguage = types.includes('language');
+    const hasLength = types.includes('length');
+
+    // Unified FOCUS for language+length combination
+    if (hasLanguage && hasLength) {
+      const wordList = foreignWords && foreignWords.length > 0 ? foreignWords.join(', ') : null;
+      return `FOCUS: Fix foreign words then shorten
+- Step 1 — Replace foreign words: ${wordList ? `the following words MUST be replaced (no exceptions): ${wordList}` : 'replace any non-Vietnamese words'}
+  - Use Sino-Vietnamese (Hán-Việt) transcription for names/titles; translate meaning for common words
+  - If cn is too short to help, infer the correct replacement from the surrounding vn context
+- Step 2 — Compress: after replacing, shorten the vn text by removing filler, redundant phrases, and wordy constructions
+- Do NOT retranslate from cn alone — preserve the core meaning of vn, just shorter and cleaner
+- Output must be 100% pure Vietnamese Latin script`;
+    }
+
     return types.map(t => {
       let text = ISSUE_FOCUS_TEXT[t];
       if (t === 'language' && foreignWords && foreignWords.length > 0) {
-        text += `\n- These specific foreign words MUST be replaced (no exception): ${foreignWords.join(', ')}`;
+        text += `\n- These specific foreign words MUST be replaced — no exceptions: ${foreignWords.join(', ')}`;
+        text += `\n- For each foreign word above, determine its Vietnamese equivalent using this strategy in order: (1) check the cn field for the original Chinese meaning and apply Sino-Vietnamese (Hán-Việt) transcription if it is a name/title, (2) translate its meaning if it is a common word, (3) if cn is too short or unrelated, infer from the surrounding vn text to determine what it refers to. The output MUST NOT contain any of the listed foreign words — rewrite the segment if necessary.`;
       }
       return text;
     }).join('\n\n');
@@ -244,17 +261,21 @@ ${storyContext}
 ${characterRules}
 ${segmentOverridesBlock}
 Input fields:
-- cn: Original Chinese (reference — use to understand meaning and fix mistranslations)
-- vn: Current Vietnamese draft (may contain untranslated Chinese characters)
+- cn: The original Chinese source — translate FROM this; this defines the scope of this segment
+- vn: Previous Vietnamese draft — use only for established terminology/proper nouns; do NOT copy its content or sentence structure
 
 Rules:
 1. Translate ALL Chinese characters in vn using cn as reference.
 2. Names/proper nouns: Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa, 问天宗 → Vấn Thiên Tông). Do NOT use Pinyin ("Zhang", "Wang" are WRONG).${characterRules ? " Use character rules if provided." : ""}
 3. Organizations/titles: translate meaningfully using Hán-Việt.
 4. Each segment is independent. Do NOT merge or split segments.
-5. Fix mistranslations by comparing vn against cn. Preserve core meaning.
+5. Translate from cn. Reference vn only for established proper nouns or terminology already translated in vn. Do NOT reproduce vn content that exceeds what cn says.
 6. Punctuation: add natural punctuation only where grammatically necessary. Do not add expressive punctuation not implied by the source.
-7. Length: preserve all meaningful content — only remove filler/repeated words. Very short source (≤6 Chinese chars) → keep output brief (2-5 Vietnamese words). Longer lines → translate fully; compress only if explicitly instructed by an OVERRIDE above.
+7. Output length based on cn length:
+   - cn ≤4 chars: this is a fragment segment — output ONLY the direct translation of cn (a word, name, or phrase). Do NOT append vn content after it.
+   - cn 5–8 chars: aim for a concise output proportional to cn; include vn content only if it is clearly required to complete the meaning of cn
+   - cn >8 chars: translate fully; compress only if the FOCUS above instructs it
+   Do NOT use vn length as a benchmark.
 
 REMINDER: Every fixedText must be pure Vietnamese Latin script. Zero Chinese characters allowed.
 
