@@ -145,7 +145,24 @@ export const parseTimeToSeconds = (value: string) => {
   return Number(hh) * 3600 + Number(mm) * 60 + seconds;
 };
 
-export const parseSubtitleDuration = (content: string) => {
+export const parseSubtitleDuration = (content: string, extension?: string) => {
+  // Handle .sktproject JSON format
+  if (extension === '.sktproject') {
+    try {
+      const json = JSON.parse(content);
+      if (json.segments && Array.isArray(json.segments) && json.segments.length > 0) {
+        const lastSegment = json.segments[json.segments.length - 1];
+        if (lastSegment.end) {
+          return parseTimeToSeconds(lastSegment.end);
+        }
+      }
+    } catch {
+      return 0;
+    }
+    return 0;
+  }
+
+  // Handle SRT/VTT/ASS formats
   const regex = /(\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?)\s*-->\s*(\d{1,2}:\d{2}:\d{2}(?:[.,]\d{1,3})?)/g;
   let match: RegExpExecArray | null = null;
   let lastEnd = '';
@@ -165,7 +182,8 @@ export const getDurationSeconds = async (fullPath: string, type: VaultFileDTO['t
     let duration = 0;
     if (type === 'subtitle') {
       const content = await fs.readFile(fullPath, 'utf-8');
-      duration = parseSubtitleDuration(content);
+      const extension = path.extname(fullPath).toLowerCase();
+      duration = parseSubtitleDuration(content, extension);
     } else {
       duration = await runFfprobe(fullPath);
     }
