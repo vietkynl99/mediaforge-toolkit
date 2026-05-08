@@ -1507,6 +1507,21 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     showToast('success', "Segment deleted.");
   };
 
+  const handleGoToSegment = (id: number) => {
+    // Set filter to 'all' to ensure segment is visible
+    setFilter('all');
+    // Clear search to ensure segment is visible
+    setSearchQuery('');
+    // Set focus segment to trigger scroll and highlight
+    setFocusSegmentId(id);
+    // Calculate correct page for the segment
+    const segmentIndex = segments.findIndex(s => s.id === id);
+    if (segmentIndex >= 0) {
+      const targetPage = Math.floor(segmentIndex / EDITOR_PAGE_SIZE) + 1;
+      setCurrentPage(targetPage);
+    }
+  };
+
   // Pagination
   const totalEditorPages = useMemo(
     () => Math.max(1, Math.ceil(editorSegments.length / EDITOR_PAGE_SIZE)),
@@ -2507,6 +2522,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 onUpdateTime={updateSegmentTime}
                 onShowOptimizeHistory={handleShowOptimizeHistory}
                 onDeleteSegment={deleteSegment}
+                onGoToSegment={handleGoToSegment}
                 focusSegmentId={focusSegmentId}
                 onFocusDone={() => setFocusSegmentId(null)}
                 searchQuery={searchQuery}

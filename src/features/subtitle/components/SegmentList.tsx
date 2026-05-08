@@ -11,6 +11,7 @@ interface SegmentListProps {
   onUpdateTime: (id: number, field: 'startTime' | 'endTime', value: string) => void;
   onShowOptimizeHistory?: (id: number) => void;
   onDeleteSegment?: (id: number) => void;
+  onGoToSegment?: (id: number) => void;
   focusSegmentId?: number | null;
   onFocusDone?: (id: number) => void;
   currentPage?: number;
@@ -34,6 +35,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
   onUpdateTime,
   onShowOptimizeHistory,
   onDeleteSegment,
+  onGoToSegment,
   focusSegmentId,
   onFocusDone,
   currentPage = 1,
@@ -163,7 +165,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
 
   React.useEffect(() => {
     if (highlightedId == null) return;
-    const timer = window.setTimeout(() => setHighlightedId(null), 2500);
+    const timer = window.setTimeout(() => setHighlightedId(null), 1000);
     return () => window.clearTimeout(timer);
   }, [highlightedId]);
 
@@ -502,12 +504,12 @@ export const SegmentList: React.FC<SegmentListProps> = ({
       </div>
 
       {/* Segment Context Menu */}
-      {contextMenu && onDeleteSegment && (
+      {contextMenu && (onDeleteSegment || onGoToSegment) && (
         <div
           className="fixed z-[700] bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 w-48 animate-in fade-in zoom-in duration-100"
           style={{
             left: Math.min(contextMenu.x, window.innerWidth - 200),
-            top: Math.min(contextMenu.y, window.innerHeight - 60)
+            top: Math.min(contextMenu.y, window.innerHeight - (onDeleteSegment && onGoToSegment ? 90 : 60))
           }}
           onClick={e => e.stopPropagation()}
         >
@@ -516,15 +518,28 @@ export const SegmentList: React.FC<SegmentListProps> = ({
               Segment #{contextMenu.segmentId}
             </p>
           </div>
-          <button
-            onClick={() => {
-              setPendingDeleteId(contextMenu.segmentId);
-              setContextMenu(null);
-            }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors text-left"
-          >
-            Delete segment
-          </button>
+          {onGoToSegment && (
+            <button
+              onClick={() => {
+                onGoToSegment(contextMenu.segmentId);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-lime-400 hover:bg-lime-500/10 transition-colors text-left"
+            >
+              Go to this segment
+            </button>
+          )}
+          {onDeleteSegment && (
+            <button
+              onClick={() => {
+                setPendingDeleteId(contextMenu.segmentId);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors text-left"
+            >
+              Delete segment
+            </button>
+          )}
         </div>
       )}
 
