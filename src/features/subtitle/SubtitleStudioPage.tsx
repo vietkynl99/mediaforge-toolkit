@@ -401,8 +401,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   };
 
   // Reload the working file (.sktproject) during job polling
-  const reloadWorkingFile = async () => {
-    if (!workingFilePath) return;
+  const reloadWorkingFile = async (pathOverride?: string) => {
+    const effectivePath = pathOverride || workingFilePath;
+    if (!effectivePath) return;
     
     // Prevent concurrent reloads
     if (isReloadingRef.current) return;
@@ -410,7 +411,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     isLoadingFileRef.current = true; // Prevent dirty state from being set during reload
     
     try {
-      const { segments: parsedSegments } = await vaultService.loadSubtitleFile(workingFilePath);
+      const { segments: parsedSegments } = await vaultService.loadSubtitleFile(effectivePath);
       const fixedSegments = parsedSegments.map(s => ({
         ...s,
         originalText: performLocalFix(s.originalText || ""),
@@ -1203,6 +1204,10 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           }
         } else if (job.status === 'processing') {
           const newProgress = job.progress || 0;
+          const liveOutputPath = task?.outputs?.[0] as string | undefined;
+          if (liveOutputPath && liveOutputPath !== workingFilePath) {
+            setWorkingFilePath(liveOutputPath);
+          }
 
           if (isOptimizeJob) {
             setOptimizeState(prev => ({
@@ -1221,9 +1226,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
           setProgress(newProgress);
 
           // Reload file content on every progress update for live updates
-          if (newProgress > lastLoadedProgressRef.current && workingFilePath) {
+          if (newProgress > lastLoadedProgressRef.current && (liveOutputPath || workingFilePath)) {
             // Reload the working file (.sktproject) directly, not the original .srt
-            reloadWorkingFile();
+            reloadWorkingFile(liveOutputPath);
             lastLoadedProgressRef.current = newProgress;
           }
         } else if (job.status === 'pending' || job.status === 'queued') {

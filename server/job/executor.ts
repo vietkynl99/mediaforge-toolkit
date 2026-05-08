@@ -150,7 +150,7 @@ async function findNextEditedCount(dir: string, baseName: string): Promise<numbe
   }
 }
 
-export type ProgressCallback = (progress: number, message?: string, processed?: number, total?: number) => void;
+export type ProgressCallback = (progress: number, message?: string, processed?: number, total?: number, outputPath?: string) => void;
 export type LogCallback = (message: string) => void;
 
 export interface ExecutorContext {
@@ -577,16 +577,18 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
         throw new Error(aiErrorMsg);
       }
 
-      const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
-      const processed = Math.min(i + batchSize, totalToProcess);
-      context.onProgress(progress, `Translated ${processed}/${totalToProcess} segments`, processed, totalToProcess);
-
       // Create new file on first successful batch, then save to that file
       if (!newFilePath) {
         newFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
       } else {
         await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog, newFilePath);
       }
+
+      // Report progress only after this batch has been persisted,
+      // so UI reload on progress always sees latest translated data.
+      const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
+      const processed = Math.min(i + batchSize, totalToProcess);
+      context.onProgress(progress, `Translated ${processed}/${totalToProcess} segments`, processed, totalToProcess, newFilePath || subtitleFile);
     }
 
     // Return the new file path (or original if no batches processed)
@@ -816,16 +818,18 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
 
       context.onLog(`Matched and optimized ${batchMatched} segments.`);
 
-      const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
-      const processed = Math.min(i + batchSize, totalToProcess);
-      context.onProgress(progress, `Optimized ${processed}/${totalToProcess} segments`, processed, totalToProcess);
-
       // Create new file on first successful batch, then save to that file
       if (!newFilePath) {
         newFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
       } else {
         await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog, newFilePath);
       }
+
+      // Report progress only after this batch has been persisted,
+      // so UI reload on progress always sees latest optimized data.
+      const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
+      const processed = Math.min(i + batchSize, totalToProcess);
+      context.onProgress(progress, `Optimized ${processed}/${totalToProcess} segments`, processed, totalToProcess, newFilePath || subtitleFile);
     }
 
     // Return the new file path (or original if no batches processed)

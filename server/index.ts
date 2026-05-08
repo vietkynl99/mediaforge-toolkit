@@ -1798,10 +1798,11 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const translateResult = await translateExecutor.execute(translateTaskNode as any, {
         signal: translateAbortController.signal,
         config: systemConfig,
-        onProgress: (p, msg, processed, total) => {
+        onProgress: (p, msg, processed, total, outputPath) => {
           translateTask.progress = p;
           if (processed !== undefined) (translateTask as any).processed = processed;
           if (total !== undefined) (translateTask as any).total = total;
+          if (outputPath) (translateTask as any).outputs = [outputPath];
           if (msg) appendJobLog(job, msg + '\n');
           updateTranslateJobProgress();
         },
@@ -1855,10 +1856,11 @@ const runJob = async (job: JobRecord, mode: 'normal' | 'download') => {
       const optimizeResult = await optimizeExecutor.execute(optimizeTaskNode as any, {
         signal: optimizeAbortController.signal,
         config: systemConfig,
-        onProgress: (p, msg, processed, total) => {
+        onProgress: (p, msg, processed, total, outputPath) => {
           optimizeTask.progress = p;
           if (processed !== undefined) (optimizeTask as any).processed = processed;
           if (total !== undefined) (optimizeTask as any).total = total;
+          if (outputPath) (optimizeTask as any).outputs = [outputPath];
           if (msg) appendJobLog(job, msg + '\n');
           updateOptimizeJobProgress();
         },
