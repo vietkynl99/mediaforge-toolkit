@@ -2501,6 +2501,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                 onCommitText={commitSegmentText}
                 onUpdateTime={updateSegmentTime}
                 onShowOptimizeHistory={handleShowOptimizeHistory}
+                onDeleteSegment={deleteSegment}
                 focusSegmentId={focusSegmentId}
                 onFocusDone={() => setFocusSegmentId(null)}
                 searchQuery={searchQuery}

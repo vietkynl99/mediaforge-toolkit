@@ -1,5 +1,6 @@
 import React from 'react';
 import { SubtitleSegment, SubtitleSeverity } from '../types';
+import { ConfirmModal } from '../../../components/ConfirmModal';
 
 interface SegmentListProps {
   segments: SubtitleSegment[];
@@ -9,6 +10,7 @@ interface SegmentListProps {
   onCommitText?: (id: number, text: string, prevText?: string) => void;
   onUpdateTime: (id: number, field: 'startTime' | 'endTime', value: string) => void;
   onShowOptimizeHistory?: (id: number) => void;
+  onDeleteSegment?: (id: number) => void;
   focusSegmentId?: number | null;
   onFocusDone?: (id: number) => void;
   currentPage?: number;
@@ -31,6 +33,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
   onCommitText,
   onUpdateTime,
   onShowOptimizeHistory,
+  onDeleteSegment,
   focusSegmentId,
   onFocusDone,
   currentPage = 1,
@@ -46,6 +49,8 @@ export const SegmentList: React.FC<SegmentListProps> = ({
   const [editingTime, setEditingTime] = React.useState<{ id: number; field: 'startTime' | 'endTime' } | null>(null);
   const [localText, setLocalText] = React.useState<Record<number, string>>({});
   const [highlightedId, setHighlightedId] = React.useState<number | null>(null);
+  const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number; segmentId: number } | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = React.useState<number | null>(null);
   const translationTextareaRefs = React.useRef<Record<number, HTMLTextAreaElement | null>>({});
   const segmentRowRefs = React.useRef<Record<number, HTMLDivElement | null>>({});
   const pendingUpdateRef = React.useRef<Map<number, number>>(new Map());
@@ -166,6 +171,18 @@ export const SegmentList: React.FC<SegmentListProps> = ({
     setHighlightedId(null);
   }, [filter]);
 
+  // Close context menu when clicking elsewhere
+  React.useEffect(() => {
+    if (!contextMenu) return;
+    const handleClose = () => setContextMenu(null);
+    window.addEventListener('click', handleClose);
+    window.addEventListener('contextmenu', handleClose);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('contextmenu', handleClose);
+    };
+  }, [contextMenu]);
+
   const scheduleUpdate = React.useCallback((id: number, text: string) => {
     const existing = pendingUpdateRef.current.get(id);
     if (existing) window.clearTimeout(existing);
@@ -252,6 +269,11 @@ export const SegmentList: React.FC<SegmentListProps> = ({
                       ? 'border-lime-500 ring-1 ring-lime-500/20'
                       : 'border-slate-800 hover:border-slate-700'
                   } ${highlightedId === seg.id ? 'ring-2 ring-lime-400/70 border-lime-400/70 bg-lime-500/10' : ''}`}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setContextMenu({ x: e.clientX, y: e.clientY, segmentId: seg.id });
+                  }}
                 >
                   <div className="pt-2 flex justify-center">
                     <input
@@ -478,6 +500,49 @@ export const SegmentList: React.FC<SegmentListProps> = ({
           </div>
         )}
       </div>
+
+      {/* Segment Context Menu */}
+      {contextMenu && onDeleteSegment && (
+        <div
+          className="fixed z-[700] bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-2 w-48 animate-in fade-in zoom-in duration-100"
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - 200),
+            top: Math.min(contextMenu.y, window.innerHeight - 60)
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="px-3 py-1 mb-1 border-b border-slate-800">
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+              Segment #{contextMenu.segmentId}
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setPendingDeleteId(contextMenu.segmentId);
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors text-left"
+          >
+            Delete segment
+          </button>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        open={pendingDeleteId !== null}
+        title="Delete Segment"
+        description={`Are you sure you want to delete segment #${pendingDeleteId}? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onClose={() => setPendingDeleteId(null)}
+        onConfirm={() => {
+          if (pendingDeleteId !== null && onDeleteSegment) {
+            onDeleteSegment(pendingDeleteId);
+          }
+          setPendingDeleteId(null);
+        }}
+      />
     </div>
   );
 };
