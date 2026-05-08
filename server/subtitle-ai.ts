@@ -127,10 +127,10 @@ ${JSON.stringify(batch.map(s => ({ id: s.id, text: s.originalText })))}
 }
 
 const ISSUE_FOCUS_TEXT: Record<IssueType, string> = {
-  language: `FOCUS: Rewrite to eliminate ALL foreign/non-Vietnamese content
-- Translate any remaining Chinese characters using the cn field as reference
-- Replace foreign words with proper Vietnamese equivalents
-- Use Sino-Vietnamese (Hán-Việt) transcription for names/terms
+  language: `FOCUS: Retranslate from cn to produce clean Vietnamese
+- vn is an erroneous draft that may contain foreign words, Pinyin, or Chinese characters — do NOT patch vn; replace it entirely
+- Translate directly from cn: this will naturally produce correct Vietnamese without any foreign content
+- For names/proper nouns in cn: use Sino-Vietnamese (Hán-Việt) transcription (e.g. 张凤华 → Trương Phượng Hoa)
 - Output must be 100% pure Vietnamese Latin script`,
   length: `FOCUS: Shorten — translate from cn only, do NOT expand with vn
 - Translate ONLY what is in cn. Do NOT include vn content that is not covered by cn
@@ -174,23 +174,25 @@ function buildSegmentOverridesBlock(
     const hasLanguage = types.includes('language');
     const hasLength = types.includes('length');
 
-    // Unified FOCUS for language+length combination
+    // Unified FOCUS for language+length combination.
+    // The correct strategy is the same as pure length: retranslate from cn.
+    // Retranslating from cn naturally eliminates foreign words that exist in vn but not in cn
+    // (because vn is the erroneous draft being corrected — it should not be preserved).
     if (hasLanguage && hasLength) {
       const wordList = foreignWords && foreignWords.length > 0 ? foreignWords.join(', ') : null;
-      return `FOCUS: Fix foreign words then shorten
-- Step 1 — Replace foreign words: ${wordList ? `the following words MUST be replaced (no exceptions): ${wordList}` : 'replace any non-Vietnamese words'}
-  - Use Sino-Vietnamese (Hán-Việt) transcription for names/titles; translate meaning for common words
-  - If cn is too short to help, infer the correct replacement from the surrounding vn context
-- Step 2 — Compress: after replacing, shorten the vn text by removing filler, redundant phrases, and wordy constructions
-- Do NOT retranslate from cn alone — preserve the core meaning of vn, just shorter and cleaner
+      return `FOCUS: Retranslate from cn — this resolves both language and length issues
+- Translate directly from cn. Do NOT base your output on vn.
+- vn is an erroneous draft — it may contain foreign words, wrong content, or extra sentences not in cn. Ignore it entirely.
+- Retranslating from cn will naturally eliminate any foreign words (${wordList ?? 'non-Vietnamese terms'}) since they do not exist in cn.
+- For names/terms in cn: use Sino-Vietnamese (Hán-Việt) transcription; do NOT use Pinyin.
+- Apply the same cn-based length rules as Rule 7 below (cn defines the output scope).
 - Output must be 100% pure Vietnamese Latin script`;
     }
 
     return types.map(t => {
       let text = ISSUE_FOCUS_TEXT[t];
       if (t === 'language' && foreignWords && foreignWords.length > 0) {
-        text += `\n- These specific foreign words MUST be replaced — no exceptions: ${foreignWords.join(', ')}`;
-        text += `\n- For each foreign word above, determine its Vietnamese equivalent using this strategy in order: (1) check the cn field for the original Chinese meaning and apply Sino-Vietnamese (Hán-Việt) transcription if it is a name/title, (2) translate its meaning if it is a common word, (3) if cn is too short or unrelated, infer from the surrounding vn text to determine what it refers to. The output MUST NOT contain any of the listed foreign words — rewrite the segment if necessary.`;
+        text += `\n- Note: the following words appeared in vn and must NOT appear in your output (retranslating from cn should naturally exclude them): ${foreignWords.join(', ')}`;
       }
       return text;
     }).join('\n\n');
