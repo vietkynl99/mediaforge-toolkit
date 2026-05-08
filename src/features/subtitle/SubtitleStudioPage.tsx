@@ -969,7 +969,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
   const aiScope = useMemo(() => {
     const mode = selectedIds.size > 0 ? 'selected' as const : 'all' as const;
     const scopeSegments = mode === 'selected'
-      ? segments.filter(s => selectedIds.has(s.id))
+      ? processedSegments.filter(s => selectedIds.has(s.id))
       : filteredSegments;
     const untranslated = scopeSegments.filter(s => !(s.translatedText || '').trim());
     const translated = scopeSegments.filter(s => (s.translatedText || '').trim());
@@ -977,7 +977,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     if (untranslated.length > 0) action = 'translate';
     else if (translated.length > 0) action = 'optimize';
     return { mode, scopeSegments, untranslated, translated, action };
-  }, [segments, selectedIds, filteredSegments]);
+  }, [processedSegments, selectedIds, filteredSegments]);
 
   const handleTranslate = async () => {
     if (segments.length === 0) return;

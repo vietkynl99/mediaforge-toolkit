@@ -12,7 +12,6 @@ import path from 'path';
 import { MEDIA_VAULT_ROOT } from '../constants.js';
 import { parseSrtForTranslation } from '../subtitleCues.js';
 import { normalizeAiText, splitToTwoLinesIfLong, collapseToSingleLineIfShort } from '../../shared/text-utils.js';
-import { IssueType, classifyIssues } from '../../shared/types.js';
 
 // Debug flag for optimize flow
 const DEBUG_OPTIMIZE = ['1', 'true', 'yes', 'on'].includes((process.env.DEBUG_OPTIMIZE ?? '').toLowerCase());
@@ -221,7 +220,8 @@ async function loadSubtitleFile(
         endTime: s.end,
         originalText: s.original,
         translatedText: s.translated,
-        text: s.translated
+        text: s.translated,
+        optimizeHistory: s.optimize_history || []
       }));
     } else if (Array.isArray(parsed)) {
       subtitleData = parsed.map((s: any) => ({
@@ -508,26 +508,39 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       return { success: true, outputs: [subtitleFile] };
     }
 
-    // Build issue map
-    const issueMap = new Map<number, string[]>();
-    const foreignWordsMap = new Map<number, string[]>();
+    // Build segment lookup map
+    const segmentLookup = new Map<string, any>();
+    for (const c of cuesToProcess) {
+      segmentLookup.set(String(c.id), c);
+    }
 
-    if (Array.isArray(targetIssues)) {
-      for (const item of targetIssues) {
+    // Use targetIssues directly if available (already grouped by client)
+    // Otherwise fall back to single group with no specific issues
+    let issueGroups: { typeKey: string; segs: any[]; issues: string[]; foreignWords: string[] }[];
+    if (Array.isArray(targetIssues) && targetIssues.length > 0) {
+      issueGroups = targetIssues.map(item => {
         const ids = parseIdRanges(String(item.id));
-        const issueStrings: string[] = [];
+        const segs = ids
+          .map(id => segmentLookup.get(String(id)))
+          .filter((s): s is any => s != null);
+        const issues: string[] = [];
         if (Array.isArray(item.issues)) {
           for (const issueType of item.issues) {
-            if (issueType === 'language') issueStrings.push('Translation contains non-Vietnamese word(s)');
-            else if (issueType === 'length') issueStrings.push('CPS is in the warning range (25-40)');
+            if (issueType === 'language') issues.push('Translation contains non-Vietnamese word(s)');
+            else if (issueType === 'length') issues.push('CPS exceeds critical threshold');
           }
         }
-        const fw = Array.isArray(item.foreignWords) ? item.foreignWords : [];
-        for (const id of ids) {
-          issueMap.set(id, issueStrings);
-          if (fw.length > 0) foreignWordsMap.set(id, fw);
-        }
-      }
+        const typeKey = (item.issues || []).sort().join('+') || '__none__';
+        return { typeKey, segs, issues, foreignWords: item.foreignWords || [] };
+      }).filter(g => g.segs.length > 0);
+    } else {
+      // No targetIssues - process all segments as single group
+      issueGroups = [{
+        typeKey: '__none__',
+        segs: cuesToProcess.map((c: any) => ({ id: c.id, cn: c.originalText || c.original || "", vn: c.translatedText || c.text || c.translated || "" })),
+        issues: [],
+        foreignWords: []
+      }];
     }
 
     // Helper to apply fixed items
@@ -577,36 +590,19 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       const batchNum = Math.floor(i / batchSize) + 1;
       const totalBatches = Math.ceil(totalToProcess / batchSize);
 
-      const segmentsForAI = batch.map((c: any) => ({
-        id: c.id,
-        cn: c.originalText || c.original || "",
-        vn: c.translatedText || c.text || c.translated || ""
-      }));
+      // Filter issueGroups to only include segments in current batch
+      const batchIdSet = new Set(batch.map((c: any) => String(c.id)));
+      const batchGroups = issueGroups.map(g => ({
+        ...g,
+        segs: g.segs.filter((s: any) => batchIdSet.has(String(s.id)))
+      })).filter(g => g.segs.length > 0);
 
-      // Group by issue type
-      const issueGroups = new Map<string, { segs: any[]; groupIssueMap: Map<number, string[]>; groupForeignWords: Set<string> }>();
-      for (const seg of segmentsForAI) {
-        let issues = issueMap.get(Number(seg.id)) || [];
-        if (issues.length === 0 && issueMap.has(-1)) {
-          issues = issueMap.get(-1) || [];
-        }
-        const typeKey = Array.from(classifyIssues(issues)).sort().join('+') || '__none__';
-        if (!issueGroups.has(typeKey)) {
-          issueGroups.set(typeKey, { segs: [], groupIssueMap: new Map(), groupForeignWords: new Set() });
-        }
-        const group = issueGroups.get(typeKey)!;
-        group.segs.push(seg);
-        if (issues.length > 0) group.groupIssueMap.set(Number(seg.id), issues);
-        const fw = foreignWordsMap.get(Number(seg.id)) || [];
-        for (const word of fw) group.groupForeignWords.add(word);
-      }
-
-      const groupCount = issueGroups.size;
+      const groupCount = batchGroups.length;
       context.onLog(`Optimizing batch ${batchNum}/${totalBatches} (${batch.length} segments, ${groupCount} issue group${groupCount !== 1 ? 's' : ''})...`);
 
       let batchMatched = 0;
       let groupIdx = 0;
-      for (const [typeKey, { segs, groupIssueMap, groupForeignWords }] of issueGroups) {
+      for (const { typeKey, segs, issues, foreignWords } of batchGroups) {
         groupIdx++;
         checkAborted(context.signal);
 
@@ -615,11 +611,18 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
         }
 
         try {
+          // Build segmentIssues map for this group
+          const groupIssueMap = new Map<number, string[]>();
+          if (issues.length > 0) {
+            for (const seg of segs) {
+              groupIssueMap.set(Number(seg.id), issues);
+            }
+          }
           const result = await SubtitleAI.aiFixSegments({
             segments: segs,
             preset,
             segmentIssues: groupIssueMap.size > 0 ? groupIssueMap : undefined,
-            foreignWords: groupForeignWords.size > 0 ? Array.from(groupForeignWords) : undefined
+            foreignWords: foreignWords.length > 0 ? foreignWords : undefined
           });
 
           if (DEBUG_OPTIMIZE) {
