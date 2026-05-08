@@ -74,7 +74,8 @@ export const AnalyzerPanel: React.FC<AnalyzerPanelProps> = ({
     data.tooLongLines > 0 ||
     data.singleLineLongLines > 0 ||
     langIssueTotal > 0 ||
-    data.translationQuoteIssueLines > 0;
+    data.translationQuoteIssueLines > 0 ||
+    data.emptySegmentLines > 0;
 
   // Translation Progress
   const translatedCount = segments.filter(s => s.translatedText && s.translatedText.trim() !== '').length;
@@ -209,6 +210,24 @@ export const AnalyzerPanel: React.FC<AnalyzerPanelProps> = ({
                 <div>
                   <p className="text-xs font-bold text-lime-400">{data.translationQuoteIssueLines} translation quotes</p>
                   <p className="text-[10px] text-lime-400/60 leading-normal">Translation text contains ' or " characters.</p>
+                </div>
+              </button>
+            )}
+            {data.emptySegmentLines > 0 && (
+              <button
+                type="button"
+                onClick={() => onFilterTrigger(activeFilter === 'empty-segment' ? 'all' : 'empty-segment')}
+                className={`w-full text-left flex items-start gap-3 p-3 rounded-lg transition-all ${
+                  activeFilter === 'empty-segment'
+                    ? 'bg-rose-500/20 border border-rose-400/50 shadow-lg shadow-rose-500/10'
+                    : 'bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/15'
+                }`}
+                title="Click to show segments with both origin and translation empty"
+              >
+                <div className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-2 shrink-0"></div>
+                <div>
+                  <p className="text-xs font-bold text-rose-400">{data.emptySegmentLines} empty segment(s)</p>
+                  <p className="text-[10px] text-rose-400/60 leading-normal">Both origin text and translated text are empty.</p>
                 </div>
               </button>
             )}

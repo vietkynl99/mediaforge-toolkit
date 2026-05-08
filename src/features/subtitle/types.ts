@@ -78,6 +78,7 @@ export interface AnalysisResult {
   originalLangIssueLines: number;
   translatedLangIssueLines: number;
   translationQuoteIssueLines: number;
+  emptySegmentLines: number;
   avgCPS: number;
   minCPS: number;
   maxCPS: number;

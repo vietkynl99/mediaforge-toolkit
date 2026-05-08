@@ -647,6 +647,9 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     if (filter === 'translation-quotes') {
       return processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('quote')));
     }
+    if (filter === 'empty-segment') {
+      return processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('empty segment')));
+    }
     return processedSegments.filter(s => s.severity === filter);
   }, [processedSegments, filter]);
 
@@ -2321,6 +2324,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                                  !issue.includes('word');
                         })).length,
                         translationQuotes: processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('quote'))).length,
+                        emptySegment: processedSegments.filter(s => s.issueList.some(i => i.toLowerCase().includes('empty segment'))).length,
                       };
 
                       return (
@@ -2347,7 +2351,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                             </optgroup>
                           )}
 
-                          {(counts.timeline > 0 || counts.invalidTiming > 0 || counts.foreignWord > 0 || counts.tooLong > 0 || counts.singleLineLong > 0 || counts.lang > 0 || counts.translationQuotes > 0) && (
+                          {(counts.timeline > 0 || counts.invalidTiming > 0 || counts.foreignWord > 0 || counts.tooLong > 0 || counts.singleLineLong > 0 || counts.lang > 0 || counts.translationQuotes > 0 || counts.emptySegment > 0) && (
                             <optgroup label="Issue Alerts">
                               {counts.timeline > 0 && <option value="timeline">Timeline Overlaps ({counts.timeline})</option>}
                               {counts.invalidTiming > 0 && <option value="invalid-timing">Invalid Timing ({counts.invalidTiming})</option>}
@@ -2356,6 +2360,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
                               {counts.singleLineLong > 0 && <option value="single-line-long">Single Line Too Long ({counts.singleLineLong})</option>}
                               {counts.lang > 0 && <option value="lang">Language Issues ({counts.lang})</option>}
                               {counts.translationQuotes > 0 && <option value="translation-quotes">Translation Quotes ({counts.translationQuotes})</option>}
+                              {counts.emptySegment > 0 && <option value="empty-segment">Empty Segments ({counts.emptySegment})</option>}
                             </optgroup>
                           )}
                         </select>

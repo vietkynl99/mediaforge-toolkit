@@ -208,6 +208,7 @@ const ISSUE_TRANSLATION_FOREIGN_WORD = 'Translation contains non-Vietnamese word
 const ISSUE_SINGLE_LINE_LONG = 'Line has too many words';
 const ISSUE_TRANSLATION_QUOTES = 'Translation contains quotes (\\" or \')';
 const ISSUE_INVALID_TIMING = 'Start time is after end time';
+const ISSUE_EMPTY_SEGMENT = 'Empty segment';
 
 function countWords(text: string): number {
   return text
@@ -526,6 +527,13 @@ export function getSegmentMetadata(
   const startSec = timeToSeconds(segment.startTime);
   const endSec = timeToSeconds(segment.endTime);
 
+  // Check for empty segment (both origin and translation are empty)
+  const originalEmpty = !segment.originalText || segment.originalText.trim() === '';
+  const translatedEmpty = !segment.translatedText || segment.translatedText.trim() === '';
+  if (originalEmpty && translatedEmpty) {
+    issueList.push(ISSUE_EMPTY_SEGMENT);
+  }
+
   if (cps > cpsThreshold.warningMax) {
     severity = 'critical';
     issueList.push(`CPS exceeds critical threshold (> ${cpsThreshold.warningMax})`);
@@ -588,6 +596,7 @@ export function analyzeSegments(
   let originalLangIssueLines = 0;
   let translatedLangIssueLines = 0;
   let translationQuoteIssueLines = 0;
+  let emptySegmentLines = 0;
   let totalCPS = 0;
   let minCPS = Infinity;
   let maxCPS = -Infinity;
@@ -632,6 +641,7 @@ export function analyzeSegments(
     if (mergedIssueList.includes(ISSUE_ORIGINAL_LANG)) originalLangIssueLines++;
     if (mergedIssueList.includes(ISSUE_TRANSLATION_LANG)) translatedLangIssueLines++;
     if (mergedIssueList.includes(ISSUE_TRANSLATION_QUOTES)) translationQuoteIssueLines++;
+    if (mergedIssueList.includes(ISSUE_EMPTY_SEGMENT)) emptySegmentLines++;
 
     groups[meta.severity]++;
 
@@ -668,6 +678,7 @@ export function analyzeSegments(
         originalLangIssueLines: 0,
         translatedLangIssueLines: 0,
         translationQuoteIssueLines: 0,
+        emptySegmentLines: 0,
         avgCPS: 0,
         minCPS: 0,
         maxCPS: 0,
@@ -721,6 +732,7 @@ export function analyzeSegments(
       originalLangIssueLines,
       translatedLangIssueLines,
       translationQuoteIssueLines,
+      emptySegmentLines,
       avgCPS: totalCPS / totalLines,
       minCPS,
       maxCPS,
