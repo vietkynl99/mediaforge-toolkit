@@ -1002,6 +1002,12 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       return;
     }
 
+    // Require save before translate to preserve optimizeHistory
+    if (isDirty) {
+      showToast('warning', "Please save the file before translating to preserve optimize history.");
+      return;
+    }
+
     // Get file name for display (from vault or workingFilePath)
     const currentFile = selectedFileId && selectedFolder?.files.find(f => f.id === selectedFileId);
     const displayName = currentFile?.name || fileName || workingFilePath.split('/').pop() || 'Unknown';
@@ -1211,6 +1217,12 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     // Check if we have a working file path
     if (!workingFilePath) {
       showToast('warning', "No file selected. Optimization requires a file to be loaded.");
+      return;
+    }
+
+    // Require save before optimize to preserve optimizeHistory
+    if (isDirty) {
+      showToast('warning', "Please save the file before optimizing to preserve optimize history.");
       return;
     }
 
