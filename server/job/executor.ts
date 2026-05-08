@@ -317,7 +317,8 @@ async function loadSubtitleFile(
 
 /**
  * Shared helper: Save subtitle file to new [EditedN] file
- * Returns the relative path of the new file
+ * If existingRelativePath is provided, save to that file instead of creating new
+ * Returns the relative path of the file
  */
 async function saveSubtitleFile(
   outputDir: string,
@@ -325,18 +326,29 @@ async function saveSubtitleFile(
   subtitleData: any[],
   isSktProject: boolean,
   originalProject: any,
-  onLog: LogCallback
+  onLog: LogCallback,
+  existingRelativePath?: string
 ): Promise<string> {
   try {
     // Ensure output directory exists
     await fs.mkdir(outputDir, { recursive: true });
     
-    // Find next edited count
-    const nextCount = await findNextEditedCount(outputDir, baseName);
-    const newFileName = generateExportFileName(baseName, nextCount, '.sktproject');
-    const newFullPath = path.join(outputDir, newFileName);
+    let newFullPath: string;
+    let relativePath: string;
     
-    onLog(`Saving to new file: ${newFileName}`);
+    if (existingRelativePath) {
+      // Save to existing file
+      newFullPath = path.join(MEDIA_VAULT_ROOT, existingRelativePath);
+      relativePath = existingRelativePath;
+      onLog(`Saving to existing file: ${existingRelativePath}`);
+    } else {
+      // Create new [EditedN] file
+      const nextCount = await findNextEditedCount(outputDir, baseName);
+      const newFileName = generateExportFileName(baseName, nextCount, '.sktproject');
+      newFullPath = path.join(outputDir, newFileName);
+      relativePath = path.relative(MEDIA_VAULT_ROOT, newFullPath);
+      onLog(`Saving to new file: ${newFileName}`);
+    }
     
     // Build project object
     const projectToSave: any = {
@@ -357,8 +369,6 @@ async function saveSubtitleFile(
     
     await fs.writeFile(newFullPath, JSON.stringify(projectToSave, null, 2), 'utf-8');
     
-    // Return relative path (remove MEDIA_VAULT_ROOT prefix)
-    const relativePath = path.relative(MEDIA_VAULT_ROOT, newFullPath);
     return relativePath;
   } catch (saveErr) {
     onLog(`WARNING: Failed to save: ${saveErr instanceof Error ? saveErr.message : String(saveErr)}`);
@@ -490,6 +500,9 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       return { success: true, outputs: [subtitleFile] };
     }
 
+    // Track the new file path (created on first successful batch)
+    let newFilePath: string | null = null;
+
     // Process in batches
     for (let i = 0; i < totalToProcess; i += batchSize) {
       checkAborted(context.signal);
@@ -565,11 +578,17 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
       const processed = Math.min(i + batchSize, totalToProcess);
       context.onProgress(progress, `Translated ${processed}/${totalToProcess} segments`, processed, totalToProcess);
+
+      // Create new file on first successful batch, then save to that file
+      if (!newFilePath) {
+        newFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
+      } else {
+        await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog, newFilePath);
+      }
     }
 
-    // Save final file and return new path
-    const finalFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
-    return { success: true, outputs: [finalFilePath] };
+    // Return the new file path (or original if no batches processed)
+    return { success: true, outputs: [newFilePath || subtitleFile] };
   }
 
   private async executeOptimize(
@@ -611,6 +630,9 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       context.onLog('No translated segments to optimize. Skipping.');
       return { success: true, outputs: [subtitleFile] };
     }
+
+    // Track the new file path (created on first successful batch)
+    let newFilePath: string | null = null;
 
     // Build segment lookup map
     const segmentLookup = new Map<string, any>();
@@ -793,11 +815,17 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       const progress = Math.round(((i + batch.length) / totalToProcess) * 100);
       const processed = Math.min(i + batchSize, totalToProcess);
       context.onProgress(progress, `Optimized ${processed}/${totalToProcess} segments`, processed, totalToProcess);
+
+      // Create new file on first successful batch, then save to that file
+      if (!newFilePath) {
+        newFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
+      } else {
+        await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog, newFilePath);
+      }
     }
 
-    // Save final file and return new path
-    const finalFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
-    return { success: true, outputs: [finalFilePath] };
+    // Return the new file path (or original if no batches processed)
+    return { success: true, outputs: [newFilePath || subtitleFile] };
   }
 }
 
