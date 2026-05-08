@@ -82,6 +82,74 @@ function parseIdRanges(rangeStr: string): number[] {
   return ids;
 }
 
+/**
+ * Parse file name to extract base name and edited count.
+ * Handles [Edited], [Edited2], [Edited3], ... prefixes.
+ */
+function parseFileName(fileName: string): { baseName: string, editedCount: number } {
+  let name = fileName
+    .replace(/\.srt$/i, '')
+    .replace(/\.sktproject$/i, '')
+    .replace(/\.json$/i, '')
+    .trim();
+  
+  // Check for [Edited] or [EditedN] prefix
+  const editedMatch = name.match(/^\[Edited(\d*)\]\s*/i);
+  let editedCount = 0;
+  if (editedMatch) {
+    // Remove the [Edited] prefix from name
+    name = name.slice(editedMatch[0].length).trim();
+    // Extract the number: [Edited] = 1, [Edited2] = 2, [Edited3] = 3, ...
+    editedCount = editedMatch[1] ? parseInt(editedMatch[1], 10) : 1;
+  }
+  
+  return { baseName: name, editedCount };
+}
+
+/**
+ * Generate file name with [Edited] prefix based on count.
+ * count = 0: no prefix (original file)
+ * count = 1: [Edited]
+ * count = 2: [Edited2]
+ */
+function generateExportFileName(baseName: string, currentCount: number, extension: string = '.sktproject'): string {
+  if (currentCount === 0) {
+    return `${baseName}${extension}`;
+  }
+  const prefix = currentCount === 1 ? '[Edited]' : `[Edited${currentCount}]`;
+  return `${prefix} ${baseName}${extension}`;
+}
+
+/**
+ * Find the next available edited file name.
+ * Returns the next count for [EditedN] prefix.
+ */
+async function findNextEditedCount(dir: string, baseName: string): Promise<number> {
+  try {
+    const files = await fs.readdir(dir);
+    const editedFiles = files.filter(f => {
+      const { baseName: fileBase } = parseFileName(f);
+      return fileBase.toLowerCase() === baseName.toLowerCase() && f.match(/^\[Edited/i);
+    });
+    
+    if (editedFiles.length === 0) return 1;
+    
+    // Extract all edited numbers
+    const editedNumbers = editedFiles.map(f => {
+      const match = f.match(/^\[Edited(\d*)\]/i);
+      if (match) {
+        return match[1] ? parseInt(match[1], 10) : 1;
+      }
+      return 0;
+    });
+    
+    const maxNumber = Math.max(...editedNumbers);
+    return maxNumber + 1;
+  } catch {
+    return 1;
+  }
+}
+
 export type ProgressCallback = (progress: number, message?: string, processed?: number, total?: number) => void;
 export type LogCallback = (message: string) => void;
 
@@ -194,9 +262,20 @@ async function loadSubtitleFile(
   originalProject: any;
   fullPath: string;
   totalCues: number;
+  baseName: string;
+  outputDir: string;
 }> {
   const fullPath = path.join(MEDIA_VAULT_ROOT, subtitleFile);
   onLog(`Reading subtitle file: ${subtitleFile}`);
+  
+  // Extract base name from file path
+  const fileName = path.basename(subtitleFile);
+  const { baseName } = parseFileName(fileName);
+  
+  // Determine output directory (project/output/)
+  const relativeDir = path.dirname(subtitleFile);
+  const projectDir = relativeDir.includes('/') ? relativeDir.split('/')[0] : relativeDir;
+  const outputDir = path.join(MEDIA_VAULT_ROOT, projectDir, 'output');
   
   let subtitleData: any[];
   let isSktProject = false;
@@ -233,36 +312,57 @@ async function loadSubtitleFile(
     }
   }
 
-  return { subtitleData, isSktProject, originalProject, fullPath, totalCues: subtitleData.length };
+  return { subtitleData, isSktProject, originalProject, fullPath, totalCues: subtitleData.length, baseName, outputDir };
 }
 
 /**
- * Shared helper: Save subtitle file
+ * Shared helper: Save subtitle file to new [EditedN] file
+ * Returns the relative path of the new file
  */
 async function saveSubtitleFile(
-  fullPath: string,
+  outputDir: string,
+  baseName: string,
   subtitleData: any[],
   isSktProject: boolean,
   originalProject: any,
   onLog: LogCallback
-): Promise<void> {
+): Promise<string> {
   try {
-    if (isSktProject) {
-      originalProject.segments = subtitleData.map((s: any) => ({
+    // Ensure output directory exists
+    await fs.mkdir(outputDir, { recursive: true });
+    
+    // Find next edited count
+    const nextCount = await findNextEditedCount(outputDir, baseName);
+    const newFileName = generateExportFileName(baseName, nextCount, '.sktproject');
+    const newFullPath = path.join(outputDir, newFileName);
+    
+    onLog(`Saving to new file: ${newFileName}`);
+    
+    // Build project object
+    const projectToSave: any = {
+      version: "1.0",
+      original_title: originalProject?.original_title || baseName,
+      created_at: originalProject?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      preset: originalProject?.preset || null,
+      segments: subtitleData.map((s: any) => ({
         id: s.id,
         start: s.startTime,
         end: s.endTime,
         original: s.originalText || s.original || "",
         translated: s.translatedText || s.text || s.translated || "",
         optimize_history: s.optimizeHistory || []
-      }));
-      originalProject.updated_at = new Date().toISOString();
-      await fs.writeFile(fullPath, JSON.stringify(originalProject, null, 2), 'utf-8');
-    } else {
-      await fs.writeFile(fullPath, JSON.stringify(subtitleData, null, 2), 'utf-8');
-    }
+      }))
+    };
+    
+    await fs.writeFile(newFullPath, JSON.stringify(projectToSave, null, 2), 'utf-8');
+    
+    // Return relative path (remove MEDIA_VAULT_ROOT prefix)
+    const relativePath = path.relative(MEDIA_VAULT_ROOT, newFullPath);
+    return relativePath;
   } catch (saveErr) {
     onLog(`WARNING: Failed to save: ${saveErr instanceof Error ? saveErr.message : String(saveErr)}`);
+    throw saveErr;
   }
 }
 
@@ -328,17 +428,17 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
     }
 
     // Load subtitle file
-    let { subtitleData, isSktProject, originalProject, fullPath, totalCues } = 
+    let { subtitleData, isSktProject, originalProject, fullPath, totalCues, baseName, outputDir } = 
       await loadSubtitleFile(subtitleFile, context.onLog);
 
     // Route to appropriate handler based on task type
     if (type === 'translate') {
       return this.executeTranslate(task, context, {
-        subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize, aiConfig
+        subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize, aiConfig, baseName, outputDir
       });
     } else if (type === 'optimize') {
       return this.executeOptimize(task, context, {
-        subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize, aiConfig
+        subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize, aiConfig, baseName, outputDir
       });
     }
     
@@ -356,9 +456,11 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       totalCues: number;
       batchSize: number;
       aiConfig: any;
+      baseName: string;
+      outputDir: string;
     }
   ): Promise<TaskResult> {
-    const { subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize, aiConfig } = state;
+    const { subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize, aiConfig, baseName, outputDir } = state;
     const { preset, maxSingleLineWords, autoSplitLongLines, targetIds } = task.params;
     const subtitleFile = task.params.subtitleFile;
 
@@ -464,10 +566,12 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       const processed = Math.min(i + batchSize, totalToProcess);
       context.onProgress(progress, `Translated ${processed}/${totalToProcess} segments`, processed, totalToProcess);
 
-      await saveSubtitleFile(fullPath, subtitleData, isSktProject, originalProject, context.onLog);
+      const newFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
     }
 
-    return { success: true, outputs: [subtitleFile] };
+    // Save final file and return new path
+    const finalFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
+    return { success: true, outputs: [finalFilePath] };
   }
 
   private async executeOptimize(
@@ -481,9 +585,11 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       totalCues: number;
       batchSize: number;
       aiConfig: any;
+      baseName: string;
+      outputDir: string;
     }
   ): Promise<TaskResult> {
-    const { subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize } = state;
+    const { subtitleData, isSktProject, originalProject, fullPath, totalCues, batchSize, baseName, outputDir } = state;
     const { preset, targetIds, targetIssues } = task.params;
     const subtitleFile = task.params.subtitleFile;
 
@@ -651,10 +757,12 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
       const processed = Math.min(i + batchSize, totalToProcess);
       context.onProgress(progress, `Optimized ${processed}/${totalToProcess} segments`, processed, totalToProcess);
 
-      await saveSubtitleFile(fullPath, subtitleData, isSktProject, originalProject, context.onLog);
+      await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
     }
 
-    return { success: true, outputs: [subtitleFile] };
+    // Save final file and return new path
+    const finalFilePath = await saveSubtitleFile(outputDir, baseName, subtitleData, isSktProject, originalProject, context.onLog);
+    return { success: true, outputs: [finalFilePath] };
   }
 }
 

@@ -25,19 +25,41 @@ const isLikelyVietnamese = (text: string): boolean => {
 
 /**
  * Parses a filename to extract base name and the current edited count.
+ * Handles [Edited], [Edited2], [Edited3], ... prefixes.
  */
 export function parseFileName(fileName: string): { baseName: string, editedCount: number } {
-  const name = fileName
+  let name = fileName
     .replace(/\.srt$/i, '')
     .replace(/\.sktproject$/i, '')
     .replace(/\.json$/i, '')
     .trim();
   
-  return { baseName: name, editedCount: 0 };
+  // Check for [Edited] or [EditedN] prefix
+  const editedMatch = name.match(/^\[Edited(\d*)\]\s*/i);
+  let editedCount = 0;
+  if (editedMatch) {
+    // Remove the [Edited] prefix from name
+    name = name.slice(editedMatch[0].length).trim();
+    // Extract the number: [Edited] = 1, [Edited2] = 2, [Edited3] = 3, ...
+    editedCount = editedMatch[1] ? parseInt(editedMatch[1], 10) : 1;
+  }
+  
+  return { baseName: name, editedCount };
 }
 
+/**
+ * Generates export file name with [Edited] prefix based on count.
+ * count = 0: no prefix (original file)
+ * count = 1: [Edited]
+ * count = 2: [Edited2]
+ * count = 3: [Edited3]
+ */
 export function generateExportFileName(baseName: string, currentCount: number, extension: string = '.srt'): string {
-  return `${baseName}${extension}`;
+  if (currentCount === 0) {
+    return `${baseName}${extension}`;
+  }
+  const prefix = currentCount === 1 ? '[Edited]' : `[Edited${currentCount}]`;
+  return `${prefix} ${baseName}${extension}`;
 }
 
 export function parseSRT(content: string): SubtitleSegment[] {

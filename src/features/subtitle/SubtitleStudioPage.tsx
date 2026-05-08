@@ -349,6 +349,34 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     [selectedFolder]
   );
 
+  /**
+   * Find the next available edited file name.
+   * Returns the next count for [EditedN] prefix.
+   * E.g., if [Edited] and [Edited2] exist, returns 3.
+   */
+  const findNextEditedCount = useCallback((baseName: string): number => {
+    if (!selectedFolder) return 1;
+    
+    const existingFiles = selectedFolder.files.filter(f => {
+      const { baseName: fileBase } = parseFileName(f.name);
+      return fileBase.toLowerCase() === baseName.toLowerCase() && f.name.match(/^\[Edited/i);
+    });
+    
+    if (existingFiles.length === 0) return 1;
+    
+    // Extract all edited numbers
+    const editedNumbers = existingFiles.map(f => {
+      const match = f.name.match(/^\[Edited(\d*)\]/i);
+      if (match) {
+        return match[1] ? parseInt(match[1], 10) : 1;
+      }
+      return 0;
+    });
+    
+    const maxNumber = Math.max(...editedNumbers);
+    return maxNumber + 1;
+  }, [selectedFolder]);
+
   const handleSelectFile = async (file: VaultFile, options?: { silent?: boolean }) => {
     const isSrtFile = file.relativePath?.toLowerCase().endsWith('.srt');
     
@@ -1099,19 +1127,59 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
             setIsOptimizing(false);
             setIsStoppingOptimize(false);
             setOptimizeState({ processed: total, total });
-            showToast('success', "Optimization completed via Job System.");
           } else {
             setTranslationState(prev => ({ ...prev, status: 'completed', processed: prev.total }));
-            showToast('success', "Translation completed via Job System.");
           }
 
           setProgress(100);
           setStatus('success');
 
-          // Reload file to get final content
-          const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
-          if (currentFile) {
-            handleSelectFile(currentFile);
+          // Get the new file path from task outputs
+          const task = job.tasks?.find((t: any) => isOptimizeJob ? t.type === 'optimize' : t.type === 'translate');
+          const newFilePath = task?.outputs?.[0];
+          
+          if (newFilePath) {
+            // Update working file path and reload
+            setWorkingFilePath(newFilePath);
+            const newFileId = newFilePath;
+            setSelectedFileId(newFileId);
+            
+            // Update URL deeplink
+            if (typeof window !== 'undefined' && selectedFolderId) {
+              const params = new URLSearchParams({ folderId: selectedFolderId, fileId: newFileId });
+              window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+            }
+            
+            // Refresh vault to show new file
+            onRefreshVault?.();
+            
+            // Load the new file
+            const { segments: parsedSegments, preset } = await vaultService.loadSubtitleFile(newFilePath);
+            const fixedSegments = parsedSegments.map(s => ({
+              ...s,
+              originalText: performLocalFix(s.originalText || ""),
+              translatedText: performLocalFix(s.translatedText || "")
+            }));
+            setSegments(fixedSegments);
+            if (preset) {
+              setTranslationPreset({ ...preset, humor_level: humorLevel });
+            }
+            
+            // Update file name state
+            const newFileName = newFilePath.split('/').pop() || '';
+            const { baseName, editedCount } = parseFileName(newFileName);
+            setFileName(newFileName);
+            setBaseFileName(baseName);
+            setEditedCount(editedCount);
+            setIsDirty(false);
+            
+            showToast('success', `Saved to ${newFileName}`);
+          } else {
+            // Fallback: reload current file
+            const currentFile = selectedFolder?.files.find(f => f.id === selectedFileId);
+            if (currentFile) {
+              handleSelectFile(currentFile);
+            }
           }
         } else if (job.status === 'failed' || job.status === 'cancelled') {
           if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
@@ -1605,23 +1673,17 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     return h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`;
   }, [processedSegments]);
 
-  // Save function
+  // Save function - always creates new file with [EditedN] prefix
   const handleSave = useCallback(async (showNotification = true) => {
     if (!fileName || segments.length === 0 || !selectedFolderId) return;
     
-    // Determine save path
-    let savePath: string;
-    if (selectedFileId && fileName.toLowerCase().endsWith('.sktproject')) {
-      // Save to the original sktproject file
-      const folder = vaultFolders.find(f => f.id === selectedFolderId);
-      const file = folder?.files?.find(f => f.id === selectedFileId);
-      // Save to output folder within the project
-      savePath = file?.relativePath || `${folder?.name}/output/${baseFileName}.sktproject`;
-    } else {
-      // Create new sktproject file in the output folder
-      const folder = vaultFolders.find(f => f.id === selectedFolderId);
-      savePath = `${folder?.name}/output/${baseFileName}.sktproject`;
-    }
+    const folder = vaultFolders.find(f => f.id === selectedFolderId);
+    if (!folder) return;
+    
+    // Find next edited count
+    const nextCount = findNextEditedCount(baseFileName);
+    const newFileName = generateExportFileName(baseFileName, nextCount, '.sktproject');
+    const savePath = `${folder.name}/output/${newFileName}`;
     
     setIsSaving(true);
     try {
@@ -1631,10 +1693,28 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         : translationPreset;
       const content = generateSktProject(segments, baseFileName, presetToSave);
       await vaultService.saveSubtitleFile(savePath, content);
+      
+      // Update state with new file info
+      setEditedCount(nextCount);
+      setFileName(newFileName);
+      setWorkingFilePath(savePath);
+      const newFileId = savePath; // Use path as fileId
+      setSelectedFileId(newFileId);
+      
+      // Update URL deeplink
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams({ folderId: selectedFolderId, fileId: newFileId });
+        window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+      }
+      
       setIsDirty(false);
       setLastSavedAt(new Date());
+      
+      // Refresh vault to show new file
+      onRefreshVault?.();
+      
       if (showNotification) {
-        showToast('success', "Project saved successfully.");
+        showToast('success', `Saved as ${newFileName}`);
       }
     } catch (err) {
       console.error("Save failed", err);
@@ -1642,7 +1722,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
     } finally {
       setIsSaving(false);
     }
-  }, [fileName, segments, baseFileName, translationPreset, presetDraftSummary, selectedFolderId, selectedFileId, vaultFolders]);
+  }, [fileName, segments, baseFileName, translationPreset, presetDraftSummary, selectedFolderId, vaultFolders, findNextEditedCount, onRefreshVault]);
 
   // Auto-save effect with 3-second debounce (only if enabled)
   useEffect(() => {
