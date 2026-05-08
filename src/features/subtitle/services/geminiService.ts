@@ -111,10 +111,9 @@ export async function analyzeTranslationStyle(titleOrSummary: string, model: str
 
     // Validate that we got actual data from AI
     const genres = Array.isArray(parsed.genres) ? parsed.genres : [];
-    const humorLevel = typeof parsed.humor_level === 'number' ? parsed.humor_level : 0;
 
     // Log warning if AI returned incomplete data
-    if (genres.length === 0 && humorLevel === 0) {
+    if (genres.length === 0) {
       console.warn("Analyze style returned empty data. Raw response:", rawText);
     }
 
@@ -124,7 +123,7 @@ export async function analyzeTranslationStyle(titleOrSummary: string, model: str
       },
       genres,
       character_names: [],
-      humor_level: humorLevel
+      humor_level: 10  // Default humor level, can be adjusted manually
     };
 
     return { preset, tokens };

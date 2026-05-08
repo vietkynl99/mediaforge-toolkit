@@ -1384,8 +1384,8 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
       }));
 
       // Check if AI returned valid style data
-      if (preset.genres.length === 0 && preset.humor_level === 0) {
-        showToast('warning', "Analysis incomplete. AI returned no style data. Please try again or adjust the input.");
+      if (preset.genres.length === 0) {
+        showToast('warning', "Analysis incomplete. AI returned no genre data. Please try again or adjust the input.");
       } else {
         showToast('success', "DNA analysis complete. Translation style initialized.");
       }
@@ -1432,8 +1432,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
         } else {
           const json = JSON.parse(content);
           const isValid = json.reference?.title_or_summary &&
-                          Array.isArray(json.genres) &&
-                          typeof json.humor_level === 'number';
+                          Array.isArray(json.genres);
 
           if (isValid) {
             const characterNames = Array.isArray(json.character_names)
@@ -1449,7 +1448,7 @@ const SubtitleStudioPage: React.FC<SubtitleStudioPageProps> = ({
               reference: { title_or_summary: json.reference.title_or_summary },
               genres: json.genres,
               character_names: characterNames,
-              humor_level: json.humor_level
+              humor_level: typeof json.humor_level === 'number' ? json.humor_level : 10
             };
             setTranslationPreset(cleaned);
             if (cleaned.reference?.title_or_summary) {

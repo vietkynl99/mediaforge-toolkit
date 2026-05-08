@@ -453,7 +453,7 @@ export function parseSktProject(content: string): { segments: SubtitleSegment[],
                 vn: t.vn
               }))
           : [],
-        humor_level: typeof json.preset.humor_level === 'number' ? json.preset.humor_level : 0
+        humor_level: typeof json.preset.humor_level === 'number' ? json.preset.humor_level : 10
       }
     : null;
 

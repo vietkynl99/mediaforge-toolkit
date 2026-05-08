@@ -299,13 +299,11 @@ ${taxonomy.join(', ')}
 
 Trả về JSON với format chính xác sau:
 {
-  "genres": ["thể loại 1", "thể loại 2"],
-  "humor_level": số từ 0 đến 10
+  "genres": ["thể loại 1", "thể loại 2"]
 }
 
 Quy tắc:
-- genres: chọn 1-5 thể loại phù hợp nhất từ danh sách
-- humor_level: 0-2 (nghiêm túc), 3-5 (tự nhiên), 6-8 (hài hước nhẹ), 9-10 (hài hước cao)`;
+- genres: chọn 1-5 thể loại phù hợp nhất từ danh sách`;
 
   return callAi({
     prompt,
@@ -317,13 +315,9 @@ Quy tắc:
           type: Type.ARRAY,
           items: { type: Type.STRING },
           description: "1-5 thể loại phù hợp nhất từ danh sách."
-        },
-        humor_level: {
-          type: Type.NUMBER,
-          description: "Mức độ hài hước từ 0 đến 10"
         }
       },
-      required: ["genres", "humor_level"]
+      required: ["genres"]
     }
   });
 }
