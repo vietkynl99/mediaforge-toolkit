@@ -7,7 +7,10 @@ import { spawn } from 'child_process';
 import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
-import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR_CLI_PATH, UVR_OUTPUT_DIRNAME } from './constants.js';
+import { MEDIA_VAULT_ROOT, KNOWN_SUBDIRS, OUTPUT_DIR_NAMES, THUMB_CACHE_DIR, UVR_CLI_PATH, UVR_OUTPUT_DIRNAME, AI_DEFAULT_MODELS, AI_BASE_URLS } from './constants.js';
+import { GeminiProvider } from './gemini-provider.js';
+import { OpenAICompatibleProvider } from './openai-compatible-provider.js';
+import type { AiProvider } from './ai-provider-interface.js';
 import { ttsRouter } from './tts.js';
 import { parseAssCues, parseSrtVttCues, parseSktProjectCues, type SubtitleCue } from './subtitleCues.js';
 import {
@@ -5229,79 +5232,6 @@ app.get('/api/settings/concurrency/status', (_req, res) => {
   }
 });
 
-// OpenRouter Models API
-import { getOpenRouterModels, getOpenRouterModelInfo, OpenRouterModelInfo, initOpenRouterModels } from './openrouter-provider.js';
-
-app.get('/api/openrouter/models', async (_req, res) => {
-  try {
-    const config = configManager.get();
-    const apiKey = config.ai?.openrouterApiKey;
-    
-    if (!apiKey) {
-      res.status(400).json({ error: 'OpenRouter API key not configured' });
-      return;
-    }
-    
-    const models = await getOpenRouterModels(apiKey);
-    res.json(models);
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error('Get OpenRouter Models Error:', errMsg);
-    res.status(500).json({ error: errMsg || 'Failed to fetch models' });
-  }
-});
-
-app.get('/api/openrouter/models/:id', async (req, res) => {
-  try {
-    const config = configManager.get();
-    const apiKey = config.ai?.openrouterApiKey;
-    
-    if (!apiKey) {
-      res.status(400).json({ error: 'OpenRouter API key not configured' });
-      return;
-    }
-    
-    const modelId = decodeURIComponent(req.params.id);
-    const modelInfo = await getOpenRouterModelInfo(modelId, apiKey);
-    
-    if (!modelInfo) {
-      res.status(404).json({ error: 'Model not found' });
-      return;
-    }
-    
-    res.json(modelInfo);
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error('Get OpenRouter Model Info Error:', errMsg);
-    res.status(500).json({ error: errMsg || 'Failed to fetch model info' });
-  }
-});
-
-app.get('/api/openrouter/current-model', async (_req, res) => {
-  try {
-    const config = configManager.get();
-    const apiKey = config.ai?.openrouterApiKey;
-    const modelId = config.ai?.openrouterModel || 'openrouter/auto';
-    
-    if (!apiKey) {
-      res.status(400).json({ error: 'OpenRouter API key not configured' });
-      return;
-    }
-    
-    const modelInfo = await getOpenRouterModelInfo(modelId, apiKey);
-    
-    if (!modelInfo) {
-      res.status(404).json({ error: 'Current model not found in models list', modelId });
-      return;
-    }
-    
-    res.json(modelInfo);
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.error('Get Current Model Info Error:', errMsg);
-    res.status(500).json({ error: errMsg || 'Failed to fetch current model info' });
-  }
-});
 
 import { callAi } from './ai-provider.js';
 import * as SubtitleAI from './subtitle-ai.js';
@@ -5360,24 +5290,121 @@ app.post('/api/subtitle/ai/call', async (req, res) => {
   }
 });
 
+// Test AI model connection
+app.post('/api/ai/test', async (req, res) => {
+  try {
+    const { provider, aiConfig } = req.body;
+    
+    if (!provider) {
+      res.status(400).json({ error: 'Provider is required' });
+      return;
+    }
+    
+    // Create a temporary config for testing
+    const testConfig = {
+      ...DEFAULT_SYSTEM_CONFIG,
+      ai: {
+        ...DEFAULT_SYSTEM_CONFIG.ai,
+        ...aiConfig,
+        provider,
+      },
+    };
+    
+    // Get the provider instance
+    let aiProvider: AiProvider;
+    const settings = testConfig.ai;
+    
+    switch (provider) {
+      case 'openrouter': {
+        const apiKey = settings?.openrouterApiKey;
+        const model = settings?.openrouterModel || AI_DEFAULT_MODELS.openrouter;
+        const baseUrl = AI_BASE_URLS.openrouter;
+        
+        if (!apiKey) {
+          res.status(400).json({ error: 'OpenRouter API key is not configured' });
+          return;
+        }
+        
+        aiProvider = new OpenAICompatibleProvider({ apiKey, model, baseUrl });
+        break;
+      }
+      
+      case 'openai': {
+        const apiKey = settings?.openaiApiKey;
+        const model = settings?.openaiModel || AI_DEFAULT_MODELS.openai;
+        const baseUrl = AI_BASE_URLS.openai;
+        
+        if (!apiKey) {
+          res.status(400).json({ error: 'OpenAI API key is not configured' });
+          return;
+        }
+        
+        aiProvider = new OpenAICompatibleProvider({ apiKey, model, baseUrl });
+        break;
+      }
+      
+      case 'custom': {
+        const apiKey = settings?.customApiKey;
+        const model = settings?.customModel || AI_DEFAULT_MODELS.custom;
+        const baseUrl = settings?.customBaseUrl || AI_BASE_URLS.custom;
+        
+        if (!apiKey) {
+          res.status(400).json({ error: 'API key is not configured' });
+          return;
+        }
+        
+        if (!baseUrl) {
+          res.status(400).json({ error: 'Custom base URL is not configured' });
+          return;
+        }
+        
+        aiProvider = new OpenAICompatibleProvider({ apiKey, model, baseUrl });
+        break;
+      }
+      
+      case 'gemini':
+      default: {
+        const apiKey = settings?.geminiApiKey;
+        const model = settings?.geminiModel || AI_DEFAULT_MODELS.gemini;
+        
+        if (!apiKey) {
+          res.status(400).json({ error: 'Gemini API key is not configured' });
+          return;
+        }
+        
+        aiProvider = new GeminiProvider({ apiKey, model });
+        break;
+      }
+    }
+    
+    // Test with a minimal request to save quota
+    const model = provider === 'openrouter'
+      ? (settings?.openrouterModel || AI_DEFAULT_MODELS.openrouter)
+      : provider === 'openai'
+      ? (settings?.openaiModel || AI_DEFAULT_MODELS.openai)
+      : provider === 'custom'
+      ? (settings?.customModel || AI_DEFAULT_MODELS.custom)
+      : (settings?.geminiModel || AI_DEFAULT_MODELS.gemini);
+
+    const testResult = await aiProvider.call({
+      prompt: 'Say "OK".',
+    });
+
+    res.json({
+      success: true,
+      message: `Model "${model}" is working! Response: ${testResult.text?.substring(0, 50) || 'OK'}`
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error('AI Test Error:', errMsg);
+    res.status(500).json({ error: errMsg || 'Test failed' });
+  }
+});
+
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
 app.listen(PORT, async () => {
   console.log(`Media backend running on http://localhost:${PORT}`);
-  
-  // Initial OpenRouter models fetch
-  try {
-    const config = configManager.get();
-    const apiKey = config.ai?.openrouterApiKey;
-    if (apiKey) {
-      // Don't await here to not block server start, or await if you want to ensure models are ready
-      initOpenRouterModels(apiKey).catch(err => {
-        console.error('[OpenRouter] Background initialization failed:', err);
-      });
-    }
-  } catch (err) {
-    console.error('[OpenRouter] Failed to trigger initial fetch:', err);
-  }
 });

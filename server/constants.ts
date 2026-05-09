@@ -6,3 +6,6 @@ export const KNOWN_SUBDIRS = new Set(['source', '.mediaforge', 'subs', 'subtitle
 export const THUMB_CACHE_DIR = '/tmp/media-vault-thumbs';
 export const UVR_CLI_PATH = '/mnt/disk2/kynl/media/UVR5_Linux/uvr_cli.py';
 export const UVR_OUTPUT_DIRNAME = 'output';
+
+// Re-export AI constants from shared
+export { AI_DEFAULT_MODELS, AI_BASE_URLS, type AiProviderType } from '../shared/ai-constants.js';

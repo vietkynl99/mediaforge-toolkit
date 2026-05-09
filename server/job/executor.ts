@@ -6,6 +6,7 @@
  */
 
 import { TaskNode, TaskResult, SystemConfig, DEFAULT_SYSTEM_CONFIG } from './types.js';
+import { AI_DEFAULT_MODELS } from '../constants.js';
 import * as SubtitleAI from '../subtitle-ai.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -421,9 +422,13 @@ export class SubtitleAiTaskExecutor extends TaskExecutor {
     const config = context.config ?? DEFAULT_SYSTEM_CONFIG;
     const aiConfig = config.ai ?? {};
     const provider = aiConfig.provider ?? 'gemini';
-    const model = provider === 'openrouter' 
-      ? (aiConfig.openrouterModel ?? 'openrouter/auto')
-      : (aiConfig.geminiModel ?? 'gemini-2.5-flash');
+    const model = provider === 'openrouter'
+      ? (aiConfig.openrouterModel ?? AI_DEFAULT_MODELS.openrouter)
+      : provider === 'openai'
+      ? (aiConfig.openaiModel ?? AI_DEFAULT_MODELS.openai)
+      : provider === 'custom'
+      ? (aiConfig.customModel ?? AI_DEFAULT_MODELS.custom)
+      : (aiConfig.geminiModel ?? AI_DEFAULT_MODELS.gemini);
     
     // Use task-specific batch size
     const batchSize = type === 'translate' 

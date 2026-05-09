@@ -6,7 +6,7 @@
  */
 
 import { SystemConfig, DEFAULT_SYSTEM_CONFIG, ConcurrencyRule, ResourceType } from './types.js';
-import { clearOpenRouterModelsCache } from '../openrouter-provider.js';
+import { clearOpenAICompatibleModelsCache } from '../openai-compatible-provider.js';
 
 const SETTINGS_KEY = 'system_config';
 
@@ -113,25 +113,29 @@ export class ConfigManager {
     }
     if (newConfig.ai) {
       const oldAi = this.config.ai || DEFAULT_SYSTEM_CONFIG.ai!;
-      const oldOpenRouterKey = oldAi.openrouterApiKey;
-      const oldOpenRouterModel = oldAi.openrouterModel;
+      const oldProvider = oldAi.provider;
       
       this.config.ai = {
         ...oldAi,
         ...newConfig.ai,
-        // Preserve API keys if the incoming ones are empty/whitespace
+        // Preserve all API keys if the incoming ones are empty/whitespace
         geminiApiKey: (newConfig.ai.geminiApiKey && newConfig.ai.geminiApiKey.trim()) 
           ? newConfig.ai.geminiApiKey 
           : oldAi.geminiApiKey || '',
         openrouterApiKey: (newConfig.ai.openrouterApiKey && newConfig.ai.openrouterApiKey.trim()) 
           ? newConfig.ai.openrouterApiKey 
           : oldAi.openrouterApiKey || '',
+        openaiApiKey: (newConfig.ai.openaiApiKey && newConfig.ai.openaiApiKey.trim()) 
+          ? newConfig.ai.openaiApiKey 
+          : oldAi.openaiApiKey || '',
+        customApiKey: (newConfig.ai.customApiKey && newConfig.ai.customApiKey.trim()) 
+          ? newConfig.ai.customApiKey 
+          : oldAi.customApiKey || '',
       };
       
-      // Clear OpenRouter models cache if API key or model changed
-      if (this.config.ai.openrouterApiKey !== oldOpenRouterKey || 
-          this.config.ai.openrouterModel !== oldOpenRouterModel) {
-        clearOpenRouterModelsCache();
+      // Clear models cache if provider changed or any API key changed
+      if (this.config.ai.provider !== oldProvider) {
+        clearOpenAICompatibleModelsCache();
       }
     }
     await this.save();

@@ -1,15 +1,16 @@
 import type { AiCallParams, AiCallResult } from '../shared/types.js';
 import type { AiProvider } from './ai-provider-interface.js';
 
-export interface OpenRouterConfig {
+export interface OpenAICompatibleConfig {
   apiKey: string;
   model?: string;
+  baseUrl?: string;  // Custom endpoint for OpenAI-compatible APIs (e.g., OpenRouter, 9Router)
 }
 
 /**
- * Model information from OpenRouter API
+ * Model information from OpenAI-compatible API
  */
-export interface OpenRouterModelInfo {
+export interface OpenAICompatibleModelInfo {
   id: string;
   name: string;
   description?: string;
@@ -27,12 +28,12 @@ export interface OpenRouterModelInfo {
  * Cached models data
  */
 interface ModelsCache {
-  models: Map<string, OpenRouterModelInfo>;
+  models: Map<string, OpenAICompatibleModelInfo>;
   apiKeyHash: string;  // To detect API key changes
 }
 
 let modelsCache: ModelsCache | null = null;
-let isFetching: Promise<Map<string, OpenRouterModelInfo>> | null = null;
+let isFetching: Promise<Map<string, OpenAICompatibleModelInfo>> | null = null;
 
 /**
  * Simple hash for API key comparison (not cryptographically secure)
@@ -48,13 +49,13 @@ function simpleHash(str: string): string {
 }
 
 /**
- * Fetch and cache model information from OpenRouter API
+ * Fetch and cache model information from OpenAICompatible API
  * Only fetches when API key changes or cache is empty
  */
-async function fetchModelsIfNeeded(apiKey: string): Promise<Map<string, OpenRouterModelInfo>> {
-  const keyHash = simpleHash(apiKey);
+async function fetchModelsIfNeeded(apiKey: string, baseUrl: string = 'https://openrouter.ai/api/v1'): Promise<Map<string, OpenAICompatibleModelInfo>> {
+  const keyHash = simpleHash(apiKey + baseUrl);
   
-  // Return cached data if API key hasn't changed
+  // Return cached data if API key or baseUrl hasn't changed
   if (modelsCache && modelsCache.apiKeyHash === keyHash && modelsCache.models.size > 0) {
     return modelsCache.models;
   }
@@ -65,17 +66,17 @@ async function fetchModelsIfNeeded(apiKey: string): Promise<Map<string, OpenRout
   }
   
   isFetching = (async () => {
-    console.log('[OpenRouter] Fetching models list...');
+    console.log(`[OpenAI-Compatible] Fetching models list from ${baseUrl}...`);
     
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/models', {
+      const response = await fetch(`${baseUrl}/models`, {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
         },
       });
       
       if (!response.ok) {
-        console.warn('[OpenRouter] Failed to fetch models list');
+        console.warn('[OpenAI-Compatible] Failed to fetch models list');
         return modelsCache?.models || new Map();
       }
       
@@ -83,14 +84,14 @@ async function fetchModelsIfNeeded(apiKey: string): Promise<Map<string, OpenRout
       const models = data?.data || [];
       
       // Build map of model info
-      const modelsMap = new Map<string, OpenRouterModelInfo>();
+      const modelsMap = new Map<string, OpenAICompatibleModelInfo>();
       for (const model of models) {
         const supportedParams = model?.supported_parameters || [];
         // Only 'structured_outputs' indicates support for json_schema with strict mode
         // 'response_format' may only support basic json_object mode, not structured outputs
         const supportsStructured = supportedParams.includes('structured_outputs');
         
-        const info: OpenRouterModelInfo = {
+        const info: OpenAICompatibleModelInfo = {
           id: model.id,
           name: model.name || model.id,
           description: model.description,
@@ -111,10 +112,10 @@ async function fetchModelsIfNeeded(apiKey: string): Promise<Map<string, OpenRout
         apiKeyHash: keyHash,
       };
       
-      console.log(`[OpenRouter] Cached ${modelsMap.size} models`);
+      console.log(`[OpenAI-Compatible] Cached ${modelsMap.size} models`);
       return modelsMap;
     } catch (error) {
-      console.warn('[OpenRouter] Error fetching models list:', error);
+      console.warn('[OpenAI-Compatible] Error fetching models list:', error);
       return modelsCache?.models || new Map();
     } finally {
       isFetching = null;
@@ -127,8 +128,8 @@ async function fetchModelsIfNeeded(apiKey: string): Promise<Map<string, OpenRout
 /**
  * Get info for a specific model
  */
-async function getModelInfo(modelId: string, apiKey: string): Promise<OpenRouterModelInfo | undefined> {
-  const models = await fetchModelsIfNeeded(apiKey);
+async function getModelInfo(modelId: string, apiKey: string, baseUrl?: string): Promise<OpenAICompatibleModelInfo | undefined> {
+  const models = await fetchModelsIfNeeded(apiKey, baseUrl);
   return models.get(modelId);
 }
 
@@ -177,17 +178,19 @@ function convertGeminiSchemaToJsonSchema(geminiSchema: any): any {
 }
 
 /**
- * OpenRouter AI Provider implementation
- * Supports multiple AI models through OpenRouter API
+ * OpenAICompatible AI Provider implementation
+ * Supports multiple AI models through OpenAICompatible API
  */
-export class OpenRouterProvider implements AiProvider {
-  readonly name = 'openrouter';
+export class OpenAICompatibleProvider implements AiProvider {
+  readonly name = 'openai-compatible';
   private apiKey: string;
   private model: string;
+  private baseUrl: string;
 
-  constructor(config: OpenRouterConfig) {
+  constructor(config: OpenAICompatibleConfig) {
     this.apiKey = config.apiKey;
-    this.model = config.model || 'openrouter/auto';
+    this.model = config.model || 'gpt-4o';
+    this.baseUrl = config.baseUrl || 'https://api.openai.com/v1';
   }
 
   isConfigured(): boolean {
@@ -197,20 +200,20 @@ export class OpenRouterProvider implements AiProvider {
   async call(params: AiCallParams): Promise<AiCallResult> {
     const { onLog } = params;
     const log = (msg: string) => {
-      if (onLog) onLog(`[OpenRouter] ${msg}`);
-      else console.log(`[OpenRouter] ${msg}`);
+      if (onLog) onLog(`[OpenAICompatible] ${msg}`);
+      else console.log(`[OpenAICompatible] ${msg}`);
     };
     const warn = (msg: string) => {
-      if (onLog) onLog(`[OpenRouter] WARNING: ${msg}`);
-      else console.warn(`[OpenRouter] ${msg}`);
+      if (onLog) onLog(`[OpenAICompatible] WARNING: ${msg}`);
+      else console.warn(`[OpenAICompatible] ${msg}`);
     };
     const errorLog = (msg: string) => {
-      if (onLog) onLog(`[OpenRouter] ERROR: ${msg}`);
-      else console.error(`[OpenRouter] ${msg}`);
+      if (onLog) onLog(`[OpenAICompatible] ERROR: ${msg}`);
+      else console.error(`[OpenAICompatible] ${msg}`);
     };
 
     if (!this.isConfigured()) {
-      throw new Error('OpenRouter API key is not configured');
+      throw new Error('OpenAICompatible API key is not configured');
     }
 
     // Build messages array
@@ -229,6 +232,7 @@ export class OpenRouterProvider implements AiProvider {
     const chatRequest: any = {
       model: this.model,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
+      stream: false,  // Explicitly disable streaming to ensure JSON response
     };
 
     // Try structured output first (only if model supports it)
@@ -238,7 +242,7 @@ export class OpenRouterProvider implements AiProvider {
     if (params.responseMimeType === 'application/json' && params.responseSchema) {
       try {
         // Check if model supports structured outputs
-        const modelInfo = await getModelInfo(this.model, this.apiKey);
+        const modelInfo = await getModelInfo(this.model, this.apiKey, this.baseUrl);
         const jsonSchema = convertGeminiSchemaToJsonSchema(params.responseSchema);
         
         if (modelInfo?.supportsStructuredOutput) {
@@ -288,12 +292,12 @@ export class OpenRouterProvider implements AiProvider {
     // Call the model using fetch directly (bypassing SDK to avoid unhandled rejections)
     let response: Response;
     try {
-      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://mediaforge.ai', // Optional but recommended by OpenRouter
+          'HTTP-Referer': 'https://mediaforge.ai', // Optional, site identifier for providers
           'X-Title': 'MediaForge Toolkit',
         },
         body: JSON.stringify(chatRequest),
@@ -304,7 +308,7 @@ export class OpenRouterProvider implements AiProvider {
         throw new Error('Task cancelled');
       }
       errorLog(`Network error: ${networkError.message}`);
-      throw new Error(`OpenRouter connection failed: ${networkError.message}`);
+      throw new Error(`OpenAICompatible connection failed: ${networkError.message}`);
     }
 
     const responseText = await response.text();
@@ -325,7 +329,7 @@ export class OpenRouterProvider implements AiProvider {
         warn('Structured output failed, retrying with json_object mode...');
         chatRequest.response_format = { type: 'json_object' };
         
-        const retryResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const retryResponse = await fetch(`${this.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
@@ -368,19 +372,19 @@ export class OpenRouterProvider implements AiProvider {
         }
       }
       
-      throw new Error(`OpenRouter API failed (${response.status}): ${errorDetail}`);
+      throw new Error(`OpenAICompatible API failed (${response.status}): ${errorDetail}`);
     }
 
     let data: any;
     try {
       if (!responseText) {
-        throw new Error('Empty response from OpenRouter');
+        throw new Error('Empty response from OpenAICompatible');
       }
       data = JSON.parse(responseText);
     } catch (parseError: any) {
       errorLog(`Failed to parse response as JSON: ${parseError.message}`);
       errorLog(`Response preview: ${responseText.substring(0, 500)}`);
-      throw new Error(`OpenRouter returned invalid JSON: ${parseError.message}`);
+      throw new Error(`OpenAICompatible returned invalid JSON: ${parseError.message}`);
     }
 
     // Get the text response
@@ -418,7 +422,7 @@ export class OpenRouterProvider implements AiProvider {
       chatRequest.response_format = { type: 'json_object' };
       
       try {
-        const retryResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const retryResponse = await fetch(`${this.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
@@ -488,15 +492,15 @@ export class OpenRouterProvider implements AiProvider {
   /**
    * Get information about the current model
    */
-  async getCurrentModelInfo(): Promise<OpenRouterModelInfo | undefined> {
-    return getModelInfo(this.model, this.apiKey);
+  async getCurrentModelInfo(): Promise<OpenAICompatibleModelInfo | undefined> {
+    return getModelInfo(this.model, this.apiKey, this.baseUrl);
   }
 
   /**
    * Get all available models
    */
-  async getAllModels(): Promise<OpenRouterModelInfo[]> {
-    const models = await fetchModelsIfNeeded(this.apiKey);
+  async getAllModels(): Promise<OpenAICompatibleModelInfo[]> {
+    const models = await fetchModelsIfNeeded(this.apiKey, this.baseUrl);
     return Array.from(models.values());
   }
 }
@@ -504,26 +508,26 @@ export class OpenRouterProvider implements AiProvider {
 /**
  * Clear the models cache (call when settings change)
  */
-export function clearOpenRouterModelsCache(): void {
+export function clearOpenAICompatibleModelsCache(): void {
   modelsCache = null;
-  console.log('[OpenRouter] Models cache cleared');
+  console.log('[OpenAICompatible] Models cache cleared');
 }
 
 /**
  * Initial fetch of models when server starts
  * Retries up to 3 times
  */
-export async function initOpenRouterModels(apiKey: string, retries = 3): Promise<void> {
+export async function initOpenAICompatibleModels(apiKey: string, baseUrl?: string, retries = 3): Promise<void> {
   for (let i = 0; i < retries; i++) {
     try {
-      console.log(`[OpenRouter] Initializing models (attempt ${i + 1}/${retries})...`);
-      await fetchModelsIfNeeded(apiKey);
+      console.log(`[OpenAICompatible] Initializing models (attempt ${i + 1}/${retries})...`);
+      await fetchModelsIfNeeded(apiKey, baseUrl);
       if (modelsCache && modelsCache.models.size > 0) {
-        console.log(`[OpenRouter] Initialization successful, cached ${modelsCache.models.size} models`);
+        console.log(`[OpenAICompatible] Initialization successful, cached ${modelsCache.models.size} models`);
         return;
       }
     } catch (error) {
-      console.warn(`[OpenRouter] Initialization attempt ${i + 1} failed:`, error instanceof Error ? error.message : String(error));
+      console.warn(`[OpenAICompatible] Initialization attempt ${i + 1} failed:`, error instanceof Error ? error.message : String(error));
     }
     
     if (i < retries - 1) {
@@ -532,20 +536,20 @@ export async function initOpenRouterModels(apiKey: string, retries = 3): Promise
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
-  console.error('[OpenRouter] Failed to initialize models after all retries');
+  console.error('[OpenAICompatible] Failed to initialize models after all retries');
 }
 
 /**
- * Get all available OpenRouter models (requires API key)
+ * Get all available OpenAICompatible models (requires API key)
  */
-export async function getOpenRouterModels(apiKey: string): Promise<OpenRouterModelInfo[]> {
-  const models = await fetchModelsIfNeeded(apiKey);
+export async function getOpenAICompatibleModels(apiKey: string, baseUrl?: string): Promise<OpenAICompatibleModelInfo[]> {
+  const models = await fetchModelsIfNeeded(apiKey, baseUrl);
   return Array.from(models.values());
 }
 
 /**
- * Get info for a specific OpenRouter model
+ * Get info for a specific OpenAICompatible model
  */
-export async function getOpenRouterModelInfo(modelId: string, apiKey: string): Promise<OpenRouterModelInfo | undefined> {
-  return getModelInfo(modelId, apiKey);
+export async function getOpenAICompatibleModelInfo(modelId: string, apiKey: string, baseUrl?: string): Promise<OpenAICompatibleModelInfo | undefined> {
+  return getModelInfo(modelId, apiKey, baseUrl);
 }

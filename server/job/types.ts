@@ -4,6 +4,9 @@
 
 export type TaskStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'cancelled';
 
+import { AI_DEFAULT_MODELS, AI_BASE_URLS, type AiProviderType } from '../../shared/ai-constants.js';
+
+export type { AiProviderType };
 export type ResourceType = 'cpu' | 'gpu' | 'network';
 
 export type TaskType = 'download' | 'uvr' | 'tts' | 'render' | 'translate' | 'optimize';
@@ -49,8 +52,6 @@ export interface ConcurrencyRule {
   priority: number;           // Default priority for this task type
 }
 
-export type AiProviderType = 'gemini' | 'openrouter';
-
 export type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
 export interface SystemConfig {
@@ -64,6 +65,13 @@ export interface SystemConfig {
     // OpenRouter settings
     openrouterModel?: string;
     openrouterApiKey?: string;
+    // OpenAI settings
+    openaiModel?: string;
+    openaiApiKey?: string;
+    // Custom provider settings
+    customModel?: string;
+    customApiKey?: string;
+    customBaseUrl?: string;
     // Common settings
     cpsThreshold?: {
       safeMax: number;
@@ -93,11 +101,18 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   ai: {
     provider: 'gemini',
     // Gemini settings
-    geminiModel: 'gemini-2.5-flash',
+    geminiModel: AI_DEFAULT_MODELS.gemini,
     geminiApiKey: '',
     // OpenRouter settings
-    openrouterModel: 'openrouter/auto',
+    openrouterModel: AI_DEFAULT_MODELS.openrouter,
     openrouterApiKey: '',
+    // OpenAI settings
+    openaiModel: AI_DEFAULT_MODELS.openai,
+    openaiApiKey: '',
+    // Custom provider settings
+    customModel: AI_DEFAULT_MODELS.custom,
+    customApiKey: '',
+    customBaseUrl: AI_BASE_URLS.custom,
     // Common settings
     cpsThreshold: {
       safeMax: 25,

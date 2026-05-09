@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Save, RotateCcw, Cpu, Wifi, MemoryStick, AlertCircle, Check, Sparkles, Eye, EyeOff, Info, Zap, Coins, Box, AlertTriangle } from 'lucide-react';
+import { Settings, Save, RotateCcw, AlertCircle, Check, Eye, EyeOff, Zap, Cpu, MemoryStick, Wifi } from 'lucide-react';
+import { AI_DEFAULT_MODELS, AI_BASE_URLS, type AiProviderType } from '@/shared/ai-constants';
 
 interface ConcurrencyRule {
   taskType: string;
@@ -7,8 +8,6 @@ interface ConcurrencyRule {
   resourceType: 'cpu' | 'gpu' | 'network';
   priority: number;
 }
-
-type AiProviderType = 'gemini' | 'openrouter';
 
 interface SystemConfig {
   rules: ConcurrencyRule[];
@@ -28,6 +27,13 @@ interface SystemConfig {
     // OpenRouter settings
     openrouterModel?: string;
     openrouterApiKey?: string;
+    // OpenAI settings
+    openaiModel?: string;
+    openaiApiKey?: string;
+    // Custom provider settings
+    customModel?: string;
+    customApiKey?: string;
+    customBaseUrl?: string;
     // Common settings
     translationBatchSize?: number;
     optimizationBatchSize?: number;
@@ -61,20 +67,6 @@ const TASK_TYPE_LABELS: Record<string, string> = {
 
 type AiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
-interface OpenRouterModelInfo {
-  id: string;
-  name: string;
-  description?: string;
-  contextLength: number;
-  pricing: {
-    prompt: number;
-    completion: number;
-  };
-  supportedParameters: string[];
-  supportsStructuredOutput: boolean;
-  topProvider?: string;
-}
-
 export function SettingsPage() {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,21 +75,18 @@ export function SettingsPage() {
   const [success, setSuccess] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showOpenRouterApiKey, setShowOpenRouterApiKey] = useState(false);
-  const [openRouterModelInfo, setOpenRouterModelInfo] = useState<OpenRouterModelInfo | null>(null);
-  const [loadingModelInfo, setLoadingModelInfo] = useState(false);
-  const [modelInfoError, setModelInfoError] = useState<string | null>(null);
+  const [showOpenAiApiKey, setShowOpenAiApiKey] = useState(false);
+  const [showCustomApiKey, setShowCustomApiKey] = useState(false);
+  const [testingModel, setTestingModel] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const modelInfoTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     loadConfig();
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
-      }
-      if (modelInfoTimerRef.current) {
-        clearTimeout(modelInfoTimerRef.current);
       }
     };
   }, []);
@@ -187,12 +176,18 @@ export function SettingsPage() {
       }
     } else {
       newAi[field] = value;
-      // When changing provider, set default model for that provider
+      // Clear test result when changing provider
       if (field === 'provider') {
+        setTestResult(null);
         if (value === 'gemini') {
-          newAi.geminiModel = newAi.geminiModel || 'gemini-2.5-flash';
+          newAi.geminiModel = newAi.geminiModel || AI_DEFAULT_MODELS.gemini;
         } else if (value === 'openrouter') {
-          newAi.openrouterModel = newAi.openrouterModel || 'openrouter/auto';
+          newAi.openrouterModel = newAi.openrouterModel || AI_DEFAULT_MODELS.openrouter;
+        } else if (value === 'openai') {
+          newAi.openaiModel = newAi.openaiModel || AI_DEFAULT_MODELS.openai;
+        } else if (value === 'custom') {
+          newAi.customModel = newAi.customModel || AI_DEFAULT_MODELS.custom;
+          newAi.customBaseUrl = newAi.customBaseUrl || AI_BASE_URLS.custom;
         }
       }
     }
@@ -203,47 +198,34 @@ export function SettingsPage() {
     };
     setConfig(newConfig);
     debouncedSave(newConfig);
-    
-    // Fetch model info when openrouter model changes
-    if (field === 'openrouterModel' && newAi.provider === 'openrouter' && newAi.openrouterApiKey) {
-      fetchModelInfo(value, newAi.openrouterApiKey);
-    }
   };
 
-  const fetchModelInfo = useCallback(async (modelId: string, apiKey: string) => {
-    // Clear previous timer
-    if (modelInfoTimerRef.current) {
-      clearTimeout(modelInfoTimerRef.current);
-    }
+  const testModel = useCallback(async () => {
+    if (!config?.ai) return;
     
-    // Debounce to avoid too many requests
-    modelInfoTimerRef.current = setTimeout(async () => {
-      setLoadingModelInfo(true);
-      setModelInfoError(null);
-      try {
-        // Call the models/:id endpoint with the model being typed
-        const response = await fetch(`/api/openrouter/models/${encodeURIComponent(modelId)}`);
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Model not found');
-        }
-        const info = await response.json();
-        setOpenRouterModelInfo(info);
-      } catch (err) {
-        setModelInfoError(err instanceof Error ? err.message : 'Failed to fetch model info');
-        setOpenRouterModelInfo(null);
-      } finally {
-        setLoadingModelInfo(false);
+    setTestingModel(true);
+    setTestResult(null);
+    
+    try {
+      const response = await fetch('/api/ai/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: config.ai.provider, aiConfig: config.ai }),
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        setTestResult({ success: true, message: data.message || 'Model is working!' });
+      } else {
+        setTestResult({ success: false, message: data.error || 'Test failed' });
       }
-    }, 500);
-  }, []);
-
-  // Load model info when config loads with openrouter provider
-  useEffect(() => {
-    if (config?.ai?.provider === 'openrouter' && config.ai.openrouterApiKey && config.ai.openrouterModel) {
-      fetchModelInfo(config.ai.openrouterModel, config.ai.openrouterApiKey);
+    } catch (err) {
+      setTestResult({ success: false, message: err instanceof Error ? err.message : 'Test failed' });
+    } finally {
+      setTestingModel(false);
     }
-  }, [config?.ai?.provider, config?.ai?.openrouterApiKey, config?.ai?.openrouterModel, fetchModelInfo]);
+  }, [config?.ai]);
 
   if (loading) {
     return (
@@ -293,7 +275,7 @@ export function SettingsPage() {
       <section className="mb-8">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-medium text-zinc-300 flex items-center gap-2">
-            <Sparkles size={14} />
+            <Zap size={14} />
             AI Settings
           </h2>
         </div>
@@ -309,17 +291,16 @@ export function SettingsPage() {
               className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
             >
               <option value="gemini">Google Gemini</option>
+              <option value="openai">OpenAI (GPT-4, GPT-4o...)</option>
               <option value="openrouter">OpenRouter (Multi-model)</option>
+              <option value="custom">Custom (OpenAI-Compatible)</option>
             </select>
           </div>
 
           {/* Gemini Settings */}
           {(config.ai?.provider || 'gemini') === 'gemini' && (
             <div className="space-y-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
-              <div className="text-xs text-zinc-400 font-medium flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-500" />
-                Gemini Configuration
-              </div>
+              <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
                   Model
@@ -329,15 +310,15 @@ export function SettingsPage() {
                   onChange={e => updateAiSetting('geminiModel', e.target.value)}
                   className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none"
                 >
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fast)</option>
-                  <option value="gemini-2.5-pro">Gemini 2.5 Pro (Balanced)</option>
-                  <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                  <option value="gemini-3-pro-preview">Gemini 3 Pro Preview (Highest Quality)</option>
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                    <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+                    <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
                 </select>
               </div>
               <div className="relative">
                 <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                  Gemini API Key
+                    API Key
                 </label>
                 <input
                   type="text"
@@ -345,7 +326,7 @@ export function SettingsPage() {
                   style={{ WebkitTextSecurity: showApiKey ? 'none' : 'disc' } as React.CSSProperties}
                   value={config.ai?.geminiApiKey || ''}
                   onChange={e => updateAiSetting('geminiApiKey', e.target.value)}
-                  placeholder="Enter your Gemini API Key"
+                    placeholder="Enter your API Key"
                   className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
                 />
                 <button
@@ -355,6 +336,109 @@ export function SettingsPage() {
                 >
                   {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
+                </div>
+              </div>
+              
+              {/* Test Model Button */}
+              <div className="pt-2 border-t border-zinc-700/50">
+                <button
+                  type="button"
+                  onClick={testModel}
+                  disabled={testingModel || !config.ai?.geminiApiKey}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg flex items-center gap-1.5 transition-colors"
+                >
+                  {testingModel ? (
+                    <>
+                      <div className="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full" />
+                      Testing...
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={12} />
+                      Test Model
+                    </>
+                  )}
+                </button>
+                
+                {testResult && (
+                  <div className={`mt-2 p-2 rounded-lg text-xs flex items-start gap-2 ${testResult.success ? 'bg-green-900/20 border border-green-800/30 text-green-400' : 'bg-red-900/20 border border-red-800/30 text-red-400'}`}>
+                    {testResult.success ? <Check size={14} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />}
+                    <span>{testResult.message}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* OpenAI Settings */}
+          {(config.ai?.provider || 'gemini') === 'openai' && (
+            <div className="space-y-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
+              <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  Model
+                </label>
+                <input
+                  type="text"
+                  value={config.ai?.openaiModel || AI_DEFAULT_MODELS.openai}
+                  onChange={e => updateAiSetting('openaiModel', e.target.value)}
+                    placeholder="e.g., gpt-4o"
+                  className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+              </div>
+              <div className="relative">
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                    API Key
+                </label>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  style={{ WebkitTextSecurity: showOpenAiApiKey ? 'none' : 'disc' } as React.CSSProperties}
+                  value={config.ai?.openaiApiKey || ''}
+                  onChange={e => updateAiSetting('openaiApiKey', e.target.value)}
+                    placeholder="Enter your API Key"
+                  className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowOpenAiApiKey(prev => !prev)}
+                  className="absolute right-3 top-[29px] p-1 text-zinc-400 hover:text-zinc-200"
+                >
+                  {showOpenAiApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+                </div>
+              </div>
+              <p className="text-[10px] text-zinc-500">
+                See models at <a href="https://platform.openai.com/docs/models" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">platform.openai.com/docs/models</a>
+              </p>
+              
+              {/* Test Model Button */}
+              <div className="pt-2 border-t border-zinc-700/50">
+                <button
+                  type="button"
+                  onClick={testModel}
+                  disabled={testingModel || !config.ai?.openaiApiKey}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg flex items-center gap-1.5 transition-colors"
+                >
+                  {testingModel ? (
+                    <>
+                      <div className="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full" />
+                      Testing...
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={12} />
+                      Test Model
+                    </>
+                  )}
+                </button>
+                
+                {testResult && (
+                  <div className={`mt-2 p-2 rounded-lg text-xs flex items-start gap-2 ${testResult.success ? 'bg-green-900/20 border border-green-800/30 text-green-400' : 'bg-red-900/20 border border-red-800/30 text-red-400'}`}>
+                    {testResult.success ? <Check size={14} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />}
+                    <span>{testResult.message}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -362,103 +446,22 @@ export function SettingsPage() {
           {/* OpenRouter Settings */}
           {(config.ai?.provider || 'gemini') === 'openrouter' && (
             <div className="space-y-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
-              <div className="text-xs text-zinc-400 font-medium flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-purple-500" />
-                OpenRouter Configuration
-              </div>
+              <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
                   Model
                 </label>
                 <input
                   type="text"
-                  value={config.ai?.openrouterModel || 'openrouter/auto'}
+                  value={config.ai?.openrouterModel || AI_DEFAULT_MODELS.openrouter}
                   onChange={e => updateAiSetting('openrouterModel', e.target.value)}
-                  placeholder="e.g., openrouter/auto, anthropic/claude-3-opus"
+                    placeholder="e.g., openrouter/auto"
                   className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
                 />
-                <p className="text-[10px] text-zinc-500 mt-1">
-                  Browse models at <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/models</a>.
-                </p>
               </div>
-              
-              {/* Model Info Display */}
-              {loadingModelInfo && (
-                <div className="flex items-center gap-2 p-2 bg-zinc-700/30 rounded-lg text-xs text-zinc-400">
-                  <div className="animate-spin w-3 h-3 border border-zinc-400 border-t-transparent rounded-full" />
-                  Loading model info...
-                </div>
-              )}
-              
-              {modelInfoError && (
-                <div className="flex items-start gap-2 p-2 bg-amber-900/20 border border-amber-800/30 rounded-lg text-xs text-amber-400">
-                  <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                  <span>{modelInfoError}</span>
-                </div>
-              )}
-              
-              {openRouterModelInfo && !loadingModelInfo && (
-                <div className="p-3 bg-zinc-700/30 rounded-lg border border-zinc-600/30 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-zinc-200 truncate">
-                        {openRouterModelInfo.name}
-                      </div>
-                      {openRouterModelInfo.description && (
-                        <div className="text-[10px] text-zinc-500 mt-0.5 line-clamp-2">
-                          {openRouterModelInfo.description}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {openRouterModelInfo.supportsStructuredOutput ? (
-                        <span className="px-1.5 py-0.5 text-[9px] bg-green-900/30 text-green-400 rounded border border-green-800/30 flex items-center gap-1">
-                          <Zap size={10} />
-                          Structured
-                        </span>
-                      ) : (
-                        <span className="px-1.5 py-0.5 text-[9px] bg-amber-900/30 text-amber-400 rounded border border-amber-800/30 flex items-center gap-1">
-                          <AlertTriangle size={10} />
-                          No Structured
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-3 gap-2 text-[10px]">
-                    <div className="flex items-center gap-1.5 text-zinc-400">
-                      <Box size={12} />
-                      <span className="truncate">
-                        {(openRouterModelInfo.contextLength / 1000).toFixed(0)}K ctx
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-zinc-400">
-                      <Coins size={12} />
-                      <span className="truncate">
-                        {openRouterModelInfo.pricing.prompt > 0 
-                          ? `$${(openRouterModelInfo.pricing.prompt * 1000000).toFixed(2)}/M`
-                          : 'Free'}
-                      </span>
-                    </div>
-                    {openRouterModelInfo.topProvider && (
-                      <div className="flex items-center gap-1.5 text-zinc-400">
-                        <Info size={12} />
-                        <span className="truncate">{openRouterModelInfo.topProvider}</span>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {!openRouterModelInfo.supportsStructuredOutput && (
-                    <div className="text-[9px] text-amber-400/80 bg-amber-900/10 p-1.5 rounded border border-amber-800/20">
-                      This model may not support structured JSON output. Translation quality may vary.
-                    </div>
-                  )}
-                </div>
-              )}
-              
               <div className="relative">
                 <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
-                  OpenRouter API Key
+                    API Key
                 </label>
                 <input
                   type="text"
@@ -466,7 +469,7 @@ export function SettingsPage() {
                   style={{ WebkitTextSecurity: showOpenRouterApiKey ? 'none' : 'disc' } as React.CSSProperties}
                   value={config.ai?.openrouterApiKey || ''}
                   onChange={e => updateAiSetting('openrouterApiKey', e.target.value)}
-                  placeholder="Enter your OpenRouter API Key"
+                    placeholder="Enter your API Key"
                   className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
                 />
                 <button
@@ -476,10 +479,127 @@ export function SettingsPage() {
                 >
                   {showOpenRouterApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
+                </div>
               </div>
               <p className="text-[10px] text-zinc-500">
-                Get your API key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/keys</a>
+                Browse models at <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">openrouter.ai/models</a>
               </p>
+              
+              {/* Test Model Button */}
+              <div className="pt-2 border-t border-zinc-700/50">
+                <button
+                  type="button"
+                  onClick={testModel}
+                  disabled={testingModel || !config.ai?.openrouterApiKey}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg flex items-center gap-1.5 transition-colors"
+                >
+                  {testingModel ? (
+                    <>
+                      <div className="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full" />
+                      Testing...
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={12} />
+                      Test Model
+                    </>
+                  )}
+                </button>
+                
+                {testResult && (
+                  <div className={`mt-2 p-2 rounded-lg text-xs flex items-start gap-2 ${testResult.success ? 'bg-green-900/20 border border-green-800/30 text-green-400' : 'bg-red-900/20 border border-red-800/30 text-red-400'}`}>
+                    {testResult.success ? <Check size={14} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />}
+                    <span>{testResult.message}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Custom OpenAI-Compatible Settings */}
+          {(config.ai?.provider || 'gemini') === 'custom' && (
+            <div className="space-y-4 p-3 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
+              <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  Model
+                </label>
+                <input
+                  type="text"
+                  value={config.ai?.customModel || AI_DEFAULT_MODELS.custom}
+                  onChange={e => updateAiSetting('customModel', e.target.value)}
+                    placeholder="e.g., gpt-4o"
+                  className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+              </div>
+              <div className="relative">
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  API Key
+                </label>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  style={{ WebkitTextSecurity: showCustomApiKey ? 'none' : 'disc' } as React.CSSProperties}
+                  value={config.ai?.customApiKey || ''}
+                  onChange={e => updateAiSetting('customApiKey', e.target.value)}
+                  placeholder="Enter your API Key"
+                  className="w-full px-3 py-2 pr-10 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCustomApiKey(prev => !prev)}
+                  className="absolute right-3 top-[29px] p-1 text-zinc-400 hover:text-zinc-200"
+                >
+                  {showCustomApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+                </div>
+              </div>
+              
+              {/* Custom Base URL */}
+              <div>
+                <label className="text-[11px] text-zinc-500 uppercase tracking-wider block mb-2">
+                  Base URL
+                </label>
+                <input
+                  type="text"
+                  value={config.ai?.customBaseUrl || AI_BASE_URLS.custom}
+                  onChange={e => updateAiSetting('customBaseUrl', e.target.value)}
+                  placeholder="http://localhost:20128/v1"
+                  className="w-full px-3 py-2 text-sm text-zinc-100 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none font-mono"
+                />
+                <p className="text-[10px] text-zinc-500 mt-1">
+                  Examples: <a href="https://github.com/decolua/9router" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">9Router</a> (localhost:20128/v1), <a href="https://lmstudio.ai" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">LM Studio</a>, <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Ollama</a>, or any OpenAI-compatible endpoint.
+                </p>
+              </div>
+              
+              {/* Test Model Button */}
+              <div className="pt-2 border-t border-zinc-700/50">
+                <button
+                  type="button"
+                  onClick={testModel}
+                  disabled={testingModel || !config.ai?.customApiKey || !config.ai?.customBaseUrl}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white rounded-lg flex items-center gap-1.5 transition-colors"
+                >
+                  {testingModel ? (
+                    <>
+                      <div className="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full" />
+                      Testing...
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={12} />
+                      Test Model
+                    </>
+                  )}
+                </button>
+                
+                {testResult && (
+                  <div className={`mt-2 p-2 rounded-lg text-xs flex items-start gap-2 ${testResult.success ? 'bg-green-900/20 border border-green-800/30 text-green-400' : 'bg-red-900/20 border border-red-800/30 text-red-400'}`}>
+                    {testResult.success ? <Check size={14} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />}
+                    <span>{testResult.message}</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
