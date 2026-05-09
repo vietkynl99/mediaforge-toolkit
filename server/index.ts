@@ -5162,7 +5162,11 @@ app.post('/api/render-preview-v2', async (req, res) => {
   res.setHeader('Content-Type', 'image/jpeg');
   res.setHeader('Cache-Control', 'no-store');
   if (previewError) {
-    const safe = previewError.replace(/[\r\n]/g, ' ').slice(0, 500);
+    // Remove control chars, newlines, and non-ASCII chars that are invalid in HTTP headers
+    const safe = previewError
+      .replace(/[\r\n\t]/g, ' ')
+      .replace(/[^\x20-\x7E]/g, '?')
+      .slice(0, 500);
     res.setHeader('X-Render-Preview-Error', safe);
   }
   res.send(previewBuf);

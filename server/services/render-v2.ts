@@ -121,7 +121,9 @@ export const buildRenderInputFingerprints = async (
   const seen = new Set<string>();
   for (const item of sourceItems) {
     const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
-    const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path, vaultRoot) : null);
+    // Both ref-based and direct paths need to be resolved against vaultRoot
+    const sourcePath = (pathFromRef ? resolveSafePath(pathFromRef, vaultRoot) : null)
+      ?? (item.source?.path ? resolveSafePath(item.source.path, vaultRoot) : null);
     if (!sourcePath) {
       missing.push(`${item.id}:${item.source?.ref ?? item.source?.path ?? ''}`);
       continue;
@@ -339,7 +341,9 @@ export const checkCopyPathEligibility = (
 
   // ── 7. Resolve video path and optional single external audio path ────────
   const videoPathFromRef = resolveRenderInputPath(videoItem.source?.ref, config.inputsMap);
-  const videoPath = videoPathFromRef ?? (videoItem.source?.path ? resolveSafePath(videoItem.source.path, vaultRoot) : null);
+  // Both ref-based and direct paths need to be resolved against vaultRoot
+  const videoPath = (videoPathFromRef ? resolveSafePath(videoPathFromRef, vaultRoot) : null)
+    ?? (videoItem.source?.path ? resolveSafePath(videoItem.source.path, vaultRoot) : null);
   if (!videoPath) return fail('videoPath', 'unresolvable');
   log(`✓ [Check:videoPath] ${videoPath}`);
 
@@ -347,7 +351,9 @@ export const checkCopyPathEligibility = (
   if (!videoAudioActive && activeAudioItems.length === 1) {
     const audioItem = activeAudioItems[0];
     const audioPathFromRef = resolveRenderInputPath(audioItem.source?.ref, config.inputsMap);
-    externalSingleAudioPath = audioPathFromRef ?? (audioItem.source?.path ? resolveSafePath(audioItem.source.path, vaultRoot) : null);
+    // Both ref-based and direct paths need to be resolved against vaultRoot
+    externalSingleAudioPath = (audioPathFromRef ? resolveSafePath(audioPathFromRef, vaultRoot) : null)
+      ?? (audioItem.source?.path ? resolveSafePath(audioItem.source.path, vaultRoot) : null);
     if (!externalSingleAudioPath) return fail('audioPath', 'single external audio source unresolvable');
     log(`✓ [Check:audioPath] ${externalSingleAudioPath}`);
   }
@@ -466,6 +472,8 @@ export const buildRenderV2FilterGraph = async (
     ? config.items.filter(item => item.type === 'video' && isVisible(item) && !isMuted(item))
     : [];
 
+  // Note: subtitleItems are included for timing calculation, but are NOT added to FFmpeg inputArgs
+  // They are converted to ASS format and used as filter inputs in the filter graph
   const sourceItems = [
     ...visualItems,
     ...videoItemsForAudio,
@@ -476,7 +484,9 @@ export const buildRenderV2FilterGraph = async (
   const inputs: Array<{ path: string; type: RenderItemV2['type']; item: RenderItemV2; duration?: number }> = [];
   for (const item of sourceItems) {
     const pathFromRef = resolveRenderInputPath(item.source?.ref, config.inputsMap);
-    const sourcePath = pathFromRef ?? (item.source?.path ? resolveSafePath(item.source.path, vaultRoot) : null);
+    // Both ref-based and direct paths need to be resolved against vaultRoot
+    const sourcePath = (pathFromRef ? resolveSafePath(pathFromRef, vaultRoot) : null)
+      ?? (item.source?.path ? resolveSafePath(item.source.path, vaultRoot) : null);
     if (!sourcePath) continue;
     let duration: number | undefined;
     if (item.type === 'video' || item.type === 'audio' || item.type === 'subtitle') {
@@ -605,6 +615,16 @@ export const buildRenderV2FilterGraph = async (
     const timing = { entry, start, duration, trimStart };
     finalItemTiming.push(timing);
 
+    // Skip subtitle items - they are not FFmpeg inputs, they are converted to ASS and used as filter inputs
+    if (entry.type === 'subtitle') {
+      inputEntries.push({
+        type: entry.type,
+        args: [],
+        item: entry.item,
+        timing
+      });
+      return;
+    }
     if (entry.type === 'image') {
       args.push('-loop', '1', '-t', String(duration + start));
     }
@@ -824,7 +844,9 @@ export const buildRenderV2FilterGraph = async (
       const timing = finalItemTiming.find(t => t.entry.item === subtitleItem);
       if (!timing) continue;
 
-      const subPath = resolveRenderInputPath(subtitleItem.source?.ref, config.inputsMap)
+      const subPathFromRef = resolveRenderInputPath(subtitleItem.source?.ref, config.inputsMap);
+      // Both ref-based and direct paths need to be resolved against vaultRoot
+      const subPath = (subPathFromRef ? resolveSafePath(subPathFromRef, vaultRoot) : null)
         ?? (subtitleItem.source?.path ? resolveSafePath(subtitleItem.source.path, vaultRoot) : null);
       if (!subPath) continue;
       const start = timing.start;

@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import type { SubtitleCue } from './subtitleCues.js';
-import { parseAssCues, parseSrtVttCues, stripUtf8Bom } from './subtitleCues.js';
+import { parseAssCues, parseSrtVttCues, parseSktProjectCues, stripUtf8Bom } from './subtitleCues.js';
 
 /** V4+ style fields we expose from Render Studio (ASS / libass). */
 export type AssRenderStyle = {
@@ -265,6 +265,9 @@ export const loadCuesFromSubtitleFile = async (fullPath: string): Promise<Subtit
   const preserveBreaks = false;
   if (ext === '.ass' || ext === '.ssa') {
     return parseAssCues(raw, preserveBreaks);
+  }
+  if (ext === '.sktproject') {
+    return parseSktProjectCues(raw, preserveBreaks);
   }
   return parseSrtVttCues(raw, preserveBreaks);
 };
