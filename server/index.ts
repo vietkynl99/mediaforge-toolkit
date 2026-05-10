@@ -3085,6 +3085,128 @@ app.delete('/api/vault/file', async (req, res) => {
   res.json({ ok: true, relativePath: normalized });
 });
 
+app.put('/api/vault/file/rename', async (req, res) => {
+  const relativePathRaw = typeof req.body?.relativePath === 'string' ? req.body.relativePath.trim() : '';
+  const newNameRaw = typeof req.body?.newName === 'string' ? req.body.newName.trim() : '';
+  if (!relativePathRaw || !newNameRaw) {
+    res.status(400).json({ error: 'Missing relativePath or newName' });
+    return;
+  }
+  const normalized = relativePathRaw.replace(/\\/g, '/');
+  const fullPath = safeResolvePath(normalized);
+  if (!fullPath) {
+    res.status(400).json({ error: 'Invalid file path' });
+    return;
+  }
+  let stats: { isFile: () => boolean };
+  try {
+    stats = await fs.stat(fullPath);
+  } catch {
+    res.status(404).json({ error: 'File not found' });
+    return;
+  }
+  if (!stats.isFile()) {
+    res.status(400).json({ error: 'Target is not a file' });
+    return;
+  }
+
+  // Validate new name - must not contain path separators or be empty
+  if (newNameRaw.includes('/') || newNameRaw.includes('\\') || newNameRaw.length === 0) {
+    res.status(400).json({ error: 'Invalid file name' });
+    return;
+  }
+
+  const dir = path.dirname(fullPath);
+  const newFullPath = path.join(dir, newNameRaw);
+
+  // Check if file with new name already exists
+  try {
+    await fs.access(newFullPath);
+    res.status(409).json({ error: 'A file with that name already exists' });
+    return;
+  } catch {
+    // File doesn't exist, which is what we want
+  }
+
+  try {
+    await fs.rename(fullPath, newFullPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to rename file';
+    res.status(500).json({ error: message });
+    return;
+  }
+
+  // Update metadata if needed
+  const projectName = normalized.split('/')[0];
+  const newRelativePath = normalized.substring(0, normalized.lastIndexOf('/') + 1) + newNameRaw;
+  if (projectName) {
+    const projectRoot = path.join(MEDIA_VAULT_ROOT, projectName);
+    const writeMetaFile = async (filename: 'uvr.json' | 'tts.json', data: Record<string, VaultFileDTO['uvr'] | VaultFileDTO['tts']>) => {
+      const metaDir = path.join(projectRoot, '.mediaforge');
+      const metaFile = path.join(metaDir, filename);
+      await fs.mkdir(metaDir, { recursive: true });
+      await fs.writeFile(metaFile, JSON.stringify(data, null, 2), 'utf-8');
+    };
+    try {
+      const [uvrMeta, ttsMeta] = await Promise.all([
+        readProjectUvrMeta(projectRoot),
+        readProjectTtsMeta(projectRoot)
+      ]);
+      let uvrChanged = false;
+      let ttsChanged = false;
+
+      // Update key in uvrMeta
+      if (uvrMeta[normalized]) {
+        uvrMeta[newRelativePath] = uvrMeta[normalized];
+        delete uvrMeta[normalized];
+        uvrChanged = true;
+      }
+      // Update outputs references in uvrMeta
+      Object.keys(uvrMeta).forEach(key => {
+        const entry = uvrMeta[key];
+        if (!entry?.outputs?.length) return;
+        const idx = entry.outputs.indexOf(normalized);
+        if (idx !== -1) {
+          entry.outputs[idx] = newRelativePath;
+          uvrChanged = true;
+        }
+      });
+
+      // Update key in ttsMeta
+      if (ttsMeta[normalized]) {
+        ttsMeta[newRelativePath] = ttsMeta[normalized];
+        delete ttsMeta[normalized];
+        ttsChanged = true;
+      }
+      // Update outputs references in ttsMeta
+      Object.keys(ttsMeta).forEach(key => {
+        const entry = ttsMeta[key];
+        if (!entry?.outputs) return;
+        const idx = entry.outputs.indexOf(normalized);
+        if (idx !== -1) {
+          entry.outputs[idx] = newRelativePath;
+        }
+        if (entry.outputDetails && entry.outputDetails[normalized]) {
+          entry.outputDetails[newRelativePath] = entry.outputDetails[normalized];
+          delete entry.outputDetails[normalized];
+        }
+        ttsChanged = true;
+      });
+
+      if (uvrChanged) {
+        await writeMetaFile('uvr.json', uvrMeta);
+      }
+      if (ttsChanged) {
+        await writeMetaFile('tts.json', ttsMeta);
+      }
+    } catch {
+      // Ignore metadata update failures; rename succeeded.
+    }
+  }
+
+  res.json({ ok: true, oldPath: normalized, newPath: newRelativePath });
+});
+
 const UVR_WORKDIR = path.dirname(UVR_CLI_PATH);
 const YTDLP_BIN = process.env.YTDLP_PATH ?? 'yt-dlp';
 

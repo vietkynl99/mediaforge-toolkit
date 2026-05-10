@@ -33,6 +33,7 @@ import { MediaJob, DEFAULT_RENDER_PARAMS } from './types';
 import { AppHeader } from './components/AppHeader';
 import { JobsFeature, type JobsHandle } from './features/jobs/JobsFeature';
 import { ConfirmModal } from './components/ConfirmModal';
+import { PromptModal } from './components/PromptModal';
 import {
   RENDER_BLUR_FEATHER_MAX,
   RENDER_PREVIEW_BLACK_DATA_URL,
@@ -300,6 +301,15 @@ export default function App() {
   }>({ open: false, title: '' });
   const confirmActionRef = useRef<null | (() => void)>(null);
   const secondaryActionRef = useRef<null | (() => void)>(null);
+  const [promptState, setPromptState] = useState<{
+    open: boolean;
+    title: string;
+    description?: string;
+    placeholder?: string;
+    initialValue?: string;
+    confirmLabel?: string;
+  }>({ open: false, title: '' });
+  const promptActionRef = useRef<null | ((value: string) => void)>(null);
   const [vaultContextMenu, setVaultContextMenu] = useState<{
     open: boolean;
     x: number;
@@ -3417,6 +3427,37 @@ export default function App() {
 
   const closeConfirmModal = () => setConfirmState(prev => ({ ...prev, open: false }));
 
+  const openPrompt = (config: {
+    title: string;
+    description?: string;
+    placeholder?: string;
+    initialValue?: string;
+    confirmLabel?: string;
+  }, onSubmit: (value: string) => void) => {
+    promptActionRef.current = onSubmit;
+    setPromptState({
+      open: true,
+      title: config.title,
+      description: config.description,
+      placeholder: config.placeholder,
+      initialValue: config.initialValue,
+      confirmLabel: config.confirmLabel
+    });
+  };
+
+  const closePromptModal = () => setPromptState(prev => ({ ...prev, open: false }));
+
+  const handlePromptModalSubmit = async (value: string) => {
+    const action = promptActionRef.current;
+    promptActionRef.current = null;
+    try {
+      await Promise.resolve(action?.(value));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Action failed';
+      showToast(message, 'error');
+    }
+  };
+
   const handleConfirmModalConfirm = async () => {
     const action = confirmActionRef.current;
     confirmActionRef.current = null;
@@ -3807,6 +3848,26 @@ export default function App() {
       await loadVault();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to delete file';
+      showToast(message, 'error');
+    }
+  };
+
+  const performRenameVaultFile = async (file: VaultFile, newName: string) => {
+    if (!file?.relativePath) return;
+    try {
+      const response = await fetch('/api/vault/file/rename', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relativePath: file.relativePath, newName })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Rename failed (${response.status})`);
+      }
+      showToast(`Renamed to ${newName}`, 'success');
+      await loadVault();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to rename file';
       showToast(message, 'error');
     }
   };
@@ -5907,7 +5968,9 @@ export default function App() {
     closeFileContextMenu,
     downloadVaultFile,
     deleteVaultFile: performDeleteVaultFile,
-    openConfirm
+    renameVaultFile: performRenameVaultFile,
+    openConfirm,
+    openPrompt
   };
 
   if (!authChecked) {
@@ -6761,6 +6824,16 @@ export default function App() {
             onClose={closeConfirmModal}
             onConfirm={handleConfirmModalConfirm}
             onSecondary={handleConfirmModalSecondary}
+          />
+          <PromptModal
+            open={promptState.open}
+            title={promptState.title}
+            description={promptState.description}
+            placeholder={promptState.placeholder}
+            initialValue={promptState.initialValue}
+            confirmLabel={promptState.confirmLabel}
+            onClose={closePromptModal}
+            onSubmit={handlePromptModalSubmit}
           />
           <SettingsModal
             show={showSettingsModal}

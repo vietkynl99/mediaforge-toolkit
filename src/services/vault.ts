@@ -63,6 +63,19 @@ export const vaultService = {
     }
   },
 
+  async renameFile(relativePath: string, newName: string): Promise<{ oldPath: string; newPath: string }> {
+    const response = await fetch('/api/vault/file/rename', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ relativePath, newName })
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Rename failed (${response.status})`);
+    }
+    return response.json();
+  },
+
   async importFiles(projectName: string, files: File[]): Promise<{ count: number }> {
     const form = new FormData();
     form.append('projectName', projectName.trim());
