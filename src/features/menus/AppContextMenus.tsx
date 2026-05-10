@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download } from 'lucide-react';
+import { Download, Trash2 } from 'lucide-react';
 
 interface AppContextMenusProps {
   pipelineContextMenu: any;
@@ -11,6 +11,8 @@ interface AppContextMenusProps {
   fileContextMenu: any;
   closeFileContextMenu: () => void;
   downloadVaultFile: (file: any) => void;
+  deleteVaultFile: (file: any) => void;
+  openConfirm: (config: { title: string; description?: string; confirmLabel?: string; variant?: 'danger' | 'default' }, onConfirm: () => void) => void;
 }
 
 export const AppContextMenus: React.FC<AppContextMenusProps> = ({
@@ -22,7 +24,9 @@ export const AppContextMenus: React.FC<AppContextMenusProps> = ({
   deletePipeline,
   fileContextMenu,
   closeFileContextMenu,
-  downloadVaultFile
+  downloadVaultFile,
+  deleteVaultFile,
+  openConfirm
 }) => {
   return (
     <>
@@ -80,6 +84,29 @@ export const AppContextMenus: React.FC<AppContextMenusProps> = ({
               <span className="flex items-center gap-2">
                 <Download size={12} />
                 Download
+              </span>
+            </button>
+            <button
+              className="w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-500/10 rounded-md"
+              onClick={() => {
+                if (fileContextMenu.file) {
+                  const target = fileContextMenu.file;
+                  closeFileContextMenu();
+                  openConfirm(
+                    {
+                      title: `Delete "${target.name}"?`,
+                      description: 'This will remove the file from the project and Media Vault.',
+                      confirmLabel: 'Delete',
+                      variant: 'danger'
+                    },
+                    () => deleteVaultFile(target)
+                  );
+                }
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <Trash2 size={12} />
+                Delete
               </span>
             </button>
           </div>

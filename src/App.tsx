@@ -5905,7 +5905,9 @@ export default function App() {
     deletePipeline,
     fileContextMenu,
     closeFileContextMenu,
-    downloadVaultFile
+    downloadVaultFile,
+    deleteVaultFile: performDeleteVaultFile,
+    openConfirm
   };
 
   if (!authChecked) {
